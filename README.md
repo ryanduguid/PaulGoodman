@@ -12,7 +12,6 @@
 [![tests](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/ryanduguid/au-tax-legislation-corpus/graph/badge.svg)](https://codecov.io/gh/ryanduguid/au-tax-legislation-corpus)
 [![CodeQL](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/codeql.yml)
-[![Snyk](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/snyk.yml/badge.svg?branch=main)](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/snyk.yml)
 [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_au-tax-legislation-corpus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_au-tax-legislation-corpus)
 [![Codacy code quality](https://app.codacy.com/project/badge/Grade/a474c8d33a4a4bd6bd97993f5c4113bd)](https://app.codacy.com/gh/ryanduguid/au-tax-legislation-corpus/dashboard)<br>
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/au-tax-legislation-corpus.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/au-tax-legislation-corpus)
