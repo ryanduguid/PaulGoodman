@@ -398,6 +398,44 @@ fn query_folds_compatibility_forms_and_ranks_section_matches_first() {
 }
 
 #[test]
+fn query_ranks_current_titles_after_exact_sections_and_before_bm25() {
+    let c = case();
+    let mut titles = sample_titles();
+    // OTHER is superseded and holds the stronger BM25 match, in heading and text.
+    titles.get_mut(OTHER).unwrap().1.push(row(
+        OTHER,
+        3,
+        Some("7"),
+        "A gizmo is a gizmo.",
+        "7 Gizmo",
+        None,
+    ));
+    titles.get_mut(ACT).unwrap().1.push(row(
+        ACT,
+        6,
+        Some("8"),
+        "This long provision about the levy mentions a gizmo once, as item 7 does, among many other words.",
+        "8 Other matters",
+        None,
+    ));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let order = |words: &[&str]| -> Vec<(Value, Value)> {
+        let words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        values(search::query(&connection, &words, None, 10).unwrap())
+            .iter()
+            .map(|h| (h["register_id"].clone(), h["version_is_current"].clone()))
+            .collect()
+    };
+    let current_first = [(json!(ACT), json!(true)), (json!(OTHER), json!(false))];
+    assert_eq!(order(&["gizmo"]), current_first);
+    // A superseded title's exact section still precedes a current title's other match.
+    let section_first = [(json!(OTHER), json!(false)), (json!(ACT), json!(true))];
+    assert_eq!(order(&["7", "gizmo"]), section_first);
+}
+
+#[test]
 fn hits_carry_provenance_and_respect_title_and_limit() {
     let c = case();
     let connection = built(&c);

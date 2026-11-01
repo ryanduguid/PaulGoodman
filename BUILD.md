@@ -453,7 +453,8 @@ python -m fadden search refs search.sqlite C2004A05138:0035:8-1
   exist. The index records the SHA-256 of `sources.json` and of every
   `sections.jsonl` and `<register_id>.md` it read.
 - `query` requires every word and ranks a row whose section number equals a
-  query word first, then by BM25 with the heading weighted above the text.
+  query word first, then rows from current titles above superseded ones, then by
+  BM25 with the heading weighted above the text.
   Text is NFKC-normalised for matching, so `8-1` matches the Register's `8<U+2011>1`.
   Each hit prints its `row_id`, compilation, current status, retrieval date and
   Register page; `--json` adds the row text and the file digests.
