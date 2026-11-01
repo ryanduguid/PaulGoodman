@@ -398,6 +398,41 @@ fn query_folds_compatibility_forms_and_ranks_section_matches_first() {
 }
 
 #[test]
+fn query_ranks_current_titles_before_a_better_superseded_match() {
+    let c = case();
+    let mut titles = sample_titles();
+    // OTHER is superseded and holds the stronger BM25 match, in heading and text.
+    titles.get_mut(OTHER).unwrap().1.push(row(
+        OTHER,
+        3,
+        Some("7"),
+        "A gizmo is a gizmo.",
+        "7 Gizmo",
+        None,
+    ));
+    titles.get_mut(ACT).unwrap().1.push(row(
+        ACT,
+        6,
+        Some("7"),
+        "This long provision about the levy mentions a gizmo once among many other words.",
+        "7 Other matters",
+        None,
+    ));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let hits = values(search::query(&connection, &["gizmo".into()], None, 10).unwrap());
+    let order: Vec<(Value, Value)> = hits
+        .iter()
+        .map(|h| (h["register_id"].clone(), h["version_is_current"].clone()))
+        .collect();
+    assert_eq!(
+        order,
+        [(json!(ACT), json!(true)), (json!(OTHER), json!(false))]
+    );
+}
+
+#[test]
 fn hits_carry_provenance_and_respect_title_and_limit() {
     let c = case();
     let connection = built(&c);

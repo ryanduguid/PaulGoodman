@@ -889,7 +889,7 @@ FROM rows_fts JOIN rows r ON r.id = rows_fts.rowid \
 JOIN titles t ON t.register_id = r.register_id \
 WHERE rows_fts MATCH ? AND (? IS NULL OR r.register_id = ?) \
 ORDER BY r.section_key IN (SELECT value FROM json_each(?)) DESC, \
-bm25(rows_fts, 4.0, 1.0), r.id LIMIT ?";
+t.version_is_current DESC, bm25(rows_fts, 4.0, 1.0), r.id LIMIT ?";
 const DEFINE_SQL: &str = "SELECT d.term, d.text AS definition, r.row_id, r.register_id, r.section, r.heading, \
 t.name AS act, t.collection, t.compilation_number, t.compilation_date, \
 t.version_is_current, t.retrieved, t.register_page, t.source_url, t.sections_sha256 \
