@@ -427,6 +427,113 @@ fn hits_carry_provenance_and_respect_title_and_limit() {
 }
 
 #[test]
+fn retrieval_reference_queries_match_handwritten_membership_and_provenance() {
+    let reference: Value = serde_json::from_str(include_str!("fixtures/retrieval_reference.json"))
+        .expect("fabricated retrieval reference");
+    let c = case();
+    let connection = built(&c);
+    let queries = reference["queries"].as_array().expect("reference queries");
+    assert_eq!(queries.len(), 4);
+    for query in queries {
+        let words: Vec<String> =
+            serde_json::from_value(query["tokens"].clone()).expect("explicit lexical query tokens");
+        let hits = values(
+            search::query(&connection, &words, query["title"].as_str(), 10)
+                .expect("available fabricated index"),
+        );
+        let mut actual: Vec<&str> = hits
+            .iter()
+            .map(|hit| hit["row_id"].as_str().expect("row id"))
+            .collect();
+        let mut expected: Vec<&str> = query["expected_row_ids"]
+            .as_array()
+            .expect("expected ids")
+            .iter()
+            .map(|id| id.as_str().expect("expected row id"))
+            .collect();
+        actual.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(actual, expected, "{}", query["question"]);
+        for hit in hits {
+            for (field, expected) in reference["provenance"].as_object().expect("provenance") {
+                assert_eq!(&hit[field], expected, "{}: {field}", query["question"]);
+            }
+            if let Some(container) = query.get("container") {
+                assert_eq!(&hit["container"], container);
+            }
+        }
+    }
+}
+
+#[test]
+fn retrieval_reference_snapshots_keep_terms_and_provenance_separate() {
+    use sha2::Digest;
+    let reference: Value = serde_json::from_str(include_str!("fixtures/retrieval_reference.json"))
+        .expect("fabricated retrieval reference");
+    let snapshots = reference["snapshots"]
+        .as_array()
+        .expect("reference snapshots");
+    assert_eq!(snapshots.len(), 2);
+    let mut digests = Vec::new();
+    for snapshot in snapshots {
+        let c = case();
+        let mut titles = sample_titles();
+        titles.retain(|rid, _| *rid == ACT);
+        let rows = &mut titles.get_mut(ACT).expect("fabricated Act").1;
+        for row in rows.iter_mut() {
+            row["compilation_number"] = snapshot["compilation_number"].clone();
+            row["compilation_date"] = snapshot["compilation_date"].clone();
+        }
+        rows[1]["text"] = json!(format!(
+            "A {} attracts the fabricated sample levy.",
+            snapshot["present_term"]
+                .as_str()
+                .expect("exclusive snapshot term")
+        ));
+        write_corpus(&c.root, &titles, &[]);
+        let sources_path = c.root.join("sources.json");
+        let mut sources: Value =
+            serde_json::from_slice(&std::fs::read(&sources_path).expect("fabricated sources"))
+                .expect("source metadata");
+        sources["retrieved"] = snapshot["retrieved"].clone();
+        for field in ["compilation_number", "compilation_date", "retrieved"] {
+            sources["titles"][0][field] = snapshot[field].clone();
+        }
+        std::fs::write(&sources_path, sources.to_string()).expect("snapshot source metadata");
+        build(&c);
+        let connection = search::open_index(&s(&c.out)).expect("snapshot index");
+        let present = snapshot["present_term"].as_str().expect("present term");
+        let absent = snapshot["absent_term"].as_str().expect("absent term");
+        let hits = values(
+            search::query(&connection, &[present.into()], Some(ACT), 10).expect("snapshot query"),
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["row_id"], snapshot["expected_row_id"]);
+        for field in ["compilation_number", "compilation_date", "retrieved"] {
+            assert_eq!(hits[0][field], snapshot[field], "{present}: {field}");
+        }
+        assert_eq!(hits[0]["authorised"], false);
+        assert!(
+            search::query(&connection, &[absent.into()], Some(ACT), 10)
+                .expect("negative snapshot query")
+                .is_empty()
+        );
+        let sections = std::fs::read(c.root.join("markdown").join(ACT).join("sections.jsonl"))
+            .expect("snapshot section bytes");
+        let digest: String = sha2::Sha256::digest(sections)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(hits[0]["sections_sha256"], digest);
+        digests.push(digest);
+    }
+    assert_ne!(
+        digests[0], digests[1],
+        "snapshot identity must change with its bytes"
+    );
+}
+
+#[test]
 fn definitions_split_on_their_opening_words() {
     let found = search::definitions(&dictionary());
     let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
