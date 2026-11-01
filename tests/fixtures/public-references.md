@@ -13,7 +13,8 @@ PowerShell uses `$env:TAX_PUBLIC_EPUB_DIR = 'C:/path/epubs'` before the same Car
 command. No network request occurs in the test. Each version must retain its own
 compilation date, number, current flag and source URL whilst the unchanged s 8-1
 text agrees. Expected section/anchor and subsection structure came from the
-official EPUB HTML, independently of this extractor. These 2 references qualify
+official EPUB HTML, independently of this extractor. Ordered `clause_phrases` quote the
+official s 8-1 wording, so a dropped clause body fails even when its label remains. These 2 references qualify
 source reading and section identification, not complete search recall or legal
 interpretation. Search qualification still requires a finished corpus and the
 normal PII/finalisation gates. The test does not manufacture a finished corpus.

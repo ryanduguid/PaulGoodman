@@ -84,6 +84,16 @@ fn official_compilations_keep_section_and_version_identity() {
             ]
         );
         assert!(text.contains("private or domestic"));
+        // Each clause's wording, in order, so a dropped clause body fails even when its label survives.
+        let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut from = 0;
+        for phrase in references["clause_phrases"].as_array().unwrap() {
+            let phrase = phrase.as_str().unwrap();
+            let at = flat[from..]
+                .find(phrase)
+                .unwrap_or_else(|| panic!("s 8-1 lacks {phrase:?} after byte {from}"));
+            from += at + phrase.len();
+        }
         assert!(!text.contains("nonexistentquartzterm"));
         assert_eq!(row["source_url"], version["source_url"]);
         provision_text.push(text.to_owned());
