@@ -71,6 +71,7 @@ The corpus builder (`python -m fadden`) produces retrieval material from Commonw
 - [Accuracy, scope and redistribution limits](docs/scope.md)
 - [Corpus and research tool comparisons](docs/comparison.md)
 - [Release rules](RELEASING.md) and [contributor checks](AGENTS.md)
+- [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md): checksum and SLSA provenance
 
 Live Register capture, synthetic observations and publication candidates have distinct contracts. A successful capture or export does not authorise publication.
 
