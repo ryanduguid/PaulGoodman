@@ -9,6 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
+# The reference inflater for the inflate target only.
+miniz_oxide = "0.9.1"
 tax-radar-au = { path = ".." }
 
 [[bin]]
@@ -35,6 +37,27 @@ bench = false
 [[bin]]
 name = "pattern_engines"
 path = "fuzz_targets/pattern_engines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "epub_read"
+path = "fuzz_targets/epub_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "inflate"
+path = "fuzz_targets/inflate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_parse"
+path = "fuzz_targets/html_parse.rs"
 test = false
 doc = false
 bench = false

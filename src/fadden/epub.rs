@@ -435,3 +435,32 @@ impl Epub {
         Ok((position, method))
     }
 }
+
+/// Fuzz invariant: an archive from arbitrary bytes is admitted or refused
+/// without a panic, and every member read back has its declared length and
+/// CRC-32. The unit tests replay seeds through this.
+#[doc(hidden)]
+pub fn check_read(data: &[u8]) -> Result<(), String> {
+    let Ok(epub) = from_bytes(data.to_vec()) else {
+        return Ok(());
+    };
+    for name in epub.namelist() {
+        let Ok(content) = epub.read(name) else {
+            continue;
+        };
+        // `read` returns the first member with the name, as zipfile does.
+        let Some(info) = epub.members.iter().find(|m| m.filename == name) else {
+            return Err(format!("{name:?} is listed but has no member"));
+        };
+        if content.len() as u64 != info.file_size || crc32(&content, 0) != info.crc {
+            return Err(format!(
+                "{name:?} read {} bytes with CRC {:08x}; declared {} with {:08x}",
+                content.len(),
+                crc32(&content, 0),
+                info.file_size,
+                info.crc
+            ));
+        }
+    }
+    Ok(())
+}

@@ -1,4 +1,4 @@
-Four cargo-fuzz targets check invariants of the code that reads untrusted input:
+Seven cargo-fuzz targets check invariants of the code that reads untrusted input:
 
 - `privacy_patterns` feeds fabricated text to the privacy patterns in
   `fadden::pii` (`src/fadden/pii.rs`), which the PII scans, the distribution
@@ -17,8 +17,18 @@ Four cargo-fuzz targets check invariants of the code that reads untrusted input:
   decoded value written as `json.dumps` writes it must decode to the same JSON.
 - `python_sort` checks the port of CPython's `list.sort` (`src/pysort.rs`): the
   stable sort under a total order, and every item kept under one that is not.
+- `epub_read` feeds arbitrary bytes to the ZIP reader for downloaded EPUBs
+  (`src/fadden/epub.rs`): no archive may panic it, and each member it reads
+  back must have its declared length and CRC-32.
+- `inflate` checks the raw-deflate inflater that reads EPUB members
+  (`src/pyzlib.rs`) against `miniz_oxide`: both must agree on whether a stream
+  is complete and on its bytes, and decoding in small output steps, as the
+  EPUB reader does, must match decoding at once.
+- `html_parse` feeds UTF-8 text to the port of CPython's `HTMLParser`
+  (`src/htmlparser.rs`), which reads legislation and ruling pages: no page may
+  panic it, and each handler call's position must be no earlier than the last.
 
-The last three take their seeds from `fuzz/seeds/<target>`. Failed invariants
+The other six take their seeds from `fuzz/seeds/<target>`. Failed invariants
 abort the run.
 
 cargo-fuzz needs a nightly toolchain. On Linux, from the repository root, run:
@@ -42,5 +52,7 @@ builds never compile them. `.github/workflows/fuzzing.yml` runs each for 60
 seconds after main pushes, weekly and on demand, with read-only repository
 access and a 15-minute timeout; it is not a merge gate. The invariant checks
 live in the library, and `tests/fadden_pii.rs` and `tests/fuzz_seeds.rs` replay
-every seed through them on stable, so ordinary CI catches a broken check. A
+every seed through them on stable, so ordinary CI catches a broken check. The
+exception is `inflate`: its reference inflater is a dependency of the fuzz
+crate alone, so only the fuzzer replays its seeds. A
 successful run is bounded evidence, not proof that every input is handled.
