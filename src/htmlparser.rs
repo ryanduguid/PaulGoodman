@@ -671,6 +671,30 @@ pub fn parse(text: &str, convert_charrefs: bool) -> Vec<Positioned> {
     events
 }
 
+/// Fuzz invariant: a page decoded from bytes parses without a panic, and each
+/// handler call's `getpos()` is no earlier than the one before. The unit tests
+/// replay seeds through this.
+#[doc(hidden)]
+pub fn check_positions(data: &[u8]) -> Result<(), String> {
+    let Ok(text) = std::str::from_utf8(data) else {
+        return Ok(());
+    };
+    for convert_charrefs in [true, false] {
+        let events = parse(text, convert_charrefs);
+        for pair in events.windows(2) {
+            let before = (pair[0].line, pair[0].offset);
+            let after = (pair[1].line, pair[1].offset);
+            if after < before {
+                return Err(format!(
+                    "{:?} at {after:?} follows {:?} at {before:?} (convert_charrefs {convert_charrefs})",
+                    pair[1].event, pair[0].event
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -36,3 +36,17 @@ fn pattern_engines_seeds_agree() {
         tax_radar_au::fadden::pii::check_engines(&seed).unwrap();
     }
 }
+
+#[test]
+fn epub_read_seeds_read() {
+    for seed in seeds("epub_read") {
+        tax_radar_au::fadden::epub::check_read(&seed).unwrap();
+    }
+}
+
+#[test]
+fn html_parse_seeds_keep_positions_in_order() {
+    for seed in seeds("html_parse") {
+        tax_radar_au::htmlparser::check_positions(&seed).unwrap();
+    }
+}
