@@ -1,0 +1,39 @@
+{
+  "scope": "Official public source reader references, not legal advice or complete retrieval recall",
+  "title_id": "C2004A05138",
+  "section": "8-1",
+  "anchor": "navPoint_55",
+  "clause_phrases": [
+    "You can deduct from your assessable income any loss or outgoing to the extent that",
+    "it is incurred in gaining or producing your assessable income",
+    "it is necessarily incurred in carrying on a *business for the purpose of gaining or producing your assessable income",
+    "However, you cannot deduct a loss or outgoing under this section to the extent that",
+    "it is a loss or outgoing of capital, or of a capital nature",
+    "it is a loss or outgoing of a private or domestic nature",
+    "it is incurred in relation to gaining or producing your *exempt income",
+    "a provision of this Act prevents you from deducting it",
+    "A loss or outgoing that you can deduct under this section is called a general deduction"
+  ],
+  "versions": [
+    {
+      "compilation": "268",
+      "register_id": "C2026C00471",
+      "start": "2026-10-01",
+      "end_exclusive": "2026-12-01",
+      "current_on_2026_11_01": true,
+      "filename": "itaa1997-2026-10-01.epub",
+      "sha256": "05b7d33fbbfba411672c0c9341d282d14a3f9517bcfc2e6d347c349f47ea92ba",
+      "source_url": "https://www.legislation.gov.au/C2004A05138/2026-10-01/2026-10-01/text/original/epub"
+    },
+    {
+      "compilation": "267",
+      "register_id": "C2026C00400",
+      "start": "2026-08-27",
+      "end_exclusive": "2026-10-01",
+      "current_on_2026_11_01": false,
+      "filename": "itaa1997-2026-08-27.epub",
+      "sha256": "08347af7b2070263a3de8a3425431503e777fd6947ed1e75539bd215c99ada00",
+      "source_url": "https://www.legislation.gov.au/C2004A05138/2026-08-27/2026-08-27/text/original/epub"
+    }
+  ]
+}

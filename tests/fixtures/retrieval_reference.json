@@ -1,0 +1,56 @@
+{
+  "scope": "Handwritten references over fabricated titles only. Questions describe intent; query tokens exercise lexical search. No real-corpus recall or legal correctness claim.",
+  "provenance": {
+    "register_id": "C2099A00001",
+    "compilation_number": "1",
+    "compilation_date": "2099-07-01",
+    "retrieved": "2099-08-01",
+    "authorised": false,
+    "version_is_current": true
+  },
+  "queries": [
+    {
+      "question": "Which fabricated rows contain both widget and levy?",
+      "tokens": ["widget", "levy"],
+      "title": null,
+      "expected_row_ids": ["C2099A00001:0002:2‑1", "C2099A00001:0004:4"]
+    },
+    {
+      "question": "Does the instrument contain both terms rather than borrowing a hit from the Act?",
+      "tokens": ["widget", "levy"],
+      "title": "F2099L00003",
+      "expected_row_ids": []
+    },
+    {
+      "question": "Does an absent fabricated term correctly return no retrieval hit?",
+      "tokens": ["nonexistentquartzterm"],
+      "title": null,
+      "expected_row_ids": []
+    },
+    {
+      "question": "Which fabricated schedule row concerns a gadget?",
+      "tokens": ["schedule", "gadget"],
+      "title": "C2099A00001",
+      "expected_row_ids": ["C2099A00001:0005:1"],
+      "container": "Schedule 1"
+    }
+  ],
+  "snapshots": [
+    {
+      "compilation_number": "1",
+      "compilation_date": "2099-07-01",
+      "retrieved": "2099-08-01",
+      "present_term": "amberwidget",
+      "absent_term": "cobaltwidget",
+      "expected_row_id": "C2099A00001:0002:2‑1"
+    },
+    {
+      "compilation_number": "2",
+      "compilation_date": "2099-09-01",
+      "retrieved": "2099-09-02",
+      "present_term": "cobaltwidget",
+      "absent_term": "amberwidget",
+      "expected_row_id": "C2099A00001:0002:2‑1"
+    }
+  ]
+}
