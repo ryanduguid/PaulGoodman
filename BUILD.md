@@ -486,6 +486,85 @@ rows indexed in about 5 seconds into a 77 MB file, with 8,426 definition
 paragraphs and 62,224 section, Division and Subdivision references. Keep the index with the corpus it
 came from and out of git; rebuild it after any corpus rebuild.
 
+## Witnessing section structure
+
+`extract` takes each title's section structure from the EPUB alone, so a section
+the EPUB conversion or the extractor loses would go unnoticed. `python -m fadden
+witness` checks a fixed sample, `fadden/witness_sample.json`, against a second
+rendition of the same compilation: the Register's Word volumes. It is a Rust stage
+of the `fadden` binary with no Python predecessor, reads local files only and
+makes no request.
+
+```bash
+python -m fadden witness fadden/witness_sample.json --epub-dir corpus/epub --word-dir WORD_DIR --out witness.json
+```
+
+- The EPUB side is the `section` of every section row `extract` writes for
+  `<id>.epub`, through the same passes.
+- The Word side is `WORD_DIR/<id>/*.docx`: in each volume's `word/document.xml`,
+  the `CharSectno` run text of every `ActHead5` paragraph.
+- Each volume's `CompilationNumber` property must equal the `compilationNumber`
+  in the `<id>.epub.meta.json` that `download` writes. A mismatch, a missing
+  property or sidecar, a sample that repeats a title or lacks an id or name, an
+  archive without `word/document.xml` or a paragraph left open stops the stage
+  with `error:` and exit 1, and no report is written.
+- The report gives each title's counts and one review item for each identifier
+  whose count differs between the sides: `title`, `compilation` (`number`,
+  `date`), `identifier`, `side` (`epub` or `word`, whichever has more), both
+  counts and a `reason`. Items are ordered by title, then identifier. Exit 0
+  means the report was written, whether or not it holds items.
+
+**Tolerance.** Word writes the hyphen in a section number such as `8-1` as a
+`<w:noBreakHyphen/>` element, the EPUB as U+2011 and `extract` as `-`, so the
+element reads as `-`. Nothing else is normalised. A table-of-sections entry
+(`TofSectsSection`) carries the same run style but is not a heading, so only
+`ActHead5` paragraphs count. Any other difference is a review item: review it
+before widening the tolerance.
+
+**Fetching the Word volumes.** The Register API's `documents` entity has a row
+per format and `volumeNumber`; its key is in
+`https://api.prod.legislation.gov.au/v1/$metadata`. List a compilation's rows,
+then fetch each `Word` row by its key, which returns the `.docx` bytes. Send
+`fadden/http_fetch.py`'s `UA`, allow 10 seconds between files and keep the
+volumes out of git:
+
+```bash
+curl -G -A "$UA" "https://api.prod.legislation.gov.au/v1/documents" \
+  --data-urlencode "\$filter=titleId eq 'C2004A00467' and start eq 2026-06-30T00:00:00 and type eq 'Primary'" \
+  --data-urlencode '$select=titleId,start,retrospectiveStart,rectificationVersionNumber,type,uniqueTypeNumber,volumeNumber,format,compilationNumber,sizeInBytes'
+curl -A "$UA" -o WORD_DIR/C2004A00467/C2004A00467.vol00.docx \
+  "https://api.prod.legislation.gov.au/v1/documents(titleId=%27C2004A00467%27,start=2026-06-30T00%3A00%3A00,retrospectiveStart=2026-06-30T00%3A00%3A00,rectificationVersionNumber=0,type=%27Primary%27,uniqueTypeNumber=0,volumeNumber=0,format=%27Word%27)"
+```
+
+**Results, 2 November 2026.** Each title's current compilation was fetched as
+EPUB (through `download`'s URL and curl arguments) and as Word (as above); the
+Register served every request. The sample is a small, a medium and a large Act;
+the release build of the stage read all 3 in 1.8 seconds:
+
+| Title | Compilation | Word volumes | EPUB sections | Word sections | Review items |
+| --- | --- | --- | --- | --- | --- |
+| C2004A00467 *A New Tax System (Australian Business Number) Act 1999* | 32, 30 June 2026 | 1 | 39 | 39 | 0 |
+| C2004A03280 *Fringe Benefits Tax Assessment Act 1986* | 97, 1 July 2026 | 2 | 294 | 294 | 0 |
+| C2004A05138 *Income Tax Assessment Act 1997* | 268, 1 October 2026 | 12 | 4,653 | 4,653 | 0 |
+
+Before the tolerance, all 4,653 *Income Tax Assessment Act 1997* identifiers
+differed (each is a Division-style number) and the tolerance removed every one;
+the other 2 titles needed none. The Word volumes of that Act also carry 3
+`TofSectsSection` entries with `CharSectno` runs. No other difference appeared,
+so the sample needed no handling for repealed or omitted provisions, notes or
+other numbering forms. Planting 2 defects in the real
+*Fringe Benefits Tax Assessment Act 1986* EPUB showed the check is not blind:
+dropping its second volume gave 108 Word-only items, and renaming the class of
+every 25th `ActHead5` paragraph, which `extract` silently folds into the row
+before, gave 11.
+
+**Limits.** This is a 3-title sample of Acts, not a correctness proof. Both
+renditions come from one Register source (the EPUB keeps Word's style names as
+classes), so agreement shows the conversion and the extractor kept the section
+structure, not that the source is right. Only identifiers and their counts are
+compared, not order, headings or text. The Word side reads the Acts' template;
+instruments use other templates and are not sampled.
+
 ## Running the pipeline
 
 The builder deliberately does **not** read `ATO_KB_ROOT` or `ATO_DIST`.
@@ -519,6 +598,7 @@ python -m fadden check_current # read-only staleness check against the Register
 python -m fadden as_at 2026-07-15 # classify each title's captured compilation against a date (docs/scope.md)
 python -m fadden compare_builds OLD_ROOT NEW_ROOT # list the sections added, removed and changed between two builds
 python -m fadden search build corpus --out search.sqlite # full-text, definitions and reference index (see "Searching a built corpus")
+python -m fadden witness fadden/witness_sample.json --epub-dir corpus/epub --word-dir WORD_DIR --out witness.json # check sampled titles' section structure against the Word rendition (see "Witnessing section structure")
 python -m fadden capture_register -- fadden/manifest_md.json --out build/register-capture-20260829
 python -m fadden export_live_evidence_bundles -- build/register-capture-20260829 --out build/live-evidence-20260829
 ```
