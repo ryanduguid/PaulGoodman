@@ -28,7 +28,7 @@ Seven cargo-fuzz targets check invariants of the code that reads untrusted input
   (`src/htmlparser.rs`), which reads legislation and ruling pages: no page may
   panic it, and each handler call's position must be no earlier than the last.
 
-The other six take their seeds from `fuzz/seeds/<target>`. Failed invariants
+The other 6 take their seeds from `fuzz/seeds/<target>`. Failed invariants
 abort the run.
 
 cargo-fuzz needs a nightly toolchain. On Linux, from the repository root, run:
