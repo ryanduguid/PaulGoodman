@@ -511,7 +511,14 @@ python -m fadden witness fadden/witness_sample.json --epub-dir corpus/epub --wor
   original text (`rectificationVersionNumber` 0) of the primary document, so
   its key is the `compilationRegisterId`, `compilationNumber` and start date in
   the `<id>.epub.meta.json` that `download` writes, with `retrospectiveStart`
-  on that date, `type` `Primary` and `uniqueTypeNumber` 0. The listing must
+  on that date, `type` `Primary` and `uniqueTypeNumber` 0. On 3 November 2026
+  the Income Tax Assessment Act 1997's compilation 237 (14 October 2022), which
+  has a rectification, gave the same SHA-256 through `text/original/epub` as
+  the API's rectification 0 EPUB, and through `text/1/epub` as rectification 1.
+  None of the API's 796,600 document rows had a `retrospectiveStart` other
+  than its `start`; of 359,583 versions, the 799 that did had no `registerId`.
+  A compilation whose rows differed would be refused: its listing would hold
+  no `Epub` row with the key. The listing must
   hold exactly one `Epub` row with that key, and the `Word` rows with the same
   key are the volumes. Rows of other versions on the date are not: on the
   Register a rectification shares the compilation's id, number and dates, and

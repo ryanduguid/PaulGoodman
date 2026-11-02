@@ -493,7 +493,7 @@ fn malformed_inputs_are_refused() {
 
 #[test]
 fn the_volumes_must_be_those_the_register_lists() {
-    let cases: [Case; 10] = [
+    let cases: [Case; 11] = [
         (
             "documents.json lists C2099A00001.vol02.docx, which is missing",
             |f| {
@@ -531,6 +531,22 @@ fn the_volumes_must_be_those_the_register_lists() {
             f.listing_rows(
                 ACT,
                 vec![row_with("Epub", 0, "start", json!("2099-01-01T00:00:00"))],
+            );
+        }),
+        // A row whose retrospective start differs is another version (the Register had none on 3 November 2026).
+        ("lists 0 EPUB rows", |f| {
+            f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+            f.listing_rows(
+                ACT,
+                vec![
+                    row_with(
+                        "Epub",
+                        0,
+                        "retrospectiveStart",
+                        json!("2099-07-02T00:00:00"),
+                    ),
+                    row(ACT, "32", "Word", 1),
+                ],
             );
         }),
         ("lists 2 EPUB rows", |f| {
