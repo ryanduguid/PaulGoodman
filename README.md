@@ -22,6 +22,8 @@
 ![python: 3.14+](.github/assets/badges/python.svg)
 [![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
 
+[Two related systems](#two-related-systems) · [Reference](#reference) · [Source and licence](#source-and-licence)
+
 </div>
 
 Builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, and runs `tax-radar-au`, a queue that raises apparent Register changes for a person to assess. The repository holds code, not the corpus.
@@ -53,9 +55,6 @@ no real legislation and establish no legal effect.
 
 **Human decision:** Inspect the cited source and decide whether the apparent change affects a workpaper or workflow. This offline example makes no Register request and establishes no real legislative change.
 
-<details>
-<summary>Build the corpus, inspect contracts and check limitations</summary>
-
 ## Two related systems
 
 The corpus builder (`python -m fadden`) produces retrieval material from Commonwealth legislation. Its `rulings` stage derives paragraph JSONL from named ATO rulings and related documents under the ATO's reuse notice ([docs/rulings.md](docs/rulings.md)). The change-review queue (`tax-radar-au`) consumes a reviewed observation contract and raises items for a person to assess.
@@ -82,8 +81,6 @@ Live Register capture, synthetic observations and publication candidates have di
 The primary source is the [Federal Register of Legislation](https://www.legislation.gov.au/). The repository contains code, not the corpus; generated output retains its own source and licence records.
 
 Code: licensed under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). You may use, modify and redistribute it for any purpose except a Competing Use as defined in LICENSE (making it available to others in a competing commercial product or service), and each version becomes available under Apache-2.0 2 years after it is made available. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Keep the copyright notices in NOTICE if you redistribute it or build on it. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
-
-</details>
 
 ---
 
