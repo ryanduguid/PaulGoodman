@@ -415,9 +415,10 @@ def main():
                     raise ValueError("%s: missing compilationRegisterId" % rid)
                 no_document = a["compilationRegisterId"] is None
 
-                # A cached file is only valid for the version it was fetched under.
-                # Without this check a re-run stamps the newly resolved compilation
-                # number onto stale bytes.
+                # A cached file is only valid for the version and compilation it was
+                # fetched under. Without this check a re-run stamps the newly resolved
+                # compilation number onto stale bytes. Sidecars written before they
+                # recorded compilationRegisterId keep the resolved id.
                 side = child(EPUB_DIR, "%s.epub.meta.json" % rid)
                 if (not no_document and os.path.exists(dst) and valid_zip(dst)
                         and os.path.exists(side)):
@@ -426,12 +427,14 @@ def main():
                             prev = json.load(f)
                     except Exception:
                         prev = {}
-                    if prev.get("versionStart") == d:
+                    cached_id = prev.get("compilationRegisterId")
+                    if (prev.get("versionStart") == d
+                            and cached_id in (None, a["compilationRegisterId"])):
                         sz = os.path.getsize(dst)
                         manifest.append(dict(
                             a, epub=os.path.basename(dst), bytes=sz,
                             status="cached", sourceUrl=url,
-                            compilationRegisterId=prev.get("compilationRegisterId"),
+                            compilationRegisterId=a["compilationRegisterId"],
                             isAuthorised=prev.get("isAuthorised"),
                             fetched_at=prev.get("fetched_at")))
                         ok_n += 1
