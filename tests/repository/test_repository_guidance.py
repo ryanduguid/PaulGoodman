@@ -35,6 +35,8 @@ EXPECTED_MAP = """\
 - [BUILD.md](BUILD.md) owns pipeline, monitor-export, live-capture and live-export details.
 - [RADAR.md](RADAR.md) owns the synthetic review-queue contract and human-review boundary.
 - [RELEASING.md](RELEASING.md) owns builder release preflight and immutable-release rules.
+- [docs/scope.md](docs/scope.md) owns corpus limits and the source intake record. A new
+  source class needs its row, checked at the source, before any stage reads it.
 - The approved [Stage 3A capture design](docs/superpowers/specs/2026-08-29-live-register-capture-design.md)
   and [Stage 3B evidence design](docs/superpowers/specs/2026-08-29-authenticated-live-evidence-admission-design.md)
   own the trust, provenance and publication boundaries. Keep operational detail there
