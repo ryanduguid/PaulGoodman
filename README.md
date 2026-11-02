@@ -24,6 +24,8 @@
 
 </div>
 
+Builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, and runs `tax-radar-au`, a queue that raises apparent Register changes for a person to assess. The repository holds code, not the corpus.
+
 Synthetic example. This is a finding aid derived from the Register's EPUB reading view, not authorised legislation, tax advice or a conclusion about legal effect.
 
 **Input:** the fabricated [source index](tests/corpus/fixtures/publication/sample-sources.json) and [reviewed observation facts](tests/corpus/fixtures/publication/sample-observation-facts-v3.json).
