@@ -188,18 +188,12 @@ travel with the repository. A corpus published before the Rust port carries in
 `build/` the full set, with the Python stage scripts that produced it, and
 there any single stage can be re-run with those scripts.
 
-**The committed title lists and `manifest_md.json` describe the Register as
-at 3 and 4 August 2026.** The title lists are unchanged since they were
-committed on 4 August, and the manifest's downloads are dated 3 and 4 August;
-only its C2004A00982 row has been re-resolved since (30 August). The Register
-has moved on: `titles_principal.json` still lists C2004A03970 (Superannuation
-Benefits (Supervisory Mechanisms) Act 1990) as in force, and on 3 November
-2026 the Register reported it Repealed. `discover` refuses a list that drops
-an earlier title unless given `--accept-missing`, so a re-run reports such
-titles rather than removing them silently. In the manifest, 156 of the 175
-`cached` rows (EPUBs kept from an earlier run, whose register id is copied
-from that run's sidecar) have a null `compilationRegisterId`, because those
-sidecars did not record it.
+**`fadden/titles_principal.json` is unchanged from its 4 August 2026
+commit.** The rows in `fadden/manifest_md.json` record retrieval on 3 or
+4 August 2026; the C2004A00982 row's version metadata and source URL were
+corrected on 30 August. These files do not establish the Register's current
+status. In the manifest, 156 of the 175 rows marked `cached` have a null
+`compilationRegisterId`.
 
 **`manifest_md.json` and the published corpus predate the volume-gate fix
 below.** They were produced by the extractor as it stood before it, so
