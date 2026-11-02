@@ -271,17 +271,44 @@ fn listed(row: &Json, key: &str) -> Option<String> {
 
 /// The volume numbers of the compilation's Word documents, from
 /// `<id>/documents.json`: the Register API's `documents` listing for the
-/// compilation, saved as returned. Every row must be this title's, and every
-/// Word row this compilation's, starting on the EPUB's date; a listing with no
-/// Word row, or one that lists a volume twice, is refused.
-fn listed_volumes(path: &str, rid: &str, number: &str, date: &str) -> Result<Vec<u32>, Exc> {
+/// compilation, saved as returned. Every row must be this title's. The EPUB's
+/// version is the one `download` fetches: the website's
+/// `<id>/<date>/<date>/text/original/epub` serves the original text
+/// (rectification 0) of the compilation's primary document. The listing must
+/// hold exactly one EPUB row with that whole version key, and the Word rows
+/// with the same key are the volumes; rows of other versions on the same date
+/// (the text as made, a rectification) are not. A page of a longer listing, a
+/// listing with no such Word row, or one that lists a volume twice is refused.
+fn listed_volumes(
+    path: &str,
+    rid: &str,
+    register: &str,
+    number: &str,
+    date: &str,
+) -> Result<Vec<u32>, Exc> {
     let listing = pyjson::loads_standard(&crate::pyio::read_text(path)?).map_err(json_error)?;
+    if listing.get("@odata.nextLink").is_some() {
+        return Err(refuse(format!(
+            "{path} is one page of a longer listing (it has @odata.nextLink); filter it to the compilation's start date so it fits on one page"
+        )));
+    }
     let Some(Json::Array(rows)) = listing.get("value") else {
         return Err(refuse(format!(
             "{path}: not a documents listing (no \"value\" list)"
         )));
     };
-    let mut volumes = Vec::new();
+    let start = format!("{date}T00:00:00");
+    let version = [
+        ("registerId", register),
+        ("compilationNumber", number),
+        ("start", start.as_str()),
+        ("retrospectiveStart", start.as_str()),
+        ("rectificationVersionNumber", "0"),
+        ("type", "Primary"),
+        ("uniqueTypeNumber", "0"),
+    ];
+    let described = format!("{register} compilation {number} of {date}, rectification 0");
+    let (mut epubs, mut volumes) = (0, Vec::new());
     for row in rows {
         let title = listed(row, "titleId");
         if title.as_deref() != Some(rid) {
@@ -290,30 +317,35 @@ fn listed_volumes(path: &str, rid: &str, number: &str, date: &str) -> Result<Vec
                 title.as_deref().unwrap_or("no title")
             )));
         }
-        if listed(row, "format").as_deref() != Some("Word") {
+        if !version
+            .iter()
+            .all(|(key, value)| listed(row, key).as_deref() == Some(*value))
+        {
             continue;
         }
-        let compilation = listed(row, "compilationNumber");
-        let start = listed(row, "start");
-        if compilation.as_deref() != Some(number)
-            || start.as_deref().and_then(|s| s.get(..10)) != Some(date)
-        {
-            return Err(refuse(format!(
-                "{path} lists a Word document of compilation {} starting {}; the EPUB is compilation {number} of {date}",
-                compilation.as_deref().unwrap_or("(none)"),
-                start.as_deref().unwrap_or("(none)")
-            )));
+        match listed(row, "format").as_deref() {
+            Some("Epub") => epubs += 1,
+            Some("Word") => {
+                let volume = listed(row, "volumeNumber")
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .ok_or_else(|| refuse(format!("{path}: a Word row has no volumeNumber")))?;
+                if volumes.contains(&volume) {
+                    return Err(refuse(format!("{path} lists Word volume {volume} twice")));
+                }
+                volumes.push(volume);
+            }
+            _ => {}
         }
-        let volume = listed(row, "volumeNumber")
-            .and_then(|v| v.parse::<u32>().ok())
-            .ok_or_else(|| refuse(format!("{path}: a Word row has no volumeNumber")))?;
-        if volumes.contains(&volume) {
-            return Err(refuse(format!("{path} lists Word volume {volume} twice")));
-        }
-        volumes.push(volume);
+    }
+    if epubs != 1 {
+        return Err(refuse(format!(
+            "{path} lists {epubs} EPUB rows of {described}, the version download fetches; it must list exactly 1"
+        )));
     }
     if volumes.is_empty() {
-        return Err(refuse(format!("{path} lists no Word document")));
+        return Err(refuse(format!(
+            "{path} lists no Word document of {described}"
+        )));
     }
     volumes.sort_unstable();
     Ok(volumes)
@@ -359,11 +391,13 @@ fn witness_title(rid: &str, name: &Json, epub_dir: &str, word_dir: &str) -> Resu
     let meta = pyjson::loads_standard(&crate::pyio::read_text(&side)?).map_err(json_error)?;
     let number = sidecar_text(&meta, "compilationNumber", &side)?;
     let date = sidecar_text(&meta, "versionStart", &side)?;
+    let register = sidecar_text(&meta, "compilationRegisterId", &side)?;
 
     let volumes_dir = child(word_dir, &[rid])?;
     let expected: Vec<String> = listed_volumes(
         &child(&volumes_dir, &["documents.json"])?,
         rid,
+        &register,
         &number,
         &date,
     )?

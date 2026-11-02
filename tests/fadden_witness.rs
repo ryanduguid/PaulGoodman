@@ -210,13 +210,8 @@ impl Fixture {
     /// `WORD_DIR/<rid>/documents.json` as the Register API returns it: the
     /// EPUB row and one Word row per volume number.
     fn listing(&self, rid: &str, compilation: &str, volumes: &[u32]) {
-        let row = |format: &str, volume: u32| {
-            json!({"titleId": rid, "start": "2099-07-01T00:00:00", "type": "Primary",
-                   "uniqueTypeNumber": 0, "volumeNumber": volume, "format": format,
-                   "compilationNumber": compilation, "sizeInBytes": 1000})
-        };
-        let mut rows = vec![row("Epub", 0)];
-        rows.extend(volumes.iter().map(|v| row("Word", *v)));
+        let mut rows = vec![row(rid, compilation, "Epub", 0)];
+        rows.extend(volumes.iter().map(|v| row(rid, compilation, "Word", *v)));
         self.listing_rows(rid, rows);
     }
 
@@ -276,6 +271,22 @@ impl Fixture {
 
 fn sidecar(number: &str) -> Value {
     json!({"versionStart": "2099-07-01", "compilationNumber": number, "compilationRegisterId": "C2099C00001"})
+}
+
+/// A listing row of the original text (rectification 0) of compilation
+/// C2099C00001, starting 1 July 2099, as the Register API gives it.
+fn row(rid: &str, compilation: &str, format: &str, volume: u32) -> Value {
+    json!({"titleId": rid, "registerId": "C2099C00001", "start": "2099-07-01T00:00:00",
+           "retrospectiveStart": "2099-07-01T00:00:00", "rectificationVersionNumber": 0,
+           "type": "Primary", "uniqueTypeNumber": 0, "volumeNumber": volume, "format": format,
+           "compilationNumber": compilation, "sizeInBytes": 1000})
+}
+
+/// `row` with `key` set to `value`.
+fn row_with(format: &str, volume: u32, key: &str, value: Value) -> Value {
+    let mut row = row(ACT, "32", format, volume);
+    row[key] = value;
+    row
 }
 
 #[test]
@@ -435,7 +446,7 @@ type Case = (&'static str, fn(&Fixture));
 
 #[test]
 fn malformed_inputs_are_refused() {
-    let cases: [Case; 8] = [
+    let cases: [Case; 9] = [
         ("is listed twice", |f| {
             f.sample(&json!([{"id": ACT, "name": "A"}, {"id": ACT, "name": "A"}]));
         }),
@@ -463,6 +474,14 @@ fn malformed_inputs_are_refused() {
             );
             f.word(ACT, &[(&["1"], Some("32"))]);
         }),
+        ("records no compilationRegisterId", |f| {
+            f.epub(
+                ACT,
+                &[numbered(&["1"])],
+                &json!({"versionStart": "2099-07-01", "compilationNumber": "32"}),
+            );
+            f.word(ACT, &[(&["1"], Some("32"))]);
+        }),
     ];
     for (message, setup) in cases {
         let f = Fixture::new();
@@ -474,7 +493,7 @@ fn malformed_inputs_are_refused() {
 
 #[test]
 fn the_volumes_must_be_those_the_register_lists() {
-    let cases: [Case; 7] = [
+    let cases: [Case; 10] = [
         (
             "documents.json lists C2099A00001.vol02.docx, which is missing",
             |f| {
@@ -499,25 +518,61 @@ fn the_volumes_must_be_those_the_register_lists() {
             f.listing_rows(ACT, vec![json!({"titleId": OTHER, "start": "2099-07-01T00:00:00",
                                             "volumeNumber": 1, "format": "Word", "compilationNumber": "32"})]);
         }),
+        // A listing of another compilation holds no row of the EPUB's version.
         (
-            "lists a Word document of compilation 31 starting 2099-07-01T00:00:00; the EPUB is compilation 32 of 2099-07-01",
+            "lists 0 EPUB rows of C2099C00001 compilation 32 of 2099-07-01, rectification 0, the version download fetches; it must list exactly 1",
             |f| {
                 f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
                 f.listing(ACT, "31", &[1]);
             },
         ),
+        ("lists 0 EPUB rows", |f| {
+            f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+            f.listing_rows(
+                ACT,
+                vec![row_with("Epub", 0, "start", json!("2099-01-01T00:00:00"))],
+            );
+        }),
+        ("lists 2 EPUB rows", |f| {
+            f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+            f.listing_rows(
+                ACT,
+                vec![
+                    row(ACT, "32", "Epub", 0),
+                    row(ACT, "32", "Epub", 0),
+                    row(ACT, "32", "Word", 1),
+                ],
+            );
+        }),
         (
-            "lists a Word document of compilation 32 starting 2099-01-01T00:00:00",
+            "lists no Word document of C2099C00001 compilation 32 of 2099-07-01, rectification 0",
             |f| {
                 f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
-                f.listing_rows(ACT, vec![json!({"titleId": ACT, "start": "2099-01-01T00:00:00",
-                                            "volumeNumber": 1, "format": "Word", "compilationNumber": "32"})]);
+                f.listing(ACT, "32", &[]);
             },
         ),
-        ("lists no Word document", |f| {
+        // The rectification's Word volume shares every field but the
+        // rectification number, so it is not the EPUB's.
+        ("lists no Word document of", |f| {
             f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
-            f.listing(ACT, "32", &[]);
+            f.listing_rows(
+                ACT,
+                vec![
+                    row(ACT, "32", "Epub", 0),
+                    row_with("Word", 1, "rectificationVersionNumber", json!(1)),
+                ],
+            );
         }),
+        (
+            "is one page of a longer listing (it has @odata.nextLink)",
+            |f| {
+                f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+                let dir = f.root.join("word").join(ACT);
+                let listing = json!({"value": [row(ACT, "32", "Epub", 0), row(ACT, "32", "Word", 1)],
+                                     "@odata.nextLink": "https://api.prod.legislation.gov.au/v1/documents?$skip=510"});
+                std::fs::write(dir.join("documents.json"), listing.to_string()).unwrap();
+            },
+        ),
     ];
     for (message, setup) in cases {
         let f = Fixture::new();
@@ -525,6 +580,40 @@ fn the_volumes_must_be_those_the_register_lists() {
         setup(&f);
         refused(&f, message);
     }
+}
+
+/// The Register lists every version starting on a date together: here a
+/// rectification of the compilation, with a second volume, and the text as
+/// made, which carries the title's own register id. Only the original
+/// text's Word rows are the EPUB's volumes, so neither counts as a volume
+/// the directory lacks or one listed twice.
+#[test]
+fn only_the_epubs_version_gives_the_volumes() {
+    let f = Fixture::new();
+    agreeing(&f);
+    f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+    let rectified =
+        |format, volume| row_with(format, volume, "rectificationVersionNumber", json!(1));
+    let mut made = row(ACT, "0", "Word", 1);
+    made["registerId"] = json!(ACT);
+    f.listing_rows(
+        ACT,
+        vec![
+            rectified("Epub", 0),
+            rectified("Word", 1),
+            rectified("Word", 2),
+            made,
+            row(ACT, "32", "Pdf", 1),
+            row(ACT, "32", "Epub", 0),
+            row(ACT, "32", "Word", 1),
+        ],
+    );
+    let (code, stdout, stderr) = f.run();
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert!(
+        stdout.contains("2 Word sections in 1 volume, 0 review items"),
+        "{stdout}"
+    );
 }
 
 #[test]

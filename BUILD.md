@@ -506,11 +506,19 @@ python -m fadden witness fadden/witness_sample.json --epub-dir corpus/epub --wor
   Styles inside a tracked change (`w:pPrChange`, `w:rPrChange`) are earlier
   ones and are not read.
 - `WORD_DIR/<id>/documents.json` is the Register's `documents` listing for the
-  compilation, saved as returned. Every row must be this title's, and every
-  `Word` row must carry the `compilationNumber` and start date in the
-  `<id>.epub.meta.json` that `download` writes. The `.docx` files must be
-  exactly the listed volumes, `NN` being the row's two-digit `volumeNumber`:
-  a missing, extra or repeated volume is refused.
+  compilation, saved as returned. Every row must be this title's. The EPUB's
+  version is the one `download` fetches: `text/original/epub` serves the
+  original text (`rectificationVersionNumber` 0) of the primary document, so
+  its key is the `compilationRegisterId`, `compilationNumber` and start date in
+  the `<id>.epub.meta.json` that `download` writes, with `retrospectiveStart`
+  on that date, `type` `Primary` and `uniqueTypeNumber` 0. The listing must
+  hold exactly one `Epub` row with that key, and the `Word` rows with the same
+  key are the volumes. Rows of other versions on the date are not: on the
+  Register a rectification shares the compilation's id, number and dates, and
+  the text as made can start on the same day. A listing that is one page of
+  several (it has `@odata.nextLink`) is refused. The `.docx` files must be
+  exactly those volumes, `NN` being the row's two-digit `volumeNumber`: a
+  missing, extra or repeated volume is refused.
 - Each volume's `CompilationNumber` property must equal the sidecar's
   `compilationNumber`, and its `ShortT` property the sample's `name`. Both
   parts must be UTF-8 and well formed (every element closed in order inside a
@@ -535,14 +543,21 @@ before widening the tolerance.
 **Fetching the Word volumes.** The Register API's `documents` entity has a row
 per format and `volumeNumber`; its key is in
 `https://api.prod.legislation.gov.au/v1/$metadata`. Save a compilation's listing as
-`WORD_DIR/<id>/documents.json`, then fetch each `Word` row by its key, which
-returns the `.docx` bytes. Send `fadden/http_fetch.py`'s `UA`, allow 10 seconds
+`WORD_DIR/<id>/documents.json`, then fetch each `Word` row of the EPUB's
+version (rectification 0) by its key, which returns the `.docx` bytes. The key
+has no `registerId`, so on the day the text as made starts it also matches the
+as-made document: for the Fringe Benefits Tax Assessment Act 1986's compilation
+1 (24 June 1986) the API served that file, which has no `CompilationNumber`
+property and is refused, whilst the website's
+`<id>/<date>/<date>/text/original/word` served compilation 1. The
+listing below fits on one page; an unfiltered title listing may not (on 3 November
+2026 the Income Tax Assessment Act 1997's had 15 pages of 510 rows or fewer). Send `fadden/http_fetch.py`'s `UA`, allow 10 seconds
 between files and keep the volumes out of git:
 
 ```bash
 curl -G -A "$UA" -o WORD_DIR/C2004A00467/documents.json "https://api.prod.legislation.gov.au/v1/documents" \
   --data-urlencode "\$filter=titleId eq 'C2004A00467' and start eq 2026-06-30T00:00:00 and type eq 'Primary'" \
-  --data-urlencode '$select=titleId,start,retrospectiveStart,rectificationVersionNumber,type,uniqueTypeNumber,volumeNumber,format,compilationNumber,sizeInBytes'
+  --data-urlencode '$select=titleId,registerId,start,retrospectiveStart,rectificationVersionNumber,type,uniqueTypeNumber,volumeNumber,format,compilationNumber,sizeInBytes'
 curl -A "$UA" -o WORD_DIR/C2004A00467/C2004A00467.vol00.docx \
   "https://api.prod.legislation.gov.au/v1/documents(titleId=%27C2004A00467%27,start=2026-06-30T00%3A00%3A00,retrospectiveStart=2026-06-30T00%3A00%3A00,rectificationVersionNumber=0,type=%27Primary%27,uniqueTypeNumber=0,volumeNumber=0,format=%27Word%27)"
 ```
@@ -576,7 +591,10 @@ structure, not that the source is right. Only identifiers and their counts are
 compared, not order, headings or text. The Word side reads the Acts' template;
 instruments use other templates and are not sampled. The EPUB and its sidecar
 are taken as `download` wrote them: neither records a hash, so the stage
-checks the Word side against the sidecar but not the EPUB's bytes.
+checks the Word side against the sidecar but not the EPUB's bytes. A Word
+volume records no rectification number, so only the listing tells a
+rectification's volumes from the original's; the stage trusts that each
+`.docx` was fetched by the key of the listed row its name gives.
 
 ## Running the pipeline
 
