@@ -3,7 +3,8 @@
 //! (`ActHead5` paragraphs, `CharSectno` spans, U+2011 hyphens); the Word
 //! volumes as its Word compilations do (split `CharSectno` runs,
 //! `<w:noBreakHyphen/>`, a `TofSectsSection` contents entry, the
-//! `CompilationNumber` property).
+//! `CompilationNumber` and `ShortT` properties), with the Register's
+//! `documents` listing beside them.
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -16,10 +17,10 @@ const ACT: &str = "C2099A00001";
 const OTHER: &str = "C2099A00002";
 
 /// A ZIP of stored members, laid out as `zipfile.writestr` writes one.
-fn zip(members: &[(&str, String)]) -> Vec<u8> {
+fn zip<D: AsRef<[u8]>>(members: &[(&str, D)]) -> Vec<u8> {
     let (mut out, mut central) = (Vec::new(), Vec::new());
     for (name, data) in members {
-        let (name, data) = (name.as_bytes(), data.as_bytes());
+        let (name, data) = (name.as_bytes(), data.as_ref());
         let sizes = [crc32(data, 0), data.len() as u32, data.len() as u32];
         let offset = out.len() as u32;
         out.extend(b"PK\x03\x04");
@@ -97,8 +98,50 @@ fn epub(volumes: &[Vec<Heading>]) -> Vec<u8> {
 
 const RUN_NUMBER: &str = "<w:r><w:rPr><w:rStyle w:val=\"CharSectno\"/></w:rPr>";
 
-/// A Word volume numbering `ids`, with `compilation` as its property.
-fn docx(ids: &[&str], compilation: Option<&str>) -> Vec<u8> {
+/// The custom properties part of a Word volume: `Compilation` and each of
+/// `properties` in order.
+fn custom(properties: &[(&str, &str)]) -> String {
+    let mut body = String::new();
+    for (pid, (name, value)) in std::iter::once(&("Compilation", "Yes"))
+        .chain(properties)
+        .enumerate()
+    {
+        body.push_str(&format!(
+            "<property fmtid=\"{{D5CDD505-2E9C-101B-9397-08002B2CF9AE}}\" pid=\"{}\" name=\"{name}\">\
+             <vt:lpwstr>{value}</vt:lpwstr></property>",
+            pid + 2
+        ));
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <Properties xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">\
+         {body}</Properties>"
+    )
+}
+
+/// The name the fixture's sample gives `rid`, which its Word volumes carry as `ShortT`.
+fn title(rid: &str) -> String {
+    format!("Synthetic Act {rid}")
+}
+
+/// A Word volume numbering `ids`, with `compilation` and `title` as its
+/// properties; with neither, it has no custom properties part.
+fn docx(ids: &[&str], compilation: Option<&str>, title: Option<&str>) -> Vec<u8> {
+    let mut members = vec![
+        ("[Content_Types].xml", "<Types/>".to_string()),
+        ("word/document.xml", document(ids)),
+    ];
+    let mut properties = Vec::new();
+    properties.extend(compilation.map(|n| ("CompilationNumber", n)));
+    properties.extend(title.map(|t| ("ShortT", t)));
+    if !properties.is_empty() {
+        members.push(("docProps/custom.xml", custom(&properties)));
+    }
+    zip(&members)
+}
+
+/// A Word volume's `word/document.xml`, numbering `ids`.
+fn document(ids: &[&str]) -> String {
     let mut body = String::new();
     if let Some(first) = ids.first() {
         // The table of sections numbers its entries with the heading's run style.
@@ -121,28 +164,11 @@ fn docx(ids: &[&str], compilation: Option<&str>) -> Vec<u8> {
              <w:p><w:pPr><w:pStyle w:val=\"subsection\"/></w:pPr><w:r><w:t>Text of section {id}.</w:t></w:r></w:p>"
         ));
     }
-    let document = format!(
+    format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
          <w:body>{body}</w:body></w:document>"
-    );
-    let mut members = vec![
-        ("[Content_Types].xml", "<Types/>".to_string()),
-        ("word/document.xml", document),
-    ];
-    if let Some(number) = compilation {
-        members.push((
-            "docProps/custom.xml",
-            format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-                 <Properties xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">\
-                 <property fmtid=\"{{D5CDD505-2E9C-101B-9397-08002B2CF9AE}}\" pid=\"2\" name=\"Compilation\"><vt:lpwstr>Yes</vt:lpwstr></property>\
-                 <property fmtid=\"{{D5CDD505-2E9C-101B-9397-08002B2CF9AE}}\" pid=\"3\" name=\"CompilationNumber\"><vt:lpwstr>{number}</vt:lpwstr></property>\
-                 </Properties>"
-            ),
-        ));
-    }
-    zip(&members)
+    )
 }
 
 struct Fixture {
@@ -166,7 +192,7 @@ impl Fixture {
     fn titles(&self, rids: &[&str]) {
         let items: Vec<Value> = rids
             .iter()
-            .map(|rid| json!({"id": rid, "name": format!("Synthetic Act {rid}")}))
+            .map(|rid| json!({"id": rid, "name": title(rid)}))
             .collect();
         self.sample(&Value::Array(items));
     }
@@ -181,13 +207,42 @@ impl Fixture {
         .unwrap();
     }
 
-    fn word(&self, rid: &str, volumes: &[(&[&str], Option<&str>)]) {
+    /// `WORD_DIR/<rid>/documents.json` as the Register API returns it: the
+    /// EPUB row and one Word row per volume number.
+    fn listing(&self, rid: &str, compilation: &str, volumes: &[u32]) {
+        let row = |format: &str, volume: u32| {
+            json!({"titleId": rid, "start": "2099-07-01T00:00:00", "type": "Primary",
+                   "uniqueTypeNumber": 0, "volumeNumber": volume, "format": format,
+                   "compilationNumber": compilation, "sizeInBytes": 1000})
+        };
+        let mut rows = vec![row("Epub", 0)];
+        rows.extend(volumes.iter().map(|v| row("Word", *v)));
+        self.listing_rows(rid, rows);
+    }
+
+    fn listing_rows(&self, rid: &str, rows: Vec<Value>) {
         let dir = self.root.join("word").join(rid);
         std::fs::create_dir_all(&dir).unwrap();
-        for (i, (ids, compilation)) in volumes.iter().enumerate() {
-            let name = format!("{rid}.vol{:02}.docx", i + 1);
-            std::fs::write(dir.join(name), docx(ids, *compilation)).unwrap();
+        let listing = json!({"@odata.context": "https://api.prod.legislation.gov.au/v1/$metadata#Documents",
+                             "value": rows});
+        std::fs::write(dir.join("documents.json"), listing.to_string()).unwrap();
+    }
+
+    /// Volumes 1, 2 and so on of `rid`, titled as the sample names it, and a
+    /// listing of them at the first volume's compilation (32 when it has none).
+    fn word(&self, rid: &str, volumes: &[(&[&str], Option<&str>)]) {
+        let numbers: Vec<u32> = (1..=volumes.len() as u32).collect();
+        let compilation = volumes.first().and_then(|v| v.1).unwrap_or("32");
+        self.listing(rid, compilation, &numbers);
+        for (number, (ids, compilation)) in numbers.iter().zip(volumes) {
+            self.volume(rid, *number, &docx(ids, *compilation, Some(&title(rid))));
         }
+    }
+
+    fn volume(&self, rid: &str, number: u32, bytes: &[u8]) {
+        let dir = self.root.join("word").join(rid);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{rid}.vol{number:02}.docx")), bytes).unwrap();
     }
 
     fn out(&self) -> PathBuf {
@@ -380,7 +435,7 @@ type Case = (&'static str, fn(&Fixture));
 
 #[test]
 fn malformed_inputs_are_refused() {
-    let cases: [Case; 7] = [
+    let cases: [Case; 8] = [
         ("is listed twice", |f| {
             f.sample(&json!([{"id": ACT, "name": "A"}, {"id": ACT, "name": "A"}]));
         }),
@@ -389,17 +444,16 @@ fn malformed_inputs_are_refused() {
         }),
         ("the sample lists no titles", |f| f.sample(&json!([]))),
         ("has no name", |f| f.sample(&json!([{"id": ACT}]))),
-        ("no Word volumes (*.docx)", |f| {
+        ("documents.json", |f| {
             std::fs::create_dir(f.root.join("word").join(ACT)).unwrap();
         }),
         ("no word/document.xml; not a Word document", |f| {
-            let dir = f.root.join("word").join(ACT);
-            std::fs::create_dir(&dir).unwrap();
-            std::fs::write(
-                dir.join("x.docx"),
-                zip(&[("[Content_Types].xml", "<Types/>".into())]),
-            )
-            .unwrap();
+            f.listing(ACT, "32", &[1]);
+            f.volume(ACT, 1, &zip(&[("[Content_Types].xml", "<Types/>")]));
+        }),
+        ("no complete ZIP directory record", |f| {
+            f.listing(ACT, "32", &[1]);
+            f.volume(ACT, 1, b"not an archive");
         }),
         ("records no compilationNumber", |f| {
             f.epub(
@@ -419,17 +473,155 @@ fn malformed_inputs_are_refused() {
 }
 
 #[test]
-fn a_truncated_word_volume_is_refused() {
+fn the_volumes_must_be_those_the_register_lists() {
+    let cases: [Case; 7] = [
+        (
+            "documents.json lists C2099A00001.vol02.docx, which is missing",
+            |f| {
+                f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+                f.listing(ACT, "32", &[1, 2]);
+            },
+        ),
+        // A second copy of a volume is not a volume the listing names.
+        (
+            "C2099A00001.vol02.docx is not a Word volume documents.json lists (C2099A00001.vol01.docx)",
+            |f| {
+                f.word(ACT, &[(&["1"], Some("32")), (&["8-1"], Some("32"))]);
+                f.listing(ACT, "32", &[1]);
+            },
+        ),
+        ("lists Word volume 1 twice", |f| {
+            f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+            f.listing(ACT, "32", &[1, 1]);
+        }),
+        ("lists a document of C2099A00002, not C2099A00001", |f| {
+            f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+            f.listing_rows(ACT, vec![json!({"titleId": OTHER, "start": "2099-07-01T00:00:00",
+                                            "volumeNumber": 1, "format": "Word", "compilationNumber": "32"})]);
+        }),
+        (
+            "lists a Word document of compilation 31 starting 2099-07-01T00:00:00; the EPUB is compilation 32 of 2099-07-01",
+            |f| {
+                f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+                f.listing(ACT, "31", &[1]);
+            },
+        ),
+        (
+            "lists a Word document of compilation 32 starting 2099-01-01T00:00:00",
+            |f| {
+                f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+                f.listing_rows(ACT, vec![json!({"titleId": ACT, "start": "2099-01-01T00:00:00",
+                                            "volumeNumber": 1, "format": "Word", "compilationNumber": "32"})]);
+            },
+        ),
+        ("lists no Word document", |f| {
+            f.word(ACT, &[(&["1", "8-1"], Some("32"))]);
+            f.listing(ACT, "32", &[]);
+        }),
+    ];
+    for (message, setup) in cases {
+        let f = Fixture::new();
+        agreeing(&f);
+        setup(&f);
+        refused(&f, message);
+    }
+}
+
+#[test]
+fn a_word_volume_of_another_title_is_refused() {
     let f = Fixture::new();
     agreeing(&f);
-    let dir = f.root.join("word").join(ACT);
-    std::fs::create_dir(&dir).unwrap();
-    let document = "<w:document><w:body><w:p><w:pPr><w:pStyle w:val=\"ActHead5\"/></w:pPr>";
-    let custom = "<Properties><property name=\"CompilationNumber\"><vt:lpwstr>32</vt:lpwstr></property></Properties>";
-    let bytes = zip(&[
-        ("word/document.xml", document.into()),
-        ("docProps/custom.xml", custom.into()),
-    ]);
-    std::fs::write(dir.join("v.docx"), bytes).unwrap();
-    refused(&f, "the document ends inside a paragraph or run");
+    f.listing(ACT, "32", &[1]);
+    f.volume(
+        ACT,
+        1,
+        &docx(&["1", "8-1"], Some("32"), Some("Other Act 1999")),
+    );
+    refused(
+        &f,
+        "vol01.docx is titled Other Act 1999; the sample names C2099A00001 Synthetic Act C2099A00001",
+    );
+
+    let f = Fixture::new();
+    agreeing(&f);
+    f.listing(ACT, "32", &[1]);
+    f.volume(ACT, 1, &docx(&["1", "8-1"], Some("32"), None));
+    refused(&f, "vol01.docx is titled nothing (no ShortT property)");
+}
+
+/// A volume with `document` as its body and `custom` as its properties part.
+fn volume_parts(document: &str, custom: &[u8]) -> Vec<u8> {
+    zip(&[
+        ("word/document.xml", document.as_bytes()),
+        ("docProps/custom.xml", custom),
+    ])
+}
+
+#[test]
+fn a_malformed_word_part_is_refused() {
+    let properties = custom(&[("CompilationNumber", "32"), ("ShortT", &title(ACT))]);
+    let agreeing_body = document(&["1", "8-1"]);
+    let cases: [(&str, Vec<u8>); 6] = [
+        (
+            "word/document.xml: the document ends inside <w:p>",
+            volume_parts(
+                "<w:document><w:body><w:p><w:pPr><w:pStyle w:val=\"ActHead5\"/></w:pPr>",
+                properties.as_bytes(),
+            ),
+        ),
+        (
+            "word/document.xml: <w:r> is closed by </w:p>",
+            volume_parts(
+                "<w:document><w:body><w:p><w:r><w:t>1</w:t></w:p></w:body></w:document>",
+                properties.as_bytes(),
+            ),
+        ),
+        (
+            "word/document.xml: more than one root element",
+            volume_parts(
+                &format!("{agreeing_body}<w:document/>"),
+                properties.as_bytes(),
+            ),
+        ),
+        (
+            "docProps/custom.xml is not UTF-8",
+            volume_parts(&agreeing_body, &[properties.as_bytes(), b"\xff"].concat()),
+        ),
+        (
+            "docProps/custom.xml: <property> is closed by </properties>",
+            volume_parts(
+                &agreeing_body,
+                properties
+                    .replace("</property></Properties>", "</Properties>")
+                    .as_bytes(),
+            ),
+        ),
+        (
+            "docProps/custom.xml: the property CompilationNumber is set twice",
+            volume_parts(
+                &agreeing_body,
+                custom(&[
+                    ("CompilationNumber", "32"),
+                    ("ShortT", &title(ACT)),
+                    ("CompilationNumber", "31"),
+                ])
+                .as_bytes(),
+            ),
+        ),
+    ];
+    for (message, bytes) in cases {
+        let f = Fixture::new();
+        agreeing(&f);
+        f.listing(ACT, "32", &[1]);
+        f.volume(ACT, 1, &bytes);
+        refused(&f, message);
+    }
+    // The same parts, well formed, agree.
+    let f = Fixture::new();
+    agreeing(&f);
+    f.listing(ACT, "32", &[1]);
+    f.volume(ACT, 1, &volume_parts(&agreeing_body, properties.as_bytes()));
+    let (code, _, stderr) = f.run();
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert_eq!(f.report()["review_items"], json!([]));
 }

@@ -501,13 +501,24 @@ python -m fadden witness fadden/witness_sample.json --epub-dir corpus/epub --wor
 
 - The EPUB side is the `section` of every section row `extract` writes for
   `<id>.epub`, through the same passes.
-- The Word side is `WORD_DIR/<id>/*.docx`: in each volume's `word/document.xml`,
-  the `CharSectno` run text of every `ActHead5` paragraph.
-- Each volume's `CompilationNumber` property must equal the `compilationNumber`
-  in the `<id>.epub.meta.json` that `download` writes. A mismatch, a missing
-  property or sidecar, a sample that repeats a title or lacks an id or name, an
-  archive without `word/document.xml` or a paragraph left open stops the stage
-  with `error:` and exit 1, and no report is written.
+- The Word side is `WORD_DIR/<id>/<id>.vol<NN>.docx`: in each volume's
+  `word/document.xml`, the `CharSectno` run text of every `ActHead5` paragraph.
+  Styles inside a tracked change (`w:pPrChange`, `w:rPrChange`) are earlier
+  ones and are not read.
+- `WORD_DIR/<id>/documents.json` is the Register's `documents` listing for the
+  compilation, saved as returned. Every row must be this title's, and every
+  `Word` row must carry the `compilationNumber` and start date in the
+  `<id>.epub.meta.json` that `download` writes. The `.docx` files must be
+  exactly the listed volumes, `NN` being the row's two-digit `volumeNumber`:
+  a missing, extra or repeated volume is refused.
+- Each volume's `CompilationNumber` property must equal the sidecar's
+  `compilationNumber`, and its `ShortT` property the sample's `name`. Both
+  parts must be UTF-8 and well formed (every element closed in order inside a
+  single root), and no property may be set twice.
+- A mismatch or any refusal above, a missing listing, property or sidecar, a
+  sample that repeats a title or lacks an id or name, or an archive that is
+  not a ZIP or lacks `word/document.xml` stops the stage with `error:` and
+  exit 1, and no report is written.
 - The report gives each title's counts and one review item for each identifier
   whose count differs between the sides: `title`, `compilation` (`number`,
   `date`), `identifier`, `side` (`epub` or `word`, whichever has more), both
@@ -523,13 +534,13 @@ before widening the tolerance.
 
 **Fetching the Word volumes.** The Register API's `documents` entity has a row
 per format and `volumeNumber`; its key is in
-`https://api.prod.legislation.gov.au/v1/$metadata`. List a compilation's rows,
-then fetch each `Word` row by its key, which returns the `.docx` bytes. Send
-`fadden/http_fetch.py`'s `UA`, allow 10 seconds between files and keep the
-volumes out of git:
+`https://api.prod.legislation.gov.au/v1/$metadata`. Save a compilation's listing as
+`WORD_DIR/<id>/documents.json`, then fetch each `Word` row by its key, which
+returns the `.docx` bytes. Send `fadden/http_fetch.py`'s `UA`, allow 10 seconds
+between files and keep the volumes out of git:
 
 ```bash
-curl -G -A "$UA" "https://api.prod.legislation.gov.au/v1/documents" \
+curl -G -A "$UA" -o WORD_DIR/C2004A00467/documents.json "https://api.prod.legislation.gov.au/v1/documents" \
   --data-urlencode "\$filter=titleId eq 'C2004A00467' and start eq 2026-06-30T00:00:00 and type eq 'Primary'" \
   --data-urlencode '$select=titleId,start,retrospectiveStart,rectificationVersionNumber,type,uniqueTypeNumber,volumeNumber,format,compilationNumber,sizeInBytes'
 curl -A "$UA" -o WORD_DIR/C2004A00467/C2004A00467.vol00.docx \
@@ -563,7 +574,9 @@ renditions come from one Register source (the EPUB keeps Word's style names as
 classes), so agreement shows the conversion and the extractor kept the section
 structure, not that the source is right. Only identifiers and their counts are
 compared, not order, headings or text. The Word side reads the Acts' template;
-instruments use other templates and are not sampled.
+instruments use other templates and are not sampled. The EPUB and its sidecar
+are taken as `download` wrote them: neither records a hash, so the stage
+checks the Word side against the sidecar but not the EPUB's bytes.
 
 ## Running the pipeline
 
