@@ -1002,24 +1002,48 @@ fn parse_title(
     };
     let mut meta = entry.clone();
     set_field(&mut meta, "retrieved", Json::str(&fetched));
-    let blocks = epub_blocks(src)?;
-    let mut md = to_markdown(&blocks, &meta, false)?;
-    // A fallback row is not evidence that the document chunked.
-    if !md.sections.iter().any(|s| !s.emit_fallback && s.has_text()) {
-        let bare = to_markdown(&blocks, &meta, true)?;
-        if bare
-            .sections
-            .iter()
-            .any(|s| matches!(s.kind, "section" | "container") && s.has_text())
-        {
-            md = bare;
-        }
-    }
+    let md = chunked_markdown(&epub_blocks(src)?, &meta)?;
     Ok(Parsed {
         entry: entry.clone(),
         fetched,
         md,
     })
+}
+
+/// The structural pass, or the bare-paragraph pass when the structural one
+/// found no row with text and the bare one does.
+fn chunked_markdown(blocks: &[Block], meta: &Json) -> Result<Markdown, Exc> {
+    let md = to_markdown(blocks, meta, false)?;
+    // A fallback row is not evidence that the document chunked.
+    if !md.sections.iter().any(|s| !s.emit_fallback && s.has_text()) {
+        let bare = to_markdown(blocks, meta, true)?;
+        if bare
+            .sections
+            .iter()
+            .any(|s| matches!(s.kind, "section" | "container") && s.has_text())
+        {
+            return Ok(bare);
+        }
+    }
+    Ok(md)
+}
+
+/// The `section` of every row of kind `section` that this stage writes to a
+/// title's `sections.jsonl` for the EPUB at `src`, in order. `witness`
+/// compares them with the Word rendition's.
+pub fn section_ids(src: &str, rid: &str, name: &Json) -> Result<Vec<String>, Exc> {
+    let meta = Json::obj([
+        ("id", Json::str(rid)),
+        ("name", name.clone()),
+        ("retrieved", Json::str("")),
+    ]);
+    let md = chunked_markdown(&epub_blocks(src)?, &meta)?;
+    Ok(md
+        .sections
+        .into_iter()
+        .filter(|s| s.kind == "section" && s.has_text())
+        .filter_map(|s| s.section)
+        .collect())
 }
 
 /// `"%-<width>s" % text` over code points.
