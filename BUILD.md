@@ -188,6 +188,13 @@ travel with the repository. A corpus published before the Rust port carries in
 `build/` the full set, with the Python stage scripts that produced it, and
 there any single stage can be re-run with those scripts.
 
+**`fadden/titles_principal.json` is unchanged from its 4 August 2026
+commit.** The rows in `fadden/manifest_md.json` record retrieval on 3 or
+4 August 2026; the C2004A00982 row's version metadata and source URL were
+corrected on 30 August. These files do not establish the Register's current
+status. In the manifest, 156 of the 175 rows marked `cached` have a null
+`compilationRegisterId`.
+
 **`manifest_md.json` and the published corpus predate the volume-gate fix
 below.** They were produced by the extractor as it stood before it, so
 F2025L00281 is still recorded as `sections=20, words=18583` - the lossy parse,
