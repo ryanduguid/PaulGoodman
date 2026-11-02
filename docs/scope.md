@@ -123,8 +123,9 @@ claims and exits non-zero if any check fails.
 ## Source intake record
 
 Each source class the builder reads has one row. A new source class needs its
-row, checked at the source, before any stage reads it. The Register terms were
-read at <https://www.legislation.gov.au/terms-of-use> on 2 November 2026.
+row, checked at the source, before any stage reads it. The Register terms, at
+<https://www.legislation.gov.au/terms-of-use>, and the copyright notice on ATO
+Legal Database pages were read on 2 November 2026.
 
 | Question | Federal Register of Legislation (Acts, legislative and notifiable instruments) | ATO Legal Database (`rulings` stage) |
 | --- | --- | --- |
