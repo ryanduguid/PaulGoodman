@@ -30,7 +30,7 @@ Synthetic example. This is a finding aid derived from the Register's EPUB readin
 
 **Input:** the fabricated [source index](tests/corpus/fixtures/publication/sample-sources.json) and [reviewed observation facts](tests/corpus/fixtures/publication/sample-observation-facts-v3.json).
 
-From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the `tax-radar-au` review-queue binary with `cargo build --locked --release`. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
+From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the Rust binaries with `cargo build --locked --release`: `fadden`, which runs the example below and most other stages, and the `tax-radar-au` review queue. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
 
 ```bash
 python -m fadden export_monitor_contract -- tests/corpus/fixtures/publication/sample-sources.json tests/corpus/fixtures/publication/sample-observation-facts-v3.json --out ../synthetic-monitor-example
@@ -45,7 +45,7 @@ The example can be read without running the command:
 | Source identity | Sample Consumption Tax Act 2099, `C2099A00001`, collection `Act` |
 | Indexed version | Compilation 1, dated 1 July 2026, retrieved 1 August 2026 |
 | Detected change | The supplied observation records `SUPERSEDED` and compilation 2, dated 5 August 2026 |
-| Observation evidence | Checked 8 August 2026; evidence identifier `ev-c2099a00001-01`, a content digest and an `example.invalid` URL |
+| Observation evidence | Checked 8 August 2026; evidence identifier `ev-c2099a00001-01`, a content digest and an `example.test` placeholder URL |
 | Required review | Read the source, confirm the applicable version and dates, then decide whether any workpaper or workflow needs attention |
 
 The names, dates and change above come from the linked fixtures. They describe
