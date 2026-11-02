@@ -22,6 +22,8 @@
 ![python: 3.14+](.github/assets/badges/python.svg)
 [![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
 
+[Two related systems](#two-related-systems) · [Reference](#reference) · [Source and licence](#source-and-licence)
+
 </div>
 
 Builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, and runs `tax-radar-au`, a queue that raises apparent Register changes for a person to assess. The repository holds code, not the corpus.
@@ -30,7 +32,7 @@ Synthetic example. This is a finding aid derived from the Register's EPUB readin
 
 **Input:** the fabricated [source index](tests/corpus/fixtures/publication/sample-sources.json) and [reviewed observation facts](tests/corpus/fixtures/publication/sample-observation-facts-v3.json).
 
-From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the `tax-radar-au` review-queue binary with `cargo build --locked --release`. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
+From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the Rust binaries with `cargo build --locked --release`: `fadden`, which runs the example below and most other stages, and the `tax-radar-au` review queue. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
 
 ```bash
 python -m fadden export_monitor_contract -- tests/corpus/fixtures/publication/sample-sources.json tests/corpus/fixtures/publication/sample-observation-facts-v3.json --out ../synthetic-monitor-example
@@ -45,16 +47,13 @@ The example can be read without running the command:
 | Source identity | Sample Consumption Tax Act 2099, `C2099A00001`, collection `Act` |
 | Indexed version | Compilation 1, dated 1 July 2026, retrieved 1 August 2026 |
 | Detected change | The supplied observation records `SUPERSEDED` and compilation 2, dated 5 August 2026 |
-| Observation evidence | Checked 8 August 2026; evidence identifier `ev-c2099a00001-01`, a content digest and an `example.invalid` URL |
+| Observation evidence | Checked 8 August 2026; evidence identifier `ev-c2099a00001-01`, a content digest and a Register URL for the fabricated title |
 | Required review | Read the source, confirm the applicable version and dates, then decide whether any workpaper or workflow needs attention |
 
 The names, dates and change above come from the linked fixtures. They describe
 no real legislation and establish no legal effect.
 
 **Human decision:** Inspect the cited source and decide whether the apparent change affects a workpaper or workflow. This offline example makes no Register request and establishes no real legislative change.
-
-<details>
-<summary>Build the corpus, inspect contracts and check limitations</summary>
 
 ## Two related systems
 
@@ -82,8 +81,6 @@ Live Register capture, synthetic observations and publication candidates have di
 The primary source is the [Federal Register of Legislation](https://www.legislation.gov.au/). The repository contains code, not the corpus; generated output retains its own source and licence records.
 
 Code: licensed under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). You may use, modify and redistribute it for any purpose except a Competing Use as defined in LICENSE (making it available to others in a competing commercial product or service), and each version becomes available under Apache-2.0 2 years after it is made available. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Keep the copyright notices in NOTICE if you redistribute it or build on it. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
-
-</details>
 
 ---
 
