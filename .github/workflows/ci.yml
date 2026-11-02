@@ -54,9 +54,18 @@ jobs:
           enable-cache: true
       # tests/corpus/test_monitor_contract.py feeds the exported contract to
       # the Rust tax-radar-au binary named by TAX_RADAR_AU_BIN.
+      - name: install the pinned Rust toolchain
+        if: matrix.os == 'ubuntu-latest'
+        run: rustup toolchain install
+      - name: restore the dependency build cache
+        if: matrix.os == 'ubuntu-latest'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # Pull requests read main's cache and never write their own.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: build the tax-radar-au binary for the cross-system contract test
         if: matrix.os == 'ubuntu-latest'
-        run: rustup toolchain install && cargo build --locked --release
+        run: cargo build --locked --release
       # No -q here: pyproject's addopts already sets it, and a second -q makes
       # it -qq, which drops the pass/fail count from the log. Without the count
       # a test file that stops being collected leaves every leg green.
@@ -179,6 +188,10 @@ jobs:
           persist-credentials: false
       # rust-toolchain.toml pins the channel and its clippy and rustfmt components.
       - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # Pull requests read main's cache and never write their own.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked
@@ -198,7 +211,12 @@ jobs:
           "$bin" compare --baseline "$samples/baseline/sample-sources.json" --observation "$samples/observations/sample-register-observation.json" --map "$samples/mappings/sample-source-skill-map.json" --out demo
           "$bin" validate-review --queue demo/impact-queue.json --decision "$samples/decisions/sample-technical-review.json" --out demo/validation.json
       - if: matrix.os == 'ubuntu-latest'
-        run: cargo install cargo-audit --locked --version 0.22.2 && cargo audit && cargo audit --file fuzz/Cargo.lock
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+      - if: matrix.os == 'ubuntu-latest'
+        run: cargo audit && cargo audit --file fuzz/Cargo.lock
 
   lint:
     permissions:
@@ -226,6 +244,12 @@ jobs:
       # The lockfile pins 19 packages that ship in the release archive family;
       # nothing checked them against advisories until now.
       - run: uv audit --locked --no-config --python-version 3.14
+      # actionlint runs shellcheck over the run: scripts; the repository
+      # tracks no shell files of its own. Each release asset is checked against
+      # the digest recorded at pin time (koalaman publishes no checksums file).
+      - run: curl --proto '=https' --proto-redir '=https' -sSLO https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz && echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  shellcheck-v0.11.0.linux.x86_64.tar.xz" | sha256sum --check && tar -xJf shellcheck-v0.11.0.linux.x86_64.tar.xz shellcheck-v0.11.0/shellcheck
+      - run: curl --proto '=https' --proto-redir '=https' -sSLO https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz && echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint_1.7.12_linux_amd64.tar.gz" | sha256sum --check && tar -xzf actionlint_1.7.12_linux_amd64.tar.gz actionlint
+      - run: ./actionlint -shellcheck ./shellcheck-v0.11.0/shellcheck
 
   tests-gates:
     # The one context branch protection requires from this workflow. It fails
