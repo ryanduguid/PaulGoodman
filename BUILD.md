@@ -486,6 +486,125 @@ rows indexed in about 5 seconds into a 77 MB file, with 8,426 definition
 paragraphs and 62,224 section, Division and Subdivision references. Keep the index with the corpus it
 came from and out of git; rebuild it after any corpus rebuild.
 
+## Witnessing section structure
+
+`extract` takes each title's section structure from the EPUB alone, so a section
+the EPUB conversion or the extractor loses would go unnoticed. `python -m fadden
+witness` checks a fixed sample, `fadden/witness_sample.json`, against a second
+rendition of the same compilation: the Register's Word volumes. It is a Rust stage
+of the `fadden` binary with no Python predecessor, reads local files only and
+makes no request.
+
+```bash
+python -m fadden witness fadden/witness_sample.json --epub-dir corpus/epub --word-dir WORD_DIR --out witness.json
+```
+
+- The EPUB side is the `section` of every section row `extract` writes for
+  `<id>.epub`, through the same passes.
+- The Word side is `WORD_DIR/<id>/<id>.vol<NN>.docx`: in each volume's
+  `word/document.xml`, the `CharSectno` run text of every `ActHead5` paragraph.
+  Styles inside a tracked change (`w:pPrChange`, `w:rPrChange`) are earlier
+  ones and are not read.
+- `WORD_DIR/<id>/documents.json` is the Register's `documents` listing for the
+  compilation, saved as returned. Every row must be this title's. The EPUB's
+  version is the one `download` fetches: `text/original/epub` serves the
+  original text (`rectificationVersionNumber` 0) of the primary document, so
+  its key is the `compilationRegisterId`, `compilationNumber` and start date in
+  the `<id>.epub.meta.json` that `download` writes, with `retrospectiveStart`
+  on that date, `type` `Primary` and `uniqueTypeNumber` 0. On 3 November 2026
+  the Income Tax Assessment Act 1997's compilation 237 (14 October 2022), which
+  has a rectification, gave the same SHA-256 through `text/original/epub` as
+  the API's rectification 0 EPUB, and through `text/1/epub` as rectification 1.
+  None of the API's 796,600 document rows had a `retrospectiveStart` other
+  than its `start`; of 359,583 versions, the 799 that did had no `registerId`.
+  A compilation whose rows differed would be refused: its listing would hold
+  no `Epub` row with the key. The listing must
+  hold exactly one `Epub` row with that key, and the `Word` rows with the same
+  key are the volumes. Rows of other versions on the date are not: on the
+  Register a rectification shares the compilation's id, number and dates, and
+  the text as made can start on the same day. A listing that is one page of
+  several (it has `@odata.nextLink`) is refused. The `.docx` files must be
+  exactly those volumes, `NN` being the row's two-digit `volumeNumber`: a
+  missing, extra or repeated volume is refused.
+- Each volume's `CompilationNumber` property must equal the sidecar's
+  `compilationNumber`, and its `ShortT` property the sample's `name`. Both
+  parts must be UTF-8 and well formed (every element closed in order inside a
+  single root), and no property may be set twice. XML names are
+  case-sensitive: only their exact spellings count (`w:pStyle`, not
+  `w:pstyle`), and a closing tag must match its opening tag as written.
+- A mismatch or any refusal above, a missing listing, property or sidecar, a
+  sample that repeats a title or lacks an id or name, or an archive that is
+  not a ZIP or lacks `word/document.xml` stops the stage with `error:` and
+  exit 1, and no report is written.
+- The report gives each title's counts and one review item for each identifier
+  whose count differs between the sides: `title`, `compilation` (`number`,
+  `date`), `identifier`, `side` (`epub` or `word`, whichever has more), both
+  counts and a `reason`. Items are ordered by title, then identifier. Exit 0
+  means the report was written, whether or not it holds items.
+
+**Tolerance.** Word writes the hyphen in a section number such as `8-1` as a
+`<w:noBreakHyphen/>` element, the EPUB as U+2011 and `extract` as `-`, so the
+element reads as `-`. Nothing else is normalised. A table-of-sections entry
+(`TofSectsSection`) carries the same run style but is not a heading, so only
+`ActHead5` paragraphs count. Any other difference is a review item: review it
+before widening the tolerance.
+
+**Fetching the Word volumes.** The Register API's `documents` entity has a row
+per format and `volumeNumber`; its key is in
+`https://api.prod.legislation.gov.au/v1/$metadata`. Save a compilation's listing as
+`WORD_DIR/<id>/documents.json`, then fetch each `Word` row of the EPUB's
+version (rectification 0) by its key, which returns the `.docx` bytes. The key
+has no `registerId`, so on the day the text as made starts it also matches the
+as-made document: for the Fringe Benefits Tax Assessment Act 1986's compilation
+1 (24 June 1986) the API served that file, which has no `CompilationNumber`
+property and is refused, whilst the website's
+`<id>/<date>/<date>/text/original/word` served compilation 1. The
+listing below fits on one page; an unfiltered title listing may not (on 3 November
+2026 the Income Tax Assessment Act 1997's had 15 pages of 510 rows or fewer). Send `fadden/http_fetch.py`'s `UA`, allow 10 seconds
+between files and keep the volumes out of git:
+
+```bash
+curl -G -A "$UA" -o WORD_DIR/C2004A00467/documents.json "https://api.prod.legislation.gov.au/v1/documents" \
+  --data-urlencode "\$filter=titleId eq 'C2004A00467' and start eq 2026-06-30T00:00:00 and type eq 'Primary'" \
+  --data-urlencode '$select=titleId,registerId,start,retrospectiveStart,rectificationVersionNumber,type,uniqueTypeNumber,volumeNumber,format,compilationNumber,sizeInBytes'
+curl -A "$UA" -o WORD_DIR/C2004A00467/C2004A00467.vol00.docx \
+  "https://api.prod.legislation.gov.au/v1/documents(titleId=%27C2004A00467%27,start=2026-06-30T00%3A00%3A00,retrospectiveStart=2026-06-30T00%3A00%3A00,rectificationVersionNumber=0,type=%27Primary%27,uniqueTypeNumber=0,volumeNumber=0,format=%27Word%27)"
+```
+
+**Results, 2 November 2026.** Each title's current compilation was fetched as
+EPUB (through `download`'s URL and curl arguments) and as Word (as above); the
+Register served every request. The sample is a small, a medium and a large Act;
+the release build of the stage read all 3 in 1.8 seconds:
+
+| Title | Compilation | Word volumes | EPUB sections | Word sections | Review items |
+| --- | --- | --- | --- | --- | --- |
+| C2004A00467 *A New Tax System (Australian Business Number) Act 1999* | 32, 30 June 2026 | 1 | 39 | 39 | 0 |
+| C2004A03280 *Fringe Benefits Tax Assessment Act 1986* | 97, 1 July 2026 | 2 | 294 | 294 | 0 |
+| C2004A05138 *Income Tax Assessment Act 1997* | 268, 1 October 2026 | 12 | 4,653 | 4,653 | 0 |
+
+Before the tolerance, all 4,653 *Income Tax Assessment Act 1997* identifiers
+differed (each is a Division-style number) and the tolerance removed every one;
+the other 2 titles needed none. The Word volumes of that Act also carry 3
+`TofSectsSection` entries with `CharSectno` runs. No other difference appeared,
+so the sample needed no handling for repealed or omitted provisions, notes or
+other numbering forms. Planting 2 defects in the real
+*Fringe Benefits Tax Assessment Act 1986* EPUB showed the check is not blind:
+dropping its second volume gave 108 Word-only items, and renaming the class of
+every 25th `ActHead5` paragraph, which `extract` silently folds into the row
+before, gave 11.
+
+**Limits.** This is a 3-title sample of Acts, not a correctness proof. Both
+renditions come from one Register source (the EPUB keeps Word's style names as
+classes), so agreement shows the conversion and the extractor kept the section
+structure, not that the source is right. Only identifiers and their counts are
+compared, not order, headings or text. The Word side reads the Acts' template;
+instruments use other templates and are not sampled. The EPUB and its sidecar
+are taken as `download` wrote them: neither records a hash, so the stage
+checks the Word side against the sidecar but not the EPUB's bytes. A Word
+volume records no rectification number, so only the listing tells a
+rectification's volumes from the original's; the stage trusts that each
+`.docx` was fetched by the key of the listed row its name gives.
+
 ## Running the pipeline
 
 The builder deliberately does **not** read `ATO_KB_ROOT` or `ATO_DIST`.
@@ -519,6 +638,7 @@ python -m fadden check_current # read-only staleness check against the Register
 python -m fadden as_at 2026-07-15 # classify each title's captured compilation against a date (docs/scope.md)
 python -m fadden compare_builds OLD_ROOT NEW_ROOT # list the sections added, removed and changed between two builds
 python -m fadden search build corpus --out search.sqlite # full-text, definitions and reference index (see "Searching a built corpus")
+python -m fadden witness fadden/witness_sample.json --epub-dir corpus/epub --word-dir WORD_DIR --out witness.json # check sampled titles' section structure against the Word rendition (see "Witnessing section structure")
 python -m fadden capture_register -- fadden/manifest_md.json --out build/register-capture-20260829
 python -m fadden export_live_evidence_bundles -- build/register-capture-20260829 --out build/live-evidence-20260829
 ```
