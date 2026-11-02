@@ -58,7 +58,8 @@ regenerate fixtures only with the port's differential harness against the base r
 The fenced list records the unique single-line commands. The multiline binary-smoke gate
 is reproduced exactly in the next section.
 ```bash
-rustup toolchain install && cargo build --locked --release
+rustup toolchain install
+cargo build --locked --release
 uv run --locked --extra dev pytest tests
 uv run --locked --extra dev pytest tests/corpus/test_live_evidence_bundle_export.py tests/corpus/test_live_evidence_publication_paths.py
 uv run --locked --extra dev coverage run --branch --source=fadden -m pytest tests
@@ -68,16 +69,17 @@ uv run --locked --extra dev coverage run --branch --source=fadden -m pytest test
 uv run --locked --extra dev coverage xml --fail-under=0 -o coverage-windows.xml
 uv run --locked --extra dev --python 3.14 python -m build
 python -m venv /tmp/venv && /tmp/venv/bin/pip install --no-index dist/tax_radar_au-*.whl && cd /tmp && /tmp/venv/bin/python -c "import fadden.capture_register"
-rustup toolchain install
 cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked
 cargo test --locked --features fake-http --test fadden_golden
-cargo build --locked --release
-cargo install cargo-audit --locked --version 0.22.2 && cargo audit && cargo audit --file fuzz/Cargo.lock
+cargo audit && cargo audit --file fuzz/Cargo.lock
 uv run --locked --extra dev ruff check .
 uv run --locked --extra dev mypy
 uv audit --locked --no-config --python-version 3.14
+curl --proto '=https' --proto-redir '=https' -sSLO https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz && echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  shellcheck-v0.11.0.linux.x86_64.tar.xz" | sha256sum --check && tar -xJf shellcheck-v0.11.0.linux.x86_64.tar.xz shellcheck-v0.11.0/shellcheck
+curl --proto '=https' --proto-redir '=https' -sSLO https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz && echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint_1.7.12_linux_amd64.tar.gz" | sha256sum --check && tar -xzf actionlint_1.7.12_linux_amd64.tar.gz actionlint
+./actionlint -shellcheck ./shellcheck-v0.11.0/shellcheck
 ```
 
 ## Release binary smoke

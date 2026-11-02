@@ -49,7 +49,7 @@ with `STATUS_DLL_NOT_FOUND`.
 
 The targets live in their own Cargo workspace here, so the repository's stable
 builds never compile them. `.github/workflows/fuzzing.yml` runs each for 60
-seconds after main pushes, weekly and on demand, with read-only repository
+seconds weekly and on demand, with read-only repository
 access and a 15-minute timeout; it is not a merge gate. The invariant checks
 live in the library, and `tests/fadden_pii.rs` and `tests/fuzz_seeds.rs` replay
 every seed through them on stable, so ordinary CI catches a broken check. The
