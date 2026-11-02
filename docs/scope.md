@@ -6,7 +6,7 @@ from the EPUB reading view.
 
 Check the `collection` field before relying on a provision. An Act and a
 regulation made under it are not interchangeable, and an instrument can be
-disallowed or sunset while its enabling Act stands.
+disallowed or sunset whilst its enabling Act stands.
 
 Selection uses title keywords (Tax, Excise, Superannuation, Customs Tariff,
 Medicare Levy) applied to the Act, LegislativeInstrument and
@@ -119,3 +119,19 @@ the distribution, not only the 169.
 A `REMOVED.md` lists every exclusion and its Register link so the omission is
 visible and reversible. `dist_verify` checks the result against its own
 claims and exits non-zero if any check fails.
+
+## Source intake record
+
+Each source class the builder reads has one row. A new source class needs its
+row, checked at the source, before any stage reads it. The Register terms, at
+<https://www.legislation.gov.au/terms-of-use>, and the copyright notice on ATO
+Legal Database pages were read on 2 November 2026.
+
+| Question | Federal Register of Legislation (Acts, legislative and notifiable instruments) | ATO Legal Database (`rulings` stage) |
+| --- | --- | --- |
+| What does it publish? | As-made versions and compilations, each with an authorised PDF and an EPUB reading view | ATO-authored rulings, determinations, guidelines, practice statements, decision impact statements and edited private advice, as HTML pages; legislation and judgments in the same database are refused |
+| What authority does the copy have? | None: authorised versions are the PDFs stamped under sections 15ZA and 15ZB of the *Legislation Act 2003*, and the corpus derives from the EPUB | None: a row is a finding aid, not the published document or the Commissioner's current view; read it at `source_url` |
+| How is it retrieved? | The Register API with ordered paging and title keyword selection, then the download endpoint (raw EPUB bytes or a base64 JSON envelope); see [architecture](architecture.md) | Named docids only, at most 100 a run, one request a second, HTML only, final URL on `https://www.ato.gov.au`; see [rulings](rulings.md) |
+| May the text be republished? | Yes under CC BY 4.0, except the Commonwealth Coat of Arms and material otherwise noted, with the Register's attribution wording, which `extract` and `finalize` write. The `dist` stage drops the EPUBs, the 12 titles naming private individuals and the 5 accounting standards under their own notices (above) | Yes under the ATO copyright notice, without suggesting ATO or Commonwealth endorsement; the stage accepts a page only when it shows the notice or links to it, and writes `LICENCE-NOTICE.md` |
+| May the metadata be republished? | Yes, under the same CC BY 4.0 grant as the text | Rows carry the docid, title, source URL and page hash under the same notice; keep `LICENCE-NOTICE.md` with them |
+| How are superseded versions handled? | Each row carries `compilation_date`, `superseded_from` and `retrieved`; a title with no published compilation for the version in force is marked `version_is_current: false`; `as_at` classifies titles against a date; live capture records repeal as `NO_LONGER_IN_FORCE` | `withdrawal_status` is `NOTICE_PRESENT` only when a Notice of Withdrawal was extracted, otherwise `UNKNOWN`; neither value establishes that a ruling is current |
