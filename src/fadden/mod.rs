@@ -29,6 +29,7 @@ pub mod rates;
 pub mod rulings;
 pub mod search;
 pub mod versions;
+pub mod witness;
 
 use crate::pyjson::Json;
 use crate::pyos::OsError;
