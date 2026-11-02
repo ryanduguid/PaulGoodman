@@ -12,13 +12,14 @@
 //! writes the hyphen in a section number such as `8-1` as a
 //! `<w:noBreakHyphen/>` element where the EPUB has U+2011 and the extractor
 //! writes `-`, so the element reads as `-`. Nothing else is normalised: any
-//! other difference in an identifier's count is a review item.
+//! other difference in an identifier's count is a review item. Only counts
+//! are compared, not the order of the sections.
 use std::collections::BTreeMap;
 
 use super::corpus_paths::{child, register_id, write_json_atomic};
 use super::{Exc, Run, epub, extract, json_error};
 use crate::argparse::{Action, Exit, Get, Parser};
-use crate::htmlparser::{self, Event};
+use crate::htmlparser::{self, Event, Positioned};
 use crate::pyjson::{self, Json};
 
 const TOLERANCE: &str = "the <w:noBreakHyphen/> element in a Word section number reads as '-'";
@@ -58,30 +59,139 @@ pub fn load_sample(path: &str) -> Result<Vec<(String, Json)>, Exc> {
     Ok(titles.into_iter().collect())
 }
 
-fn val(attrs: &[(String, Option<String>)]) -> String {
-    attrs
-        .iter()
-        .find(|(name, _)| name == "w:val")
-        .and_then(|(_, value)| value.clone())
-        .unwrap_or_default()
+fn is_space(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\x0c' | ' ')
+}
+
+/// The tokenizer gives tag and attribute names in lower case, but XML names
+/// are case-sensitive, so the readers below read each name back from the
+/// source as written and match only the exact spelling. A name read back must
+/// lower-case to the tokenizer's, or the part is refused. Events must be read
+/// in the order the tokenizer gives them.
+struct Spelling<'a> {
+    xml: &'a str,
+    line: usize,
+    offset: usize,
+    byte: usize,
+}
+
+impl<'a> Spelling<'a> {
+    fn new(xml: &'a str) -> Self {
+        Self {
+            xml,
+            line: 1,
+            offset: 0,
+            byte: 0,
+        }
+    }
+
+    /// The source from the event's position, which for a tag is its `<`. The
+    /// cursor only moves forward, as a Word part is often one long line.
+    fn at(&mut self, at: &Positioned) -> &'a str {
+        while self.line < at.line {
+            let Some(newline) = self.xml[self.byte..].find('\n') else {
+                break;
+            };
+            (self.byte, self.line, self.offset) = (self.byte + newline + 1, self.line + 1, 0);
+        }
+        let rest = &self.xml[self.byte..];
+        let step = at.offset.saturating_sub(self.offset);
+        self.byte += rest.char_indices().nth(step).map_or(rest.len(), |(i, _)| i);
+        self.offset = at.offset;
+        &self.xml[self.byte..]
+    }
+
+    /// The tag's name as written.
+    fn name(&mut self, at: &Positioned, lower: &str) -> Result<&'a str, String> {
+        let tag = self.at(at);
+        let tag = tag
+            .strip_prefix("</")
+            .or_else(|| tag.strip_prefix('<'))
+            .unwrap_or_default();
+        let name = &tag[..tag
+            .find(|c| is_space(c) || matches!(c, '/' | '>'))
+            .unwrap_or(tag.len())];
+        if name.to_lowercase() == lower {
+            Ok(name)
+        } else {
+            Err(format!("<{lower}> could not be read as written"))
+        }
+    }
+
+    /// The value of the start tag's first attribute named exactly `wanted`.
+    fn attribute(
+        &mut self,
+        at: &Positioned,
+        attrs: &[(String, Option<String>)],
+        wanted: &str,
+    ) -> Result<Option<String>, String> {
+        let tag = self.at(at);
+        let mut rest = &tag[1..];
+        rest = &rest[rest
+            .find(|c| is_space(c) || matches!(c, '/' | '>'))
+            .unwrap_or(rest.len())..];
+        let mut found = None;
+        for (lower, value) in attrs {
+            rest = rest.trim_start_matches(|c| is_space(c) || c == '/');
+            let end = rest
+                .find(|c| is_space(c) || matches!(c, '/' | '=' | '>'))
+                .unwrap_or(rest.len());
+            let name = &rest[..end];
+            if name.to_lowercase() != *lower {
+                return Err(format!(
+                    "the attribute {lower} could not be read as written"
+                ));
+            }
+            if name == wanted && found.is_none() {
+                found = Some(value.clone());
+            }
+            rest = rest[end..].trim_start_matches(is_space);
+            if let Some(value) = rest.strip_prefix('=') {
+                let value = value.trim_start_matches(is_space);
+                rest = match value.chars().next() {
+                    Some(quote @ ('"' | '\'')) => {
+                        value[1..].find(quote).map_or("", |i| &value[i + 2..])
+                    }
+                    _ => {
+                        &value[value
+                            .find(|c| is_space(c) || c == '>')
+                            .unwrap_or(value.len())..]
+                    }
+                };
+            }
+        }
+        Ok(found.flatten())
+    }
+}
+
+/// The name of a tag event as written, or `""` for any other event.
+fn written<'a>(spelling: &mut Spelling<'a>, positioned: &Positioned) -> Result<&'a str, String> {
+    match &positioned.event {
+        Event::StartTag(tag, _) | Event::StartEndTag(tag, _) | Event::EndTag(tag) => {
+            spelling.name(positioned, tag)
+        }
+        _ => Ok(""),
+    }
 }
 
 /// Every element closes in order inside a single root, with only whitespace,
-/// comments and declarations outside it. The tokenizer is not an XML parser,
-/// so the readers below check this structure before trusting what it yields.
+/// comments and declarations outside it; names match as written. The
+/// tokenizer is not an XML parser, so the readers below check this structure
+/// before trusting what it yields.
 fn well_formed(xml: &str) -> Result<(), String> {
-    let (mut open, mut roots) = (Vec::<String>::new(), 0usize);
+    let (mut open, mut roots, mut spelling) = (Vec::<&str>::new(), 0usize, Spelling::new(xml));
     htmlparser::parse_each(xml, true, |positioned| {
+        let name = written(&mut spelling, &positioned)?;
         match &positioned.event {
-            Event::StartTag(tag, _) => {
+            Event::StartTag(_, _) => {
                 roots += usize::from(open.is_empty());
-                open.push(tag.clone());
+                open.push(name);
             }
             Event::StartEndTag(_, _) => roots += usize::from(open.is_empty()),
-            Event::EndTag(tag) => match open.pop() {
-                Some(top) if &top == tag => {}
-                Some(top) => return Err(format!("<{top}> is closed by </{tag}>")),
-                None => return Err(format!("</{tag}> closes an element that never opened")),
+            Event::EndTag(_) => match open.pop() {
+                Some(top) if top == name => {}
+                Some(top) => return Err(format!("<{top}> is closed by </{name}>")),
+                None => return Err(format!("</{name}> closes an element that never opened")),
             },
             Event::Data(text) if open.is_empty() && !text.trim().is_empty() => {
                 return Err("text stands outside the root element".into());
@@ -103,9 +213,9 @@ fn well_formed(xml: &str) -> Result<(), String> {
 /// The identifiers a Word body's `ActHead5` paragraphs number, in document
 /// order: each paragraph's `CharSectno` run text, joined, with
 /// `<w:noBreakHyphen/>` read as `-`. The HTML tokenizer the EPUB reader uses
-/// reads this XML and gives tag and attribute names in lower case. A document
-/// that is not well formed, or a paragraph or run that closes without opening
-/// or is still open at the end, is refused.
+/// reads this XML; only the exact OOXML spellings of names count (`Spelling`).
+/// A document that is not well formed, or a paragraph or run that closes
+/// without opening or is still open at the end, is refused.
 pub fn word_sections(xml: &str) -> Result<Vec<String>, String> {
     #[derive(Default)]
     struct Para {
@@ -123,44 +233,54 @@ pub fn word_sections(xml: &str) -> Result<Vec<String>, String> {
         (Vec::<Para>::new(), Vec::<WordRun>::new(), false, Vec::new());
     // Open w:pPrChange and w:rPrChange elements: a tracked change's earlier
     // properties, whose styles are not the current ones.
-    let mut changes = 0usize;
+    let (mut changes, mut spelling) = (0usize, Spelling::new(xml));
     htmlparser::parse_each(xml, true, |positioned| {
         let numbering = runs
             .last()
             .is_some_and(|r| r.depth == paras.len() && r.style.as_deref() == Some(NUMBER_STYLE));
+        let name = written(&mut spelling, &positioned)?;
+        let mut val = |attrs: &[(String, Option<String>)]| {
+            spelling
+                .attribute(&positioned, attrs, "w:val")
+                .map(Option::unwrap_or_default)
+        };
         match &positioned.event {
-            Event::StartTag(tag, _) if tag == "w:p" => paras.push(Para::default()),
-            Event::StartTag(tag, _) if tag == "w:r" => runs.push(WordRun {
+            Event::StartTag(_, _) if name == "w:p" => paras.push(Para::default()),
+            Event::StartTag(_, _) if name == "w:r" => runs.push(WordRun {
                 depth: paras.len(),
                 style: None,
             }),
-            Event::StartTag(tag, _) if tag == "w:t" => in_text = true,
-            Event::StartTag(tag, _) if tag == "w:pprchange" || tag == "w:rprchange" => {
+            Event::StartTag(_, _) if name == "w:t" => in_text = true,
+            Event::StartTag(_, _) if name == "w:pPrChange" || name == "w:rPrChange" => {
                 changes += 1;
             }
-            Event::EndTag(tag) if tag == "w:pprchange" || tag == "w:rprchange" => {
+            Event::EndTag(_) if name == "w:pPrChange" || name == "w:rPrChange" => {
                 changes -= 1;
             }
-            Event::StartTag(tag, attrs) | Event::StartEndTag(tag, attrs) => match tag.as_str() {
-                "w:pstyle" if changes == 0 => {
-                    if let Some(para) = paras.last_mut() {
-                        para.style.get_or_insert_with(|| val(attrs));
+            Event::StartTag(_, attrs) | Event::StartEndTag(_, attrs) => match name {
+                "w:pStyle" if changes == 0 => {
+                    if let Some(para) = paras.last_mut().filter(|p| p.style.is_none()) {
+                        para.style = Some(val(attrs)?);
                     }
                 }
                 // A paragraph mark's run properties sit outside any run of it.
-                "w:rstyle" if changes == 0 => {
-                    if let Some(run) = runs.last_mut().filter(|r| r.depth == paras.len()) {
-                        run.style.get_or_insert_with(|| val(attrs));
+                "w:rStyle" if changes == 0 => {
+                    let depth = paras.len();
+                    if let Some(run) = runs
+                        .last_mut()
+                        .filter(|r| r.depth == depth && r.style.is_none())
+                    {
+                        run.style = Some(val(attrs)?);
                     }
                 }
-                "w:nobreakhyphen" if numbering => {
+                "w:noBreakHyphen" if numbering => {
                     if let Some(para) = paras.last_mut() {
                         para.number.push('-');
                     }
                 }
                 _ => {}
             },
-            Event::EndTag(tag) if tag == "w:p" => {
+            Event::EndTag(_) if name == "w:p" => {
                 let para = paras.pop().ok_or("a paragraph closes that never opened")?;
                 if runs.last().is_some_and(|r| r.depth > paras.len()) {
                     return Err("a paragraph closes inside one of its runs".to_string());
@@ -169,10 +289,10 @@ pub fn word_sections(xml: &str) -> Result<Vec<String>, String> {
                     found.push(para.number);
                 }
             }
-            Event::EndTag(tag) if tag == "w:r" => {
+            Event::EndTag(_) if name == "w:r" => {
                 runs.pop().ok_or("a run closes that never opened")?;
             }
-            Event::EndTag(tag) if tag == "w:t" => in_text = false,
+            Event::EndTag(_) if name == "w:t" => in_text = false,
             Event::Data(text) if in_text && numbering => {
                 if let Some(para) = paras.last_mut() {
                     para.number.push_str(text);
@@ -194,21 +314,20 @@ pub fn word_sections(xml: &str) -> Result<Vec<String>, String> {
 fn properties(xml: &str) -> Result<BTreeMap<String, String>, String> {
     well_formed(xml)?;
     let (mut current, mut found) = (None::<(String, String)>, BTreeMap::new());
+    let mut spelling = Spelling::new(xml);
     htmlparser::parse_each(xml, true, |positioned| {
+        let tag = written(&mut spelling, &positioned)?;
         match &positioned.event {
-            Event::StartTag(tag, attrs) if tag == "property" => {
-                let name = attrs.iter().find(|(k, _)| k == "name");
-                current = Some((
-                    name.and_then(|(_, v)| v.clone()).unwrap_or_default(),
-                    String::new(),
-                ));
+            Event::StartTag(_, attrs) if tag == "property" => {
+                let name = spelling.attribute(&positioned, attrs, "name")?;
+                current = Some((name.unwrap_or_default(), String::new()));
             }
             Event::Data(text) => {
                 if let Some((_, value)) = current.as_mut() {
                     value.push_str(text);
                 }
             }
-            Event::EndTag(tag) if tag == "property" => {
+            Event::EndTag(_) if tag == "property" => {
                 if let Some((name, value)) = current.take()
                     && found
                         .insert(name.clone(), value.trim().to_string())
@@ -698,11 +817,60 @@ mod tests {
             ("text<a/>", "text stands outside the root element"),
             ("<?xml version=\"1.0\"?>", "no root element"),
             ("</a>", "</a> closes an element that never opened"),
+            // XML names are case-sensitive.
+            (
+                "<w:p><w:pStyle w:val=\"ActHead5\"></w:pstyle></w:p>",
+                "<w:pStyle> is closed by </w:pstyle>",
+            ),
+            ("<a></A>", "<a> is closed by </A>"),
         ] {
             assert_eq!(well_formed(xml).unwrap_err(), message, "{xml}");
         }
         assert!(well_formed("<?xml version=\"1.0\"?>\n<a><b/>x</a>\n").is_ok());
         assert!(word_sections("<w:document><w:body></w:document>").is_err());
+    }
+
+    #[test]
+    fn only_the_exact_spellings_of_names_count() {
+        let heading = |p_style: &str, r_style: &str| {
+            body(&format!(
+                "<w:p><w:pPr>{p_style}</w:pPr><w:r><w:rPr>{r_style}</w:rPr><w:t>9</w:t></w:r></w:p>"
+            ))
+        };
+        let p_style = "<w:pStyle w:val=\"ActHead5\"/>";
+        let r_style = "<w:rStyle w:val=\"CharSectno\"/>";
+        assert_eq!(word_sections(&heading(p_style, r_style)).unwrap(), ["9"]);
+        for (p, r) in [
+            ("<w:pstyle w:val=\"ActHead5\"/>", r_style),
+            ("<w:PStyle w:val=\"ActHead5\"/>", r_style),
+            ("<w:pStyle W:val=\"ActHead5\"/>", r_style),
+            ("<w:pStyle w:Val='ActHead5'/>", r_style),
+            (p_style, "<w:rstyle w:val=\"CharSectno\"/>"),
+            (p_style, "<w:rStyle w:VAL=\"CharSectno\"/>"),
+        ] {
+            let xml = heading(p, r);
+            assert!(word_sections(&xml).unwrap().is_empty(), "{xml}");
+        }
+        // A miscased paragraph or text element is another element.
+        let xml = body(&format!(
+            "<w:P><w:pPr>{p_style}</w:pPr><w:r><w:rPr>{r_style}</w:rPr><w:t>9</w:t></w:r></w:P>\
+             <w:p><w:pPr>{p_style}</w:pPr><w:r><w:rPr>{r_style}</w:rPr><w:T>9</w:T></w:r></w:p>"
+        ));
+        assert!(word_sections(&xml).unwrap().is_empty());
+        // Names after multi-byte characters, on a later line and after an
+        // attribute value holding `>` and `/` are still read as written.
+        let xml = body(&format!(
+            "<w:p><w:pPr>{p_style}</w:pPr><w:r><w:t>\u{2011}\u{e9}</w:t></w:r>\n\
+             <w:r><w:rPr><w:rStyle w:x=\"a>b/\" w:val=\"CharSectno\"/></w:rPr><w:t>9</w:t></w:r></w:p>"
+        ));
+        assert_eq!(word_sections(&xml).unwrap(), ["9"]);
+        let props = "<Properties><property NAME=\"ShortT\">A</property>\
+                     <Property name=\"CompilationNumber\">1</Property></Properties>";
+        let found = properties(props).unwrap();
+        assert!(
+            !found.contains_key("ShortT") && !found.contains_key("CompilationNumber"),
+            "{found:?}"
+        );
     }
 
     #[test]
