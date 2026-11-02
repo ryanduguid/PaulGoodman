@@ -36,6 +36,10 @@ other terms, so only these docid families are accepted:
 | `LIT/ICD` | Decision Impact Statement |
 | `EV` | Edited version of private advice |
 
+Rows carry these labels as the Python stage wrote them. GST determinations (GSTD)
+sit under the `GSD` prefix, which is not accepted, so `GST` rows are GST rulings. `COG`
+also holds Law Companion Rulings, whose rows carry the Practical Compliance Guideline label.
+
 Every run writes `LICENCE-NOTICE.md` with the notice and a non-endorsement statement.
 Keep it with any copy of the rows.
 

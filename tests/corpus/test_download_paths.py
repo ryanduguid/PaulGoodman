@@ -268,6 +268,29 @@ class MainTests(unittest.TestCase):
         self.download.fetch.assert_called_once()
         self.assertIn("C2099A00001  OK", log)
 
+    def cache(self, **sidecar: object) -> None:
+        (self.epub_dir / "C2099A00001.epub").write_bytes(security.epub_bytes("old"))
+        meta = {"versionStart": "2099-01-01", "compilationNumber": "1", **sidecar}
+        (self.epub_dir / "C2099A00001.epub.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    def manifest(self) -> list[dict[str, object]]:
+        return json.loads((self.scratch / "manifest_raw.json").read_text(encoding="utf-8"))
+
+    def test_a_cached_title_keeps_its_resolved_register_id(self) -> None:
+        self.cache()
+        self.download.fetch = mock.Mock(side_effect=AssertionError("must not fetch"))
+        self.run_main(self.title)
+        [row] = self.manifest()
+        self.assertEqual(row["status"], "cached")
+        self.assertEqual(row["compilationRegisterId"], "C2099C00001")
+
+    def test_a_cache_from_another_compilation_is_downloaded_again(self) -> None:
+        self.cache(compilationRegisterId="C2099C00002")
+        self.download.fetch = mock.Mock(side_effect=self.fake_fetch)
+        log = self.run_main(self.title)
+        self.download.fetch.assert_called_once()
+        self.assertIn("C2099A00001  OK", log)
+
     def test_a_title_without_a_document_drops_its_partial_file(self) -> None:
         partial = self.epub_dir / "C2099A00001.epub.part"
         partial.write_bytes(b"partial")
