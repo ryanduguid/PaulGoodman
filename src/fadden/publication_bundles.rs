@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/export_publication_bundles.py`: source-only publisher evidence
 //! bundles from verified monitor inputs.
 //!

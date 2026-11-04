@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/pii_patterns.py`'s detectors for the ported stages: personal names
 //! beside registration numbers, and digests of contact details (email, phone,
 //! tax file number) that never carry the identifier itself. The patterns are

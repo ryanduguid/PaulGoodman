@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Staged writes, receipts and bounded loading: ported from
 //! tests/radar/test_security_remediation.py and test_radar_paths.py.
 mod common;

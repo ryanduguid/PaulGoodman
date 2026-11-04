@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/compare_builds.py`: list the sections that changed between two builds.
 //!
 //! Reads two corpus roots, each holding `markdown/<register_id>/sections.jsonl`,

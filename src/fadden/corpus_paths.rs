@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/corpus_paths.py`: the filesystem boundaries the ported stages use.
 use std::collections::BTreeSet;
 use std::io::Write as _;

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The PII detectors and `fadden pii_scan` / `pii_scan2`: ported from
 //! PiiNameGateTests in tests/corpus/test_regressions.py (which still covers
 //! the Python module the distribution stages use) and the scan tests in

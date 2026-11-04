@@ -484,9 +484,66 @@ python -m fadden search refs search.sqlite C2004A05138:0035:8-1
   has neither. A Division number repeated across Parts or Schedules returns
   every matching row.
 - A bare citation, or one `of this Act`, resolves to the same title. A
-  citation naming another instrument resolves only by its exact title;
-  abbreviations such as `ITAA 1997` and `the Act` stay unresolved with the
-  cited name kept.
+  citation naming another instrument resolves only by its exact title or by
+  an abbreviation in the table below. Any other name, such as `the Act`,
+  `ITAA 2097`, `Itaa 1997` or `Income Tax Assessment Act` without its year,
+  stays unresolved with the cited name kept; nothing is matched by
+  resemblance.
+- The cited name is compared as written, except that whitespace runs
+  (including a line break or no-break space) read as one space and a leading
+  `the` or `*` is dropped. Case counts. A name is read only when it ends in a
+  year or in `Act`, `Regulation`, `Regulations` or `Rules`, so the table lists
+  `FBTAA 1986` rather than `FBTAA`.
+- An abbreviation resolves only where what follows it is on a closed list,
+  so that it does not stand for the longer names it begins in the measured
+  sample. The list is a rule about the text, not a guarantee: a longer name
+  written inside brackets, such as `ITAA 1997 (Amendment Act 2025)`, still
+  resolves to the base Act. After any whitespace (a line break included),
+  only these may follow it:
+  - the end of the text, or `,`, `.`, `;`, `:`, `)` or `]`;
+  - a lower-case word other than `and` or `or`, such as `section`, `s` or
+    `ss`;
+  - `Division`, `Subdivision`, `Part`, `Schedule` or `Chapter`;
+  - a parenthesised part, such as `(Cth)` or a note, followed by any of
+    these;
+  - `and` or `or`, optionally followed by `the`, before one of those words or
+    before a listed abbreviation or held title whose own name ends by this
+    same test.
+
+  Anything else leaves the abbreviation unresolved, never sent to the base
+  Act: a capitalised word (`ITAA 1997 Amendment Act 2025`), a parenthesised
+  part followed by one (`ITAA 1997 (No. 2) Amendment Act 2025`), a digit
+  (`ITAA 1997 2025 Amendment Act 2025`), text joined to the year
+  (`ITAA 1997-2`) or a second name that runs on
+  (`ITAA 1997 and ITAA 1936 Amendment Act 2025`). The cost is that an
+  abbreviation ending a paragraph or table row before text that opens with a
+  capital or a number also stays unresolved. An exact title is not checked
+  this way.
+
+  Measured on 4 November 2026 with `fadden search build` over a corpus that
+  holds every title in `fadden/manifest_md.json`, with the EPUB text of 5 Acts
+  and 6 instruments from the Register each as one row: of 37,343 references,
+  234 name a listed abbreviation and 231 of those resolve. The 3 that do not
+  cite the GST Act in rows of a table in the *Income Tax Assessment Act
+  1997*, before a line break and an item number. The test changed no
+  reference to an exact title, and all 24 abbreviation references in the
+  texts of the golden search fixtures resolve.
+
+| Cited as | Title | Register ID |
+| --- | --- | --- |
+| `ITAA 1997` | *Income Tax Assessment Act 1997* | C2004A05138 |
+| `ITAA 1936` | *Income Tax Assessment Act 1936* | C1936A00027 |
+| `TAA 1953` | *Taxation Administration Act 1953* | C1953A00001 |
+| `GST Act` | *A New Tax System (Goods and Services Tax) Act 1999* | C2004A00446 |
+| `FBTAA 1986` | *Fringe Benefits Tax Assessment Act 1986* | C2004A03280 |
+
+Each title and ID matched the Register API's `titles` record on 4 November
+2026, and the committed `fadden/manifest_md.json` (the 4 August 2026 build)
+holds each title once under that ID. An abbreviation resolves only when the
+index holds exactly one title of that name: in a corpus without it, the
+citation stays unresolved and `refs` prints `not in this index`. Section 995-1
+of the *Income Tax Assessment Act 1997* defines `GST Act`, and section 195-1 of
+the GST Act defines `ITAA 1936` and `ITAA 1997`, as the table reads them.
 
 Measured on the 4 August 2026 build on 15 October 2026: 946 titles and 21,916
 rows indexed in about 5 seconds into a 77 MB file, with 8,426 definition

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden dist` and `fadden dist_verify`: ported from DistributionTests,
 //! DistTableBlockParagraphTests and DistVerifyExitStatusTests in
 //! tests/corpus/test_regressions.py and from tests/corpus/test_dist_paths.py.

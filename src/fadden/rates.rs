@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/rates.py`: derive a rates-and-thresholds index from the corpus on disk.
 //!
 //! No network. Reads every listed title's sections.jsonl and keeps the

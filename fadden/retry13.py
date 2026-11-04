@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Recover the titles whose current version carries no published document.
 
 The Register can record that a version commenced without yet publishing a

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The fuzz targets' seed inputs, replayed through the same invariant checks
 //! on stable Rust, so ordinary CI catches a broken check. fuzz/README.md
 //! explains the targets; `privacy_patterns`'s seeds replay in fadden_pii.rs.

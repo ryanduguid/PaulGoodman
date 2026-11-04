@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden export_monitor_contract`: ported from tests/corpus/test_monitor_contract.py
 //! and test_monitor_contract_paths.py. The documentation check and the
 //! cross-system test against the radar binary remain in the Python file.

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 #![no_main]
 // The JSON decoder reads corpus files and Register responses: no input may
 // panic it, and what it decodes must survive a round trip through json.dumps.

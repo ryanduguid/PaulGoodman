@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! exposure(): ported from tests/radar/test_exposure.py, the exposure cases of
 //! test_radar_paths.py and the exposure budgets of test_security_remediation.py.
 mod common;
