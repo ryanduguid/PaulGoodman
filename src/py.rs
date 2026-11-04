@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! The Python behaviours the radar's output depended on, adapted from the
 //! builder-operator-loop port.
 //!

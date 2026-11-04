@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! Python `re` patterns run as `fancy_regex` patterns with Python's semantics.
 //!
 //! The scripts' patterns are written in Python syntax. [`re`] translates one
