@@ -1406,6 +1406,7 @@ fn cite_check_pins_each_result_to_the_build() {
     assert_eq!(item["register_id"], ACT);
     assert_eq!(item["compilation_number"], "1");
     assert_eq!(item["compilation_date"], "2099-07-01");
+    assert_eq!(item["status_as_at"], "2099-08-01");
     let digest = |sql: &str| -> String { connection.query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(
         item["sources_sha256"],
@@ -1438,6 +1439,7 @@ fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
     assert!(out.contains("line 1: resolved: "));
     assert!(out.contains("2 citations: 1 resolved, 1 container_level."));
     assert!(out.contains("does not show") || out.contains("not show that"));
+    assert!(out.contains("as at the build's retrieval date"));
     assert!(out.contains(search::NOTICE));
     let (code, out, _) = check(&["empty.md"]);
     assert_eq!(code, 0);

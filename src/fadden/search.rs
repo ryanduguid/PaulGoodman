@@ -1200,7 +1200,8 @@ const SHARED_NAME: &str = "";
 const UNREAD_NAME: &str = r"\s+(?:of|in|under)\s+(?:the\s+|that\s+)?(?!(?:Division|Subdivision|Part|Schedule|Chapter)\b)[A-Z]|\s+of\s+the\s+[a-z]";
 
 const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
-not show that the provision says what the draft claims or applied at any date. Forms refs does \
+not show that the provision says what the draft claims or applied at any date. Current and \
+superseded hold as at the build's retrieval date; a later amendment can outdate them. Forms refs does \
 not read, such as s 8-1, are not counted.";
 
 /// One object per citation in `draft`, in its order, with the outcome and the rows and
@@ -1307,6 +1308,7 @@ pub fn cite_check(
                 from_title("compilation_number"),
             ),
             ("compilation_date".into(), from_title("compilation_date")),
+            ("status_as_at".into(), from_title("retrieved")),
             ("sections_sha256".into(), from_title("sections_sha256")),
             ("sources_sha256".into(), digest.clone()),
         ]));
