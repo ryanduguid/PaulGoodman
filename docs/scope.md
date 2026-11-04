@@ -54,7 +54,7 @@ Register as a current version with no `registerId`. The Register API also sets
 `hasUnincorporatedAmendments` on that version and
 `hasCommencedUnincorporatedAmendments` on its title; on 5 November 2026 the same
 253 in-force versions met both tests and none with a `registerId` carried the
-flag. `check_current` reports such a title as having no compilation published,
+flag. `check_current` counts such a title under no published compilation,
 and a build marks it `version_is_current: false`. A build stores neither flag,
 so `as_at`, which makes no request, cannot report an amendment that commenced
 after the build was retrieved: run `check_current` for that. Neither command
