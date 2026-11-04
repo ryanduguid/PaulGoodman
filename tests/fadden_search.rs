@@ -1554,6 +1554,35 @@ fn cite_check_fails_closed_on_any_source_after_a_citation() {
     }
 }
 
+#[test]
+fn cite_check_gives_the_title_flag_only_this_act_or_its_provisions() {
+    let c = case();
+    let connection = built(&c);
+    for draft in [
+        "See section 2-1 of this Regulation.",
+        "See section 2-1 in this Instrument.",
+        "See section 2-1 under this Regulation.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "ambiguous",
+            "{draft}"
+        );
+    }
+    for draft in [
+        "See section 2-1 of this Act.",
+        "See section 2-1 under this Act.",
+        "See section 2-1 of this Part.",
+        "See section 2-1 under this Division.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "resolved",
+            "{draft}"
+        );
+    }
+}
+
 /// The real-law question set: (query words, Register ID, section, form).
 fn reference_questions() -> Vec<[&'static str; 4]> {
     include_str!("fixtures/retrieval_real_law.tsv")

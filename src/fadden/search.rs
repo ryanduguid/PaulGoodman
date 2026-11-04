@@ -1197,9 +1197,20 @@ const SHARED_NAME: &str = "";
 
 /// What may tie a citation to a source the citation pattern did not read, so `--title`
 /// must not claim it: a linking word, or a capitalised word such as an instrument's
-/// name. `this` or a provision of the same title may follow. This fails closed: `to` in
+/// name. `this Act` or a provision of the same title may follow. This fails closed: `to` in
 /// `section 8-1 to deduct` also stops `--title`, which costs a reader one look.
-const UNREAD_NAME: &str = r"[\s,(]+(?:(?:of|in|under|to|for|by|from|within|made|pursuant)\b|(?=[A-Z]))(?!\s*(?:this\b|(?:Division|Subdivision|Part|Schedule|Chapter)\b))";
+const UNREAD_NAME: &str = r"[\s,(]+(?:(?:of|in|under|to|for|by|from|within|made|pursuant)\b|(?=[A-Z]))(?!\s*(?:this\s+Act|(?:this\s+)?(?:Division|Subdivision|Part|Schedule|Chapter))\b)";
+
+/// The words after `this` that keep a citation in the given title. The citation pattern
+/// reads any `of this` phrase, so `of this Regulation` needs refusing here.
+const SAME_TITLE: [&str; 6] = [
+    "Act",
+    "Division",
+    "Subdivision",
+    "Part",
+    "Schedule",
+    "Chapter",
+];
 
 const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
 not show that the provision says what the draft claims or applied at any date. Current and \
@@ -1247,7 +1258,11 @@ pub fn cite_check(
     let unread = pyre::re(UNREAD_NAME, 0);
     let mut report = Vec::new();
     for (kind, key, act, citation, end) in citations(draft) {
-        let named = if act.is_none() && unread.match_at(draft, end).is_some() {
+        let other_instrument = citation
+            .rsplit_once(" this ")
+            .is_some_and(|(_, word)| !SAME_TITLE.contains(&word));
+        let named = if act.is_none() && (other_instrument || unread.match_at(draft, end).is_some())
+        {
             None
         } else {
             cited_title(draft, end, act.as_deref(), own.as_deref(), lookup)
