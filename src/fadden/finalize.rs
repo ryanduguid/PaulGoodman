@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! The port of `fadden/finalize.py` (removed after the port): the last corpus stage. It writes sources.json,
 //! INDEX.md, LICENCE-NOTICE.md and README.md under the corpus root, copies

@@ -48,4 +48,4 @@ State which stage of the pipeline your change touches and what the output looks 
 
 For a potential security vulnerability, follow [SECURITY.md](SECURITY.md) rather than opening an issue.
 
-Contributions are accepted under FSL-1.1-ALv2; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Contributions are accepted under the Ryan Duguid Public Attribution Licence 1.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).

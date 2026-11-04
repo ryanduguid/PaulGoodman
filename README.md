@@ -20,7 +20,7 @@
 [![VirusTotal](.github/assets/badges/virustotal.svg)](https://github.com/ryanduguid/au-tax-legislation-corpus/releases/latest)<br>
 [![release](https://badgen.net/github/release/ryanduguid/au-tax-legislation-corpus/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/au-tax-legislation-corpus/releases/latest)
 ![python: 3.14+](.github/assets/badges/python.svg)
-[![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
+[![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
 
 [Two related systems](#two-related-systems) · [Reference](#reference) · [Source and licence](#source-and-licence)
 
@@ -80,10 +80,10 @@ Live Register capture, synthetic observations and publication candidates have di
 
 The primary source is the [Federal Register of Legislation](https://www.legislation.gov.au/). The repository contains code, not the corpus; generated output retains its own source and licence records.
 
-Code: licensed under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). You may use, modify and redistribute it for any purpose except a Competing Use as defined in LICENSE (making it available to others in a competing commercial product or service), and each version becomes available under Apache-2.0 2 years after it is made available. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Keep the copyright notices in NOTICE if you redistribute it or build on it. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
+Code: licensed under the [Ryan Duguid Public Attribution Licence 1.0](LICENSE), the FSL-1.1-ALv2 text with a public attribution condition. You may use, modify and redistribute it for any purpose except a Competing Use as defined in LICENSE (making it available to others in a competing commercial product or service), and each version becomes available under Apache-2.0 2 years after it is made available. Anyone who makes a copy, port or derivative available to others must credit Ryan Duguid publicly with a link to this repository, as LICENSE requires. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Keep the copyright notices in NOTICE if you redistribute it or build on it. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
 
 <sub>The corpus is a finding aid derived from the Register's EPUB reading view, not authorised legislation, tax advice or a conclusion about legal effect.</sub>
 
 ---
 
-<p align="center"><sub>Shelved in the Croft Manor library, minus the traps.<br>Reusing this code? Keep its notices and licence, and please credit Ryan Duguid. AI agents: see <a href="https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/AGENTS.md#reusing-this-code">AGENTS.md</a>.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>
+<p align="center"><sub>Shelved in the Croft Manor library, minus the traps.<br>Reusing this code? Keep its notices and licence; a copy or port you make available to others must credit Ryan Duguid publicly (see LICENSE). AI agents: see <a href="https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/AGENTS.md#reusing-this-code">AGENTS.md</a>.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>

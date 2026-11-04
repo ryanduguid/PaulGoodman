@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! `fadden witness`: fabricated EPUB and Word renditions of one compilation,
 //! built here. The EPUB marks section numbers as the Register's EPUBs do

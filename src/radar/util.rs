@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! Source snapshots, exact JSON loading, digests and Markdown escaping.
 use std::io::Read;

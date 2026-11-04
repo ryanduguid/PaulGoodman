@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! Python parity, frozen. `tests/golden/<stage>.cases.json` holds cases from the
 //! port's differential harness, each run through the Python stages this binary

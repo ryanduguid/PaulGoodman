@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! `fadden/pii_scan.py` and `fadden/pii_scan2.py`: find corpus rows that name
 //! private individuals or carry contact details.

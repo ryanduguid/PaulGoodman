@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! `fadden versions`: ported from tests/corpus/test_version_batches.py and the versions cases of
 //! tests/corpus/test_regressions.py, with scripted responses and no network traffic.
