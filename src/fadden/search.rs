@@ -47,6 +47,20 @@ const LIST_SEPARATOR: &str = r"(?:,\s+(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)";
 const SUBDIVISION: &str = r"\d+[A-Z]{0,4}[-‐‑][A-Z]{1,3}\b";
 const MARKDOWN_HEADING: &str = r"^#{1,6} (.+)$";
 
+/// Cited names that stand for a title's exact name, each checked against the
+/// Register on 4 November 2026. A cited name resolves only as a title's name or
+/// through this list, so any other abbreviation stays unresolved.
+const ABBREVIATIONS: [(&str, &str); 5] = [
+    ("ITAA 1997", "Income Tax Assessment Act 1997"),
+    ("ITAA 1936", "Income Tax Assessment Act 1936"),
+    ("TAA 1953", "Taxation Administration Act 1953"),
+    (
+        "GST Act",
+        "A New Tax System (Goods and Services Tax) Act 1999",
+    ),
+    ("FBTAA 1986", "Fringe Benefits Tax Assessment Act 1986"),
+];
+
 fn cited() -> String {
     format!(
         r"(?:the\s+)?\*?([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){{0,3}}\s+{YEAR}|(?=[A-Z])[^.;:,\n]{{0,150}}?\b(?:Act|Regulations?|Rules)\b(?:\s+{YEAR})?)"
@@ -760,10 +774,16 @@ fn insert_row(
     for (kind, cited, act, citation) in citations(&text) {
         let target = match &act {
             None => Some(rid.to_string()),
-            Some(name) => names
-                .iter()
-                .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
-                .and_then(|(_, v)| v.clone()),
+            Some(written) => {
+                let name = ABBREVIATIONS
+                    .iter()
+                    .find(|(abbreviation, _)| *abbreviation == written.as_str())
+                    .map_or(written.as_str(), |(_, name)| *name);
+                names
+                    .iter()
+                    .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
+                    .and_then(|(_, v)| v.clone())
+            }
         };
         run(
             connection,

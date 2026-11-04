@@ -972,6 +972,91 @@ fn unresolved_and_repeated_targets_are_reported_as_they_are() {
     );
 }
 
+/// Each listed abbreviation, then the title it stands for as the committed manifest records it.
+const ABBREVIATED: [(&str, &str, &str); 5] = [
+    ("ITAA 1997", "C2004A05138", "Income Tax Assessment Act 1997"),
+    ("ITAA 1936", "C1936A00027", "Income Tax Assessment Act 1936"),
+    (
+        "TAA 1953",
+        "C1953A00001",
+        "Taxation Administration Act 1953",
+    ),
+    (
+        "GST Act",
+        "C2004A00446",
+        "A New Tax System (Goods and Services Tax) Act 1999",
+    ),
+    (
+        "FBTAA 1986",
+        "C2004A03280",
+        "Fringe Benefits Tax Assessment Act 1986",
+    ),
+];
+
+#[test]
+fn listed_abbreviations_resolve_and_any_other_name_stays_as_cited() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fadden")
+        .join("manifest_md.json");
+    let manifest: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let c = case();
+    let mut titles = Titles::new();
+    for (_, rid, name) in ABBREVIATED {
+        let held: Vec<&Value> = manifest
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["name"] == name)
+            .collect();
+        assert_eq!(held.len(), 1, "{name}");
+        assert_eq!(held[0]["id"], rid, "{name}");
+        let text = row(rid, 1, Some("1"), "Fabricated text.", "1 Text", None);
+        titles.insert(rid, (name, vec![text]));
+    }
+    let text = "section 1 of the ITAA 1997, section 1 of the ITAA 1936, section 1 in Schedule 1 to the TAA 1953, \
+        section 1 of the *GST Act, section 1 of the FBTAA 1986, section 1 of ITAA\n1997, section 1 of the ITAA  1936, \
+        section 1 of the TAA\u{a0}1953, section 1 of the Itaa 1997, section 1 of the ITAA 2097, \
+        section 1 of the Income Tax Assessment Act, section 1 of the GST Act 1999.";
+    let citing = row(OTHER, 1, Some("5"), text, "5 Citations", None);
+    titles.insert(OTHER, ("Other Sample Act 2099", vec![citing]));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let report = value(&search::refs(&connection, &format!("{OTHER}:0001:5")).unwrap());
+    let got: Vec<(Value, Value, usize)> = report["cites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["cited_act"].clone(),
+                c["register_id"].clone(),
+                c["rows"].as_array().unwrap().len(),
+            )
+        })
+        .collect();
+    let mut expected: Vec<(Value, Value, usize)> = ABBREVIATED
+        .iter()
+        .map(|(abbreviation, rid, _)| (json!(abbreviation), json!(rid), 1))
+        .collect();
+    for (variant, rid) in [
+        ("ITAA 1997", "C2004A05138"),
+        ("ITAA 1936", "C1936A00027"),
+        ("TAA 1953", "C1953A00001"),
+    ] {
+        expected.push((json!(variant), json!(rid), 1));
+    }
+    for unlisted in [
+        "Itaa 1997",
+        "ITAA 2097",
+        "Income Tax Assessment Act",
+        "GST Act 1999",
+    ] {
+        expected.push((json!(unlisted), Value::Null, 0));
+    }
+    assert_eq!(got, expected);
+}
+
 fn rows_with_division(c: &Case, rows: Vec<Value>, heading_at: usize, division: &str) {
     let mut titles = Titles::new();
     titles.insert(ACT, ("Sample Levy Act 2099", rows.clone()));
