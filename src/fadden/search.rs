@@ -1195,6 +1195,10 @@ const CLEAN_OUTCOMES: [&str; 2] = ["resolved", "container_level"];
 /// as held.
 const SHARED_NAME: &str = "";
 
+/// Words after a citation that name something the citation pattern did not read, so
+/// `--title` must not claim it. A provision of the same title may follow.
+const UNREAD_NAME: &str = r"\s+(?:of|in|under)\s+(?:the\s+|that\s+)?(?!(?:Division|Subdivision|Part|Schedule|Chapter)\b)[A-Z]|\s+of\s+the\s+[a-z]";
+
 const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
 not show that the provision says what the draft claims or applied at any date. Forms refs does \
 not read, such as s 8-1, are not counted.";
@@ -1236,9 +1240,14 @@ pub fn cite_check(
     .first()
     .map_or(Json::Null, |row| field(row, "value").clone());
     let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
+    let unread = pyre::re(UNREAD_NAME, 0);
     let mut report = Vec::new();
     for (kind, key, act, citation, end) in citations(draft) {
-        let named = cited_title(draft, end, act.as_deref(), own.as_deref(), lookup);
+        let named = if act.is_none() && unread.match_at(draft, end).is_some() {
+            None
+        } else {
+            cited_title(draft, end, act.as_deref(), own.as_deref(), lookup)
+        };
         let shared = named.as_deref() == Some(SHARED_NAME);
         let target = named.filter(|_| !shared);
         let (rows, held) = match &target {

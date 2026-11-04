@@ -491,7 +491,7 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   | --- | --- |
   | `resolved` | One row of a current title has that section |
   | `container_level` | A Division or Subdivision of a current title, which is not a pinpoint |
-  | `ambiguous` | No title is named and `--title` was not given, 2 titles share the cited name, or several rows share the number, as across Schedules |
+  | `ambiguous` | No title is named and `--title` was not given, the words after the citation name something it cannot read, 2 titles share the cited name, or several rows share the number, as across Schedules |
   | `multi_section` | A range such as `sections 8-1 to 8-10`, of which only the first item is read |
   | `not_held` | The name is not a title or listed abbreviation in the index, or the title has no such row |
   | `superseded` | The rows exist, but `sources.json` marks the title's captured compilation as not current |

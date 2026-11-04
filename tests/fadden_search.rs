@@ -1481,6 +1481,38 @@ fn cite_check_calls_a_name_two_titles_share_ambiguous_not_absent() {
     }
 }
 
+#[test]
+fn cite_check_does_not_give_a_name_it_cannot_read_to_the_title_flag() {
+    let c = case();
+    let connection = built(&c);
+    let draft = [
+        "See section 2-1 of the Sample Levy Ordinance.",
+        "See section 2-1 under the Fabricated Code.",
+        "See section 2-1 of that Act.",
+        "See section 2-1 of the regulations.",
+        "See section 2-1 of this Act.",
+        "See section 2-1.",
+    ]
+    .join("\n");
+    let outcomes: Vec<String> = checked(&connection, &draft, Some(ACT))
+        .into_iter()
+        .map(|(_, _, outcome, _)| outcome)
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            "ambiguous",
+            "ambiguous",
+            "ambiguous",
+            "ambiguous",
+            "resolved",
+            "resolved"
+        ]
+    );
+    let inside = checked(&connection, "See section 2-1 in Division 2.", Some(ACT));
+    assert_eq!(inside[0].2, "resolved");
+}
+
 /// The real-law question set: (query words, Register ID, section, form).
 fn reference_questions() -> Vec<[&'static str; 4]> {
     include_str!("fixtures/retrieval_real_law.tsv")
