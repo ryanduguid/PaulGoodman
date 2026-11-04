@@ -97,7 +97,7 @@ written before any run, 32 in base form and 14 with inflected word forms, each n
 the section it should reach. An agent wrote them from the Acts' published section
 numbers; no person has graded them. Every expected section is in the index below, on
 one row, and its Register heading was read against its question. A hit is that section
-of that title in the first 5 or 10 results.
+of that title in the first 1, 5 or 10 results.
 
 | Ranker | Queries | Hit at 1 | Hit at 5 | Hit at 10 | Mean reciprocal rank | No results |
 |---|---:|---:|---:|---:|---:|---:|

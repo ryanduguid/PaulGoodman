@@ -1549,7 +1549,7 @@ fn the_real_law_question_set_is_well_formed() {
 fn reference_questions_on_a_real_index() {
     let index = std::env::var("FADDEN_REFERENCE_INDEX").expect("set FADDEN_REFERENCE_INDEX");
     let connection = search::open_index(&index).unwrap();
-    let mut counts = BTreeMap::<&str, [usize; 3]>::new();
+    let mut results = BTreeMap::<&str, Vec<(Option<usize>, bool)>>::new();
     for [query, register_id, section, form] in reference_questions() {
         let words: Vec<String> = query.split_whitespace().map(str::to_string).collect();
         let hits = values(search::query(&connection, &words, None, 10).unwrap());
@@ -1559,12 +1559,30 @@ fn reference_questions_on_a_real_index() {
                     .as_str()
                     .is_some_and(|found| search::section_key(found) == section)
         });
-        let count = counts.entry(form).or_default();
-        count[0] += 1;
-        count[1] += usize::from(rank.is_some_and(|r| r < 5));
-        count[2] += usize::from(rank.is_some());
+        results
+            .entry(form)
+            .or_default()
+            .push((rank, hits.is_empty()));
     }
-    for (form, [questions, top5, top10]) in counts {
-        println!("{form}: {questions} questions, hit at 5 {top5}, hit at 10 {top10}");
+    for (form, ranks) in results {
+        let hit = |n: usize| {
+            ranks
+                .iter()
+                .filter(|(rank, _)| rank.is_some_and(|r| r < n))
+                .count()
+        };
+        let reciprocal: f64 = ranks
+            .iter()
+            .filter_map(|(rank, _)| rank.map(|r| 1.0 / (r + 1) as f64))
+            .sum();
+        println!(
+            "{form}: {} queries, hit at 1 {}, hit at 5 {}, hit at 10 {}, mean reciprocal rank {:.3}, no results {}",
+            ranks.len(),
+            hit(1),
+            hit(5),
+            hit(10),
+            reciprocal / ranks.len() as f64,
+            ranks.iter().filter(|(_, empty)| *empty).count()
+        );
     }
 }
