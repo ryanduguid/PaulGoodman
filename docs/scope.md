@@ -49,6 +49,17 @@ effect registered after the build was retrieved, and the Legislation Act 2003
 does not require a new compilation for one. Read the Register's version
 history and endnotes for any question about a past date.
 
+An amendment that has commenced but is not yet in a compilation shows on the
+Register as a current version with no `registerId`. The Register API also sets
+`hasUnincorporatedAmendments` on that version and
+`hasCommencedUnincorporatedAmendments` on its title; on 5 November 2026 the same
+253 in-force versions met both tests and none with a `registerId` carried the
+flag. `check_current` reports such a title as having no compilation published,
+and a build marks it `version_is_current: false`. A build stores neither flag,
+so `as_at`, which makes no request, cannot report an amendment that commenced
+after the build was retrieved: run `check_current` for that. Neither command
+reports amendments that have not commenced.
+
 A consumer that quotes a row should accept a quotation only when it appears
 in the row text. `quote_in_text` in the Rust crate's `fadden::as_at` module does that check after Unicode
 NFKC normalisation of both, reading the Register's non-breaking hyphen as `-`.
