@@ -63,13 +63,16 @@ installed or run.
 
 ## Commercial research tools
 
-The vendor pages below were read on 9 October 2026. They describe advertised
-capabilities; neither product was used in a trial or tested against this corpus.
+The vendor pages below were read on 9 October 2026, and those for Ask Nugget
+and TimeBase on 4 November 2026. They describe advertised capabilities; no
+product was used in a trial or tested against this corpus.
 
 | Product and primary source | Advertised capability | Comparison with this builder |
 | --- | --- | --- |
 | [CCH iKnowConnect](https://www.wolterskluwer.com/en-au/solutions/cch-iknowconnect) | Research across legislation, cases, editorial commentary and practical tools; source-linked AI answers and daily or weekly news alerts | It provides a research service with editorial material. This builder supplies Commonwealth tax source rows and a change-review queue. Its provenance fields support source review, but do not supply CCH's commentary or establish the practical effect of a change. |
 | [Lawg](https://lawg.ai/) | Structured tax answers with references to legislation, ATO rulings and case law, including passage-level case citations | It answers research questions across sources. This builder holds no case law and generates no answer. A consumer can use its section and paragraph rows to check quotations, subject to the recorded coverage and date limits. |
+| [Ask Nugget](https://help.taxnuggetsacademy.com.au/article/110-ask-nugget-knowledge-base) (Tax Nuggets) | AI tax research answers over Commonwealth tax Acts consolidated from the latest Register compilation, ATO public rulings and guidance, published edited advice and case law with decision impact statements. Its knowledge base page (updated 29 September 2026) lists draft law, announced but unenacted measures, state taxes and tax treaties as coming soon, and withdrawn ATO material as out of scope | It answers research questions from the latest compilation. This builder generates no answer and holds no case law or edited advice, but each section row carries its compilation, so a consumer can test whether a quoted passage was the law at the question date (cases 1 and 2 below). |
+| [TimeBase](https://www.thomsonreuters.com.au/en-au/products/timebase.html) (Thomson Reuters, which [completed its acquisition](https://www.thomsonreuters.com.au/en-au/press-releases/2025/july/thomson-reuters-completes-acquisition-of-timebase.html) on 2 July 2025) | 130,000+ legislative items across the 9 Australian jurisdictions and New Zealand, including Bills; [Point-in-Time](https://www.thomsonreuters.com.au/en-au/products/timebase/point-in-time.html) consolidation at any past, present or future date, section-level red-line comparison, and Bill-tracking alerts up to twice a day | It covers more jurisdictions, more history and Bills. This builder holds Commonwealth tax law at the in-force compilation only: it does not consolidate an amendment before it commences, and its radar queue raises a registered change for a person to assess (case 6 below). |
 
 ### Cases for evaluating a research consumer
 
@@ -92,3 +95,7 @@ evaluation cases; no commercial product has passed them in this comparison.
 5. A change appears in `compare_builds` or the radar queue. Link the changed
    source and retain human review of its practical effect before updating
    downstream advice or workflows.
+6. An amending Act is registered but has not commenced at the question date.
+   Answer from the text in force at that date, and name the amendment and its
+   commencement as a pending change rather than quoting the amended text as
+   current law.
