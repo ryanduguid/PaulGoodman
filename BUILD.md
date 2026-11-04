@@ -483,9 +483,10 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   every citation with its line, one outcome and the rows it reached. `--json`
   prints one object per citation with the title's compilation, its
   `sections.jsonl` digest and the digest of `sources.json`, which pin the result
-  to this build, and `status_as_at`, the date the build retrieved the title.
-  `superseded` and the currency behind `resolved` hold as at that date; a later
-  amendment can outdate them. It makes no request. A citation naming no title takes the title
+  to this build, and `retrieved`, the day the build obtained the title's EPUB.
+  `superseded` and the currency behind `resolved` come from `version_is_current`,
+  which a separate stage set from its own Register query, so `retrieved` does not
+  date them and a later amendment can outdate them. It makes no request. A citation naming no title takes the title
   `--title` gives. It exits 1 if any outcome is other than `resolved` or
   `container_level`.
 
