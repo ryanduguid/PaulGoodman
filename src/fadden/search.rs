@@ -1191,6 +1191,10 @@ const OUTCOMES: [&str; 6] = [
 ];
 /// The two that let `cite-check` exit 0.
 const CLEAN_OUTCOMES: [&str; 2] = ["resolved", "container_level"];
+/// Stands in for the register ID of a name two titles share, so the name still counts
+/// as held.
+const SHARED_NAME: &str = "";
+
 const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
 not show that the provision says what the draft claims or applied at any date. Forms refs does \
 not read, such as s 8-1, are not counted.";
@@ -1214,16 +1218,16 @@ pub fn cite_check(
         }
         None => None,
     };
-    // Two titles sharing a name leave a citation of that name unresolved, as `build` does.
-    let mut names: BTreeMap<String, Option<String>> = BTreeMap::new();
+    // Two titles sharing a name leave a citation of that name ambiguous, not absent.
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
     for row in rows_of(connection, "SELECT name, register_id FROM titles", &[])? {
-        let rid = field(&row, "register_id").as_str().map(str::to_string);
+        let rid = field(&row, "register_id").as_str().unwrap_or_default();
         names
             .entry(field(&row, "name").as_str().unwrap_or_default().to_string())
-            .and_modify(|slot| *slot = None)
-            .or_insert(rid);
+            .and_modify(|slot| *slot = SHARED_NAME.to_string())
+            .or_insert_with(|| rid.to_string());
     }
-    let lookup = |name: &str| names.get(name).cloned().flatten();
+    let lookup = |name: &str| names.get(name).cloned();
     let digest = rows_of(
         connection,
         "SELECT value FROM meta WHERE key = 'sources_sha256'",
@@ -1234,7 +1238,9 @@ pub fn cite_check(
     let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
     let mut report = Vec::new();
     for (kind, key, act, citation, end) in citations(draft) {
-        let target = cited_title(draft, end, act.as_deref(), own.as_deref(), lookup);
+        let named = cited_title(draft, end, act.as_deref(), own.as_deref(), lookup);
+        let shared = named.as_deref() == Some(SHARED_NAME);
+        let target = named.filter(|_| !shared);
         let (rows, held) = match &target {
             Some(rid) => (
                 rows_of(
@@ -1256,7 +1262,7 @@ pub fn cite_check(
         let outcome = if range.match_at(draft, end).is_some() {
             // `citations` reads only the first item of a range.
             "multi_section"
-        } else if target.is_none() && act.is_none() {
+        } else if shared || (target.is_none() && act.is_none()) {
             "ambiguous"
         } else if rows.is_empty() {
             "not_held"

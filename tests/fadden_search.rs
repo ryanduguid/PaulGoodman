@@ -1464,6 +1464,23 @@ fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
     assert!(err.contains("python -m fadden search cite-check"));
 }
 
+#[test]
+fn cite_check_calls_a_name_two_titles_share_ambiguous_not_absent() {
+    let c = case();
+    let mut titles = sample_titles();
+    titles.get_mut(OTHER).unwrap().0 = "Sample Levy Act 2099";
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let draft = "See section 2-1 of the Sample Levy Act 2099.\nSee section 9 of the Missing Act 2099.";
+    for title in [None, Some(ACT)] {
+        let report = values(search::cite_check(&connection, draft, title).unwrap());
+        assert_eq!(report[0]["outcome"], "ambiguous");
+        assert_eq!(report[0]["register_id"], Value::Null);
+        assert_eq!(report[1]["outcome"], "not_held");
+    }
+}
+
 /// The real-law question set: (query words, Register ID, section, form).
 fn reference_questions() -> Vec<[&'static str; 4]> {
     include_str!("fixtures/retrieval_real_law.tsv")
