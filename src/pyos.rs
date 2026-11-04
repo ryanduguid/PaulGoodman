@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! The `os` calls the radar makes, failing with the text of CPython's `OSError`.
 //!
 //! On Windows, `open` and `os.open` go through the C runtime and report an

@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 #![no_main]
 // The port of CPython's HTMLParser that reads legislation and ruling pages: no
 // page may panic it, and handler calls arrive in source order.

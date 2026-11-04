@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! The HTML 5 character references used by CPython's html.unescape.
 use regex::Regex;
 use std::sync::LazyLock;

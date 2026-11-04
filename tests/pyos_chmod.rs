@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! `pyos::chmod`: `os.chmod(path, mode)` with default arguments.
 //!
 //! On Windows CPython 3.14 and later (`win32_lchmod`) set or clear the read-only attribute

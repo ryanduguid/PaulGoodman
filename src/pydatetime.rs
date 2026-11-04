@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! CPython 3.15's C `datetime.fromisoformat` and `date.fromisoformat`
 //! (`Modules/_datetimemodule.c`), with the `ValueError` text each raises.
 //!

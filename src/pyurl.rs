@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! `urllib.parse.urlsplit` and `urljoin` of CPython 3.15 for `str` URLs, with `.hostname`.
 //!
 //! The checks use the scheme, netloc, path and hostname; the `ValueError`s

@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! Differential probe for `pydatetime` against CPython's `datetime`.
 //!
 //! Each stdin line is a string as comma-separated hex code points, or `d:`

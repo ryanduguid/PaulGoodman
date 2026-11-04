@@ -1,6 +1,3 @@
-// Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
-
 //! CPython 3.15's `html.parser.HTMLParser` (identical in 3.14.8), as a stream of events.
 //!
 //! [`parse_each`] runs one `feed(text)` and then `close()`, which is how every site
