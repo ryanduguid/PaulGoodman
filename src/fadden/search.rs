@@ -67,14 +67,35 @@ fn cited() -> String {
     )
 }
 
-/// The rest of a longer name that a cited name begins, on the same line: capitalised
-/// words, parenthesised parts and years up to the first `Act`, `Regulation(s)` or
-/// `Rules`, and its year.
-fn name_tail() -> String {
-    const GAP: &str = "[ \t\u{a0}]+";
-    format!(
-        r"(?:{GAP}(?:[A-Z][A-Za-z]*|\([^()\n]{{1,80}}\)|{YEAR}))*?{GAP}(?:Act|Regulations?|Rules)\b(?:{GAP}{YEAR})?"
-    )
+/// Capitalised words that may follow an abbreviation without carrying on its name.
+const PROVISION_WORDS: [&str; 5] = ["Division", "Subdivision", "Part", "Schedule", "Chapter"];
+
+/// Whether the text from `end`, the end of an abbreviation, may carry on a longer
+/// name it begins (`ITAA 1997 Amendment Act 2025`): after whitespace, line breaks
+/// included, a capitalised word other than a provision word, or `and` or `or`
+/// (optionally `the`) before one that begins no listed abbreviation or held title.
+fn continues(text: &str, end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
+    let next = pyre::re(r"\s+(?:(and|or)(?:\s+the)?\s+)?([A-Z][A-Za-z]*)", 0);
+    let Some(found) = next.match_at(text, end) else {
+        return false;
+    };
+    let word = found.get(2).expect("word");
+    if PROVISION_WORDS.contains(&word.as_str()) {
+        return false;
+    }
+    if found.get(1).is_none() {
+        return true;
+    }
+    let name = pyre::re(&cited(), 0)
+        .match_at(text, word.start())
+        .and_then(|name| name.get(1))
+        .map(|name| crate::py::split_whitespace(name.as_str()).join(" "));
+    name.is_none_or(|name| {
+        !ABBREVIATIONS
+            .iter()
+            .any(|(abbreviation, _)| *abbreviation == name)
+            && lookup(&name).is_none()
+    })
 }
 
 fn citation_pattern() -> String {
@@ -194,11 +215,11 @@ pub fn definitions(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// (kind, key, cited act or None, citation text) for each reference in `text`.
-pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
+/// (kind, key, cited act or None, citation text, where the citation ends in `text`)
+/// for each reference in `text`.
+pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usize)> {
     let pattern = pyre::re(&citation_pattern(), 0);
     let separator = pyre::re(LIST_SEPARATOR, 0);
-    let tail = pyre::re(&name_tail(), 0);
     let mut out = Vec::new();
     for found in pattern.captures_iter(text) {
         let keyword = crate::py::casefold(found.name("keyword").expect("keyword").as_str());
@@ -207,22 +228,12 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
         } else {
             "section".to_string()
         };
-        let whole = found.get(0).expect("group 0");
-        // The pattern stops a name at its first year or `Act`, so `ITAA 1997 Amendment
-        // Act 2025` would read as `ITAA 1997`: carry the name on to its end.
-        let named = [3, 4]
+        let act = [3, 4]
             .into_iter()
-            .find_map(|g| found.get(g).filter(|m| !m.as_str().is_empty()))
-            .map(|m| {
-                let end = tail
-                    .match_at(text, m.end())
-                    .map_or(m.end(), |more| more.get(0).expect("group 0").end());
-                (m.start(), end)
-            });
-        let act =
-            named.map(|(start, end)| crate::py::split_whitespace(&text[start..end]).join(" "));
-        let end = named.map_or(whole.end(), |(_, end)| end.max(whole.end()));
-        let citation = crate::py::split_whitespace(&text[whole.start()..end]).join(" ");
+            .find_map(|g| found.get(g).map(|m| m.as_str()).filter(|s| !s.is_empty()))
+            .map(|a| crate::py::split_whitespace(a).join(" "));
+        let whole = found.get(0).expect("group 0");
+        let citation = crate::py::split_whitespace(whole.as_str()).join(" ");
         let mut hyphenated: Option<bool> = None;
         for label in separator.split(found.name("labels").expect("labels").as_str()) {
             let key = section_key(label.split('(').next().unwrap_or(""));
@@ -239,7 +250,13 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
                     || (kind == "division" && !format!("{key}{label}").contains(['-', '(']))
             };
             if fits {
-                out.push((kind.clone(), key, act.clone(), citation.clone()));
+                out.push((
+                    kind.clone(),
+                    key,
+                    act.clone(),
+                    citation.clone(),
+                    whole.end(),
+                ));
             }
         }
     }
@@ -792,19 +809,24 @@ fn insert_row(
             counts.definitions += 1;
         }
     }
-    for (kind, cited, act, citation) in citations(&text) {
+    let lookup = |name: &str| {
+        names
+            .iter()
+            .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
+            .and_then(|(_, v)| v.clone())
+    };
+    for (kind, cited, act, citation, end) in citations(&text) {
         let target = match &act {
             None => Some(rid.to_string()),
-            Some(written) => {
-                let name = ABBREVIATIONS
-                    .iter()
-                    .find(|(abbreviation, _)| *abbreviation == written.as_str())
-                    .map_or(written.as_str(), |(_, name)| *name);
-                names
-                    .iter()
-                    .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
-                    .and_then(|(_, v)| v.clone())
-            }
+            Some(written) => match ABBREVIATIONS
+                .iter()
+                .find(|(abbreviation, _)| *abbreviation == written.as_str())
+            {
+                // A blocked abbreviation stays unresolved rather than reach a wrong title.
+                Some(_) if continues(&text, end, lookup) => None,
+                Some((_, name)) => lookup(name),
+                None => lookup(written),
+            },
         };
         run(
             connection,

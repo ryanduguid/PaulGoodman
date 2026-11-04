@@ -645,7 +645,7 @@ fn define_matches_folded_terms_and_prefixes() {
 fn cited(text: &str) -> Vec<Cited> {
     search::citations(text)
         .into_iter()
-        .map(|(k, key, act, _)| (k, key, act))
+        .map(|c| (c.0, c.1, c.2))
         .collect()
 }
 
@@ -1064,7 +1064,7 @@ fn listed_abbreviations_resolve_and_any_other_name_stays_as_cited() {
 }
 
 #[test]
-fn a_longer_name_beginning_with_an_abbreviation_or_title_stays_unresolved_and_whole() {
+fn an_abbreviation_that_may_begin_a_longer_name_stays_unresolved() {
     let c = case();
     let mut titles = Titles::new();
     for (_, rid, name) in [ABBREVIATED[0], ABBREVIATED[3]] {
@@ -1072,28 +1072,36 @@ fn a_longer_name_beginning_with_an_abbreviation_or_title_stays_unresolved_and_wh
         titles.insert(rid, (name, vec![text]));
     }
     let text = "section 1 of the ITAA 1997 Amendment Act 2025, section 1 of the GST Act Amendment Act 2025, \
-        section 1 of the GST Act Transitional Amendment Act 2025, \
-        section 1 of the Income Tax Assessment Act 1997 Amendment Act 2025, section 1 of the ITAA 1997.";
+        section 1 of the GST Act Transitional Amendment Act 2025, section 1 of the ITAA 1997\nAmendment Act 2025, \
+        section 1 of the ITAA 1997 and Other Legislation Amendment Act 2025, \
+        section 1 of the ITAA 1997\n\nThe next paragraph, section 1 of the ITAA 1997 and the GST Act, \
+        section 1 of the GST Act and the ITAA 1997, section 1 of the ITAA 1997 and Division 7A, \
+        section 1 of the ITAA 1997 s 8-1, section 1 of the ITAA 1997";
     let citing = row(OTHER, 1, Some("5"), text, "5 Citations", None);
     titles.insert(OTHER, ("Other Sample Act 2099", vec![citing]));
     write_corpus(&c.root, &titles, &[]);
     build(&c);
     let connection = search::open_index(&s(&c.out)).unwrap();
     let report = value(&search::refs(&connection, &format!("{OTHER}:0001:5")).unwrap());
-    let mut expected: Vec<(Value, Value, usize)> = [
-        "ITAA 1997 Amendment Act 2025",
-        "GST Act Amendment Act 2025",
-        "GST Act Transitional Amendment Act 2025",
-        "Income Tax Assessment Act 1997 Amendment Act 2025",
-    ]
-    .iter()
-    .map(|name| (json!(name), Value::Null, 0))
-    .collect();
-    expected.push((json!("ITAA 1997"), json!("C2004A05138"), 1));
-    assert_eq!(cited_names(&report), expected);
+    let blocked = |name: &str| (json!(name), Value::Null, 0);
+    let itaa = (json!("ITAA 1997"), json!("C2004A05138"), 1);
     assert_eq!(
-        report["cites"][0]["citation"],
-        "section 1 of the ITAA 1997 Amendment Act 2025"
+        cited_names(&report),
+        [
+            blocked("ITAA 1997"),
+            blocked("GST Act Amendment Act 2025"),
+            blocked("GST Act"),
+            blocked("ITAA 1997"),
+            blocked("ITAA 1997"),
+            // A citation ending a paragraph before one that opens with a capital: the accepted cost.
+            blocked("ITAA 1997"),
+            itaa.clone(),
+            (json!("GST Act"), json!("C2004A00446"), 1),
+            itaa.clone(),
+            (Value::Null, json!(OTHER), 0),
+            itaa.clone(),
+            itaa,
+        ]
     );
 }
 

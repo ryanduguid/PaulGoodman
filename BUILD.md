@@ -494,13 +494,22 @@ python -m fadden search refs search.sqlite C2004A05138:0035:8-1
   `the` or `*` is dropped. Case counts. A name is read only when it ends in a
   year or in `Act`, `Regulation`, `Regulations` or `Rules`, so the table lists
   `FBTAA 1986` rather than `FBTAA`.
-- A name runs on to the end of a longer name it begins: capitalised words,
-  parenthesised parts and years on the same line, up to the next `Act`,
-  `Regulation`, `Regulations` or `Rules` and its year. So
+- An abbreviation stays unresolved when it may begin a longer name: when,
+  after whitespace (a line break included), the next word is capitalised, or
+  is `and` or `or` (optionally followed by `the`) before a name that is
+  neither in the table nor a held title. `Division`, `Subdivision`, `Part`,
+  `Schedule` and `Chapter` never block in either position, and nor does a
+  lowercase word such as `section`, `s` or `ss`. So
   `ITAA 1997 Amendment Act 2025` and
-  `Income Tax Assessment Act 1997 Amendment Act 2025` are read whole and
-  resolve only to a title of that name, never to the *Income Tax Assessment
-  Act 1997*.
+  `ITAA 1997 and Other Legislation Amendment Act 2025` resolve to nothing,
+  never to the *Income Tax Assessment Act 1997*, whilst
+  `ITAA 1997 and the GST Act` and `ITAA 1997 and Division 7A` resolve. The
+  cost is that an abbreviation ending a paragraph before one that opens with
+  a capital also stays unresolved. An exact title is not checked this way.
+  In a sample of 5 Acts and 6 instruments from the Register (3,676 cited
+  names, read from their EPUB text with a Python copy of the pattern on
+  4 November 2026), the check blocked none of the 214 abbreviation
+  resolutions.
 
 | Cited as | Title | Register ID |
 | --- | --- | --- |
