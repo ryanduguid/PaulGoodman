@@ -1322,3 +1322,143 @@ fn a_failed_write_leaves_no_staging_file() {
     std::fs::write(&path, sources.to_string()).unwrap();
     refused(&c, "type 'list' is not supported");
 }
+
+/// (line, key, outcome, row ids) for each citation in `draft`.
+fn checked(
+    connection: &rusqlite::Connection,
+    draft: &str,
+    title: Option<&str>,
+) -> Vec<(u64, String, String, Vec<String>)> {
+    values(search::cite_check(connection, draft, title).unwrap())
+        .iter()
+        .map(|item| {
+            (
+                item["line"].as_u64().unwrap(),
+                item["key"].as_str().unwrap().to_string(),
+                item["outcome"].as_str().unwrap().to_string(),
+                item["rows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.as_str().unwrap().to_string())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn cite_check_gives_each_citation_one_outcome_against_the_build() {
+    let c = case();
+    let connection = built(&c);
+    let draft = [
+        "See section 2-1 of the Sample Levy Act 2099.",
+        "See section 1 of the Sample Levy Act 2099.",
+        "See Division 2 of the Sample Levy Act 2099.",
+        "See section 5 of the Other Sample Act 2099.",
+        "See section 9 of the Sample Levy Act 2099.",
+        "See section 9 of the Fabricated Missing Act 2099.",
+        "See section 2-1.",
+        "See sections 2-1 to 3-1 of the Sample Levy Act 2099.",
+        "See sections 2-1 and 3-1 of the Sample Levy Act 2099.",
+    ]
+    .join("\n");
+    let report = checked(&connection, &draft, None);
+    let outcomes: Vec<(u64, &str, &str)> = report
+        .iter()
+        .map(|(line, key, outcome, _)| (*line, key.as_str(), outcome.as_str()))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            (1, "2-1", "resolved"),
+            (2, "1", "ambiguous"),
+            (3, "2", "container_level"),
+            (4, "5", "superseded"),
+            (5, "9", "not_held"),
+            (6, "9", "not_held"),
+            (7, "2-1", "ambiguous"),
+            (8, "2-1", "multi_section"),
+            (9, "2-1", "resolved"),
+            (9, "3-1", "resolved"),
+        ]
+    );
+    assert_eq!(report[0].3, [format!("{ACT}:0002:2{NBH}1")]);
+    assert_eq!(report[1].3.len(), 2);
+    assert!(report[4].3.is_empty());
+    let scoped = checked(&connection, "See section 2-1 and section 5.", Some(ACT));
+    assert_eq!(scoped[0].2, "resolved");
+    assert_eq!(scoped[1].2, "not_held");
+}
+
+#[test]
+fn cite_check_pins_each_result_to_the_build() {
+    let c = case();
+    let connection = built(&c);
+    let report = search::cite_check(&connection, "See section 2-1 of the ITAA 1997 Act.", None);
+    assert_eq!(values(report.unwrap())[0]["outcome"], "not_held");
+    let report = search::cite_check(
+        &connection,
+        "See section 2-1 of the Sample Levy Act 2099.",
+        None,
+    );
+    let item = &values(report.unwrap())[0];
+    assert_eq!(item["register_id"], ACT);
+    assert_eq!(item["compilation_number"], "1");
+    assert_eq!(item["compilation_date"], "2099-07-01");
+    let digest = |sql: &str| -> String { connection.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        item["sources_sha256"],
+        digest("SELECT value FROM meta WHERE key = 'sources_sha256'")
+    );
+    assert_eq!(
+        item["sections_sha256"],
+        digest("SELECT sections_sha256 FROM titles WHERE register_id = 'C2099A00001'")
+    );
+}
+
+#[test]
+fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
+    let c = case();
+    built(&c);
+    let dir = c.out.parent().unwrap();
+    let clean = "See section 2-1 and Division 2 of the Sample Levy Act 2099.";
+    std::fs::write(dir.join("clean.md"), clean).unwrap();
+    std::fs::write(dir.join("empty.md"), "No citations here.").unwrap();
+    std::fs::write(dir.join("bad.md"), "See section 9.").unwrap();
+    std::fs::write(dir.join("binary.md"), [0xff, 0xfe, 0x00]).unwrap();
+    let check = |args: &[&str]| {
+        let mut argv = vec!["cite-check", "index.sqlite"];
+        argv.extend(args);
+        cli(&argv, dir)
+    };
+    let (code, out, _) = check(&["clean.md"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("line 1: resolved: "));
+    assert!(out.contains("2 citations: 1 resolved, 1 container_level."));
+    assert!(out.contains("does not show") || out.contains("not show that"));
+    assert!(out.contains(search::NOTICE));
+    let (code, out, _) = check(&["empty.md"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("0 citations"));
+    let (code, out, _) = check(&["bad.md", "--title", ACT, "--json"]);
+    assert_eq!(code, 1);
+    let item: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(item["outcome"], "not_held");
+    for (args, message) in [
+        (vec!["binary.md"], "not UTF-8"),
+        (vec!["missing.md"], "cannot read the draft"),
+        (
+            vec!["clean.md", "--title", "F2099L00099"],
+            "not in the index",
+        ),
+    ] {
+        let (code, out, err) = check(&args);
+        assert_eq!(code, 1, "{args:?}");
+        assert_eq!(out, "");
+        assert!(err.contains(message), "{err}");
+    }
+    let (code, _, err) = cli(&["cite-check"], dir);
+    assert_eq!(code, 2);
+    assert!(err.contains("python -m fadden search cite-check"));
+}

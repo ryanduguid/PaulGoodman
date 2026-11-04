@@ -13,7 +13,7 @@
 //!
 //! The index is built with the transaction pattern Python's `sqlite3` used:
 //! the schema script in autocommit mode, then every insert in one transaction.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::types::Value as Sql;
 use rusqlite::{Connection, OpenFlags, params_from_iter};
@@ -118,6 +118,29 @@ fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>
             return false;
         }
         end = next.end();
+    }
+}
+
+/// The title a citation names: `own` for a bare citation or one `of this Act`,
+/// otherwise by exact name or through a listed abbreviation that ends its name.
+fn cited_title(
+    text: &str,
+    end: usize,
+    act: Option<&str>,
+    own: Option<&str>,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let Some(written) = act else {
+        return own.map(str::to_string);
+    };
+    match ABBREVIATIONS
+        .iter()
+        .find(|(abbreviation, _)| *abbreviation == written)
+    {
+        // A blocked abbreviation stays unresolved rather than reach a wrong title.
+        Some(_) if !ends_name(text, end, &lookup) => None,
+        Some((_, name)) => lookup(name),
+        None => lookup(written),
     }
 }
 
@@ -839,18 +862,7 @@ fn insert_row(
             .and_then(|(_, v)| v.clone())
     };
     for (kind, cited, act, citation, end) in citations(&text) {
-        let target = match &act {
-            None => Some(rid.to_string()),
-            Some(written) => match ABBREVIATIONS
-                .iter()
-                .find(|(abbreviation, _)| *abbreviation == written.as_str())
-            {
-                // A blocked abbreviation stays unresolved rather than reach a wrong title.
-                Some(_) if !ends_name(&text, end, lookup) => None,
-                Some((_, name)) => lookup(name),
-                None => lookup(written),
-            },
-        };
+        let target = cited_title(&text, end, act.as_deref(), Some(rid), lookup);
         run(
             connection,
             "INSERT INTO refs VALUES (?,?,?,?,?,?)",
@@ -1168,6 +1180,125 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
     ]))
 }
 
+/// What `cite-check` calls a citation, in the order its summary lists them.
+const OUTCOMES: [&str; 6] = [
+    "resolved",
+    "container_level",
+    "ambiguous",
+    "multi_section",
+    "not_held",
+    "superseded",
+];
+/// The two that let `cite-check` exit 0.
+const CLEAN_OUTCOMES: [&str; 2] = ["resolved", "container_level"];
+const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
+not show that the provision says what the draft claims or applied at any date. Forms refs does \
+not read, such as s 8-1, are not counted.";
+
+/// One object per citation in `draft`, in its order, with the outcome and the rows and
+/// build it resolved against. `title` is what a citation naming no title means; without
+/// it that citation is `ambiguous`.
+pub fn cite_check(
+    connection: &Connection,
+    draft: &str,
+    title: Option<&str>,
+) -> Result<Vec<Json>, Exc> {
+    let own = match title.filter(|t| !t.is_empty()) {
+        Some(t) => {
+            let rid = register_id_str(t)?;
+            let sql = "SELECT 1 FROM titles WHERE register_id = ?";
+            if rows_of(connection, sql, &[Sql::Text(rid.clone())])?.is_empty() {
+                return Err(refused(format!("{rid} is not in the index")));
+            }
+            Some(rid)
+        }
+        None => None,
+    };
+    // Two titles sharing a name leave a citation of that name unresolved, as `build` does.
+    let mut names: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for row in rows_of(connection, "SELECT name, register_id FROM titles", &[])? {
+        let rid = field(&row, "register_id").as_str().map(str::to_string);
+        names
+            .entry(field(&row, "name").as_str().unwrap_or_default().to_string())
+            .and_modify(|slot| *slot = None)
+            .or_insert(rid);
+    }
+    let lookup = |name: &str| names.get(name).cloned().flatten();
+    let digest = rows_of(
+        connection,
+        "SELECT value FROM meta WHERE key = 'sources_sha256'",
+        &[],
+    )?
+    .first()
+    .map_or(Json::Null, |row| field(row, "value").clone());
+    let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
+    let mut report = Vec::new();
+    for (kind, key, act, citation, end) in citations(draft) {
+        let target = cited_title(draft, end, act.as_deref(), own.as_deref(), lookup);
+        let (rows, held) = match &target {
+            Some(rid) => (
+                rows_of(
+                    connection,
+                    &target_sql(&kind),
+                    &[Sql::Text(rid.clone()), Sql::Text(key.clone())],
+                )?,
+                rows_of(
+                    connection,
+                    "SELECT * FROM titles WHERE register_id = ?",
+                    &[Sql::Text(rid.clone())],
+                )?
+                .into_iter()
+                .next(),
+            ),
+            None => (Vec::new(), None),
+        };
+        let from_title = |name: &str| held.as_ref().map_or(Json::Null, |t| field(t, name).clone());
+        let outcome = if range.match_at(draft, end).is_some() {
+            // `citations` reads only the first item of a range.
+            "multi_section"
+        } else if target.is_none() && act.is_none() {
+            "ambiguous"
+        } else if rows.is_empty() {
+            "not_held"
+        } else if !from_title("version_is_current").truthy() {
+            "superseded"
+        } else if kind != "section" {
+            "container_level"
+        } else if rows.len() > 1 {
+            "ambiguous"
+        } else {
+            "resolved"
+        };
+        let line = draft.as_bytes()[..end]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1;
+        let row_ids = rows
+            .iter()
+            .map(|row| field(row, "row_id").clone())
+            .collect();
+        report.push(object(vec![
+            ("line".into(), Json::Int(line.into())),
+            ("citation".into(), Json::str(&citation)),
+            ("kind".into(), Json::str(&kind)),
+            ("key".into(), Json::str(&key)),
+            ("cited_act".into(), text_or_null(act)),
+            ("outcome".into(), Json::str(outcome)),
+            ("register_id".into(), text_or_null(target)),
+            ("rows".into(), Json::Array(row_ids)),
+            (
+                "compilation_number".into(),
+                from_title("compilation_number"),
+            ),
+            ("compilation_date".into(), from_title("compilation_date")),
+            ("sections_sha256".into(), from_title("sections_sha256")),
+            ("sources_sha256".into(), digest.clone()),
+        ]));
+    }
+    Ok(report)
+}
+
 fn source_line(connection: &Connection) -> Result<String, Exc> {
     let meta = rows_of(connection, "SELECT key, value FROM meta", &[])?;
     let lookup = |key: &str| -> Option<Json> {
@@ -1204,7 +1335,10 @@ fn describe(hit: &Json) -> String {
 
 fn parser() -> Parser {
     Parser::new("python -m fadden search")
-        .description("Build and query a local full-text, definitions and reference index.")
+        .description(
+            "Build and query a local full-text, definitions and reference index. \
+             search cite-check INDEX DRAFT checks a draft's citations against one.",
+        )
         .subcommands("command")
         .sub("build", Some("index a finished corpus root"), |p| {
             p.arg(Action::positional("corpus_root")).arg(
@@ -1250,6 +1384,16 @@ fn parser() -> Parser {
         )
 }
 
+/// Apart from `parser`, whose usage line is frozen by the Python parity fixtures.
+fn cite_check_parser() -> Parser {
+    Parser::new("python -m fadden search cite-check")
+        .description("Report how each citation in a UTF-8 draft resolves against an index.")
+        .arg(Action::positional("index"))
+        .arg(Action::positional("draft"))
+        .arg(Action::option("--title").help("register id a citation naming no title means"))
+        .arg(Action::flag("--json").help("print one object per citation"))
+}
+
 fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
     match args.get(key) {
         Some(crate::argparse::Value::List(items)) => items.clone(),
@@ -1258,10 +1402,13 @@ fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
 }
 
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
-    let args = parser().parse(argv)?;
-    let outcome = execute(&args, run);
+    let outcome = if argv.first().is_some_and(|word| word == "cite-check") {
+        execute_cite_check(&cite_check_parser().parse(&argv[1..])?, run)
+    } else {
+        execute(&parser().parse(argv)?, run).map(|()| 0)
+    };
     Ok(match outcome {
-        Ok(()) => 0,
+        Ok(code) => code,
         // `except (SearchIndexError, ValueError, OSError, sqlite3.Error)`.
         Err(error @ (Exc::Value { .. } | Exc::UnicodeEncode(_) | Exc::Os(_) | Exc::Sqlite(_))) => {
             run.eprint(&format!("error: {error}"));
@@ -1269,6 +1416,71 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
         }
         Err(error) => run.uncaught(&error),
     })
+}
+
+/// Up to 5 row ids, then how many more.
+fn shown_rows(rows: &[Json]) -> String {
+    let mut shown: Vec<String> = rows
+        .iter()
+        .take(5)
+        .map(|r| pyvalue::py_str(r.at("row_id")))
+        .collect();
+    if rows.len() > 5 {
+        shown.push(format!("and {} more", rows.len() - 5));
+    }
+    shown.join(", ")
+}
+
+fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
+    let connection = open_index(&args.str("index").unwrap_or_default())?;
+    let path = args.str("draft").unwrap_or_default();
+    let unreadable = |e: OsError| refused(format!("cannot read the draft ({})", strerror(&e)));
+    let bytes =
+        read_all(crate::pyio::open(&path).map_err(unreadable)?, &path).map_err(unreadable)?;
+    let draft = String::from_utf8(bytes).map_err(|_| refused("the draft is not UTF-8 text"))?;
+    let report = cite_check(&connection, &draft, args.str("title").as_deref())?;
+    let outcome_of = |item: &Json| pyvalue::py_str(item.at("outcome"));
+    if args.flag("json") {
+        for item in &report {
+            run.print_points(&dumps_line(item, false))?;
+        }
+    } else {
+        for item in &report {
+            let s = |k: &str| pyvalue::py_str(item.at(k));
+            let rows = match item.at("rows") {
+                Json::Array(ids) => ids
+                    .iter()
+                    .map(|id| object(vec![("row_id".into(), id.clone())]))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            run.print(&format!(
+                "line {}: {}: {}: {}",
+                s("line"),
+                s("outcome"),
+                s("citation"),
+                shown_rows(&rows)
+            ));
+        }
+        let counted: Vec<String> = OUTCOMES
+            .iter()
+            .map(|name| {
+                let count = report.iter().filter(|i| outcome_of(i) == *name).count();
+                format!("{count} {name}")
+            })
+            .filter(|part| !part.starts_with("0 "))
+            .collect();
+        run.print(&format!(
+            "{} citations: {}. {CITE_CHECK_NOTICE}",
+            report.len(),
+            counted.join(", ")
+        ));
+        run.print(&source_line(&connection)?);
+    }
+    let clean = report
+        .iter()
+        .all(|item| CLEAN_OUTCOMES.contains(&outcome_of(item).as_str()));
+    Ok(i32::from(!clean))
 }
 
 fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> {
@@ -1354,12 +1566,7 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
                         Json::Array(rows) => rows.clone(),
                         _ => Vec::new(),
                     };
-                    let mut shown: Vec<String> =
-                        rows.iter().take(5).map(|r| s(r.at("row_id"))).collect();
-                    if rows.len() > 5 {
-                        shown.push(format!("and {} more", rows.len() - 5));
-                    }
-                    let joined = shown.join(", ");
+                    let joined = shown_rows(&rows);
                     let place = if !joined.is_empty() {
                         joined
                     } else if matches!(reference.at("register_id"), Json::Null) {
