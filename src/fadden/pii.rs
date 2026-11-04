@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! `fadden/pii_patterns.py`'s detectors for the ported stages: personal names
 //! beside registration numbers, and digests of contact details (email, phone,

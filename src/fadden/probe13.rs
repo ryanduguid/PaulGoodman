@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! `fadden/probe13.py`: probe the Register's version history for every title
 //! download recorded as having no EPUB, and write `probe13.json` beside the
