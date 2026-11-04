@@ -1422,7 +1422,8 @@ fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
     let c = case();
     built(&c);
     let dir = c.out.parent().unwrap();
-    let clean = "See section 2-1 and Division 2 of the Sample Levy Act 2099.";
+    let clean =
+        "See section 2-1 of the Sample Levy Act 2099 and Division 2 of the Sample Levy Act 2099.";
     std::fs::write(dir.join("clean.md"), clean).unwrap();
     std::fs::write(dir.join("empty.md"), "No citations here.").unwrap();
     std::fs::write(dir.join("bad.md"), "See section 9.").unwrap();
@@ -1433,7 +1434,7 @@ fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
         cli(&argv, dir)
     };
     let (code, out, _) = check(&["clean.md"]);
-    assert_eq!(code, 0);
+    assert_eq!(code, 0, "{out}");
     assert!(out.contains("line 1: resolved: "));
     assert!(out.contains("2 citations: 1 resolved, 1 container_level."));
     assert!(out.contains("does not show") || out.contains("not show that"));
