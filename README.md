@@ -22,17 +22,19 @@
 ![python: 3.14+](.github/assets/badges/python.svg)
 [![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
 
-[Two related systems](#two-related-systems) · [Reference](#reference) · [Source and licence](#source-and-licence)
+[Install and try it](#install-and-try-it) · [Two related systems](#two-related-systems) · [Guides and reference](#guides-and-reference) · [Development](#development) · [Source and licence](#source-and-licence)
 
 </div>
 
 Builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, and runs `tax-radar-au`, a queue that raises apparent Register changes for a person to assess. The repository holds code, not the corpus.
 
+## Install and try it
+
+From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the Rust binaries with `cargo build --locked --release`: `fadden`, which runs the example below and most other stages, and the `tax-radar-au` review queue. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
+
 Synthetic example.
 
 **Input:** the fabricated [source index](tests/corpus/fixtures/publication/sample-sources.json) and [reviewed observation facts](tests/corpus/fixtures/publication/sample-observation-facts-v3.json).
-
-From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the Rust binaries with `cargo build --locked --release`: `fadden`, which runs the example below and most other stages, and the `tax-radar-au` review queue. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
 
 ```bash
 python -m fadden export_monitor_contract -- tests/corpus/fixtures/publication/sample-sources.json tests/corpus/fixtures/publication/sample-observation-facts-v3.json --out ../synthetic-monitor-example
@@ -61,20 +63,31 @@ The corpus builder (`python -m fadden`) produces retrieval material from Commonw
 
 **Package lifecycle:** source-only. The builder is not published to PyPI; releases carry source archives, not a ready-made corpus or a builder wheel. The queue has its own package identity; this source install does not download legislation.
 
-## Reference
+## Guides and reference
+
+How-to:
 
 - [Pipeline commands and operating boundaries](BUILD.md)
+- [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md): checksum and SLSA provenance
+
+Reference:
+
 - [Synthetic review queue](RADAR.md)
 - [Monitor export and recovery contract](docs/monitor-contract.md)
 - [Live capture and publication evidence boundaries](docs/evidence-export.md)
-- [Dated build evidence and known corrections](docs/build-evidence.md)
-- [Architecture](docs/architecture.md)
 - [Accuracy, scope and redistribution limits](docs/scope.md)
+
+Background:
+
+- [Architecture](docs/architecture.md)
+- [Dated build evidence and known corrections](docs/build-evidence.md)
 - [Corpus and research tool comparisons](docs/comparison.md)
-- [Release rules](RELEASING.md) and [contributor checks](AGENTS.md)
-- [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md): checksum and SLSA provenance
 
 Live Register capture, synthetic observations and publication candidates have distinct contracts. A successful capture or export does not authorise publication.
+
+## Development
+
+[AGENTS.md](AGENTS.md) lists every check CI runs, [CONTRIBUTING.md](CONTRIBUTING.md) sets the data boundary and the extraction rules, and [RELEASING.md](RELEASING.md) holds the release rules.
 
 ## Source and licence
 
