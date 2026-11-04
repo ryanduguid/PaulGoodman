@@ -89,3 +89,39 @@ sources.json, INDEX.md, README.md, LICENCE-NOTICE.md
 Every JSONL row carries its own register id, collection, compilation number,
 compilation date, section, source URL, licence and attribution, because rows
 travel independently of the file they came from.
+
+## Retrieval baseline on real law
+
+Measured on 5 November 2026 over `tests/fixtures/retrieval_real_law.tsv`: 46 queries
+written before any run, 32 in base form and 14 with inflected word forms, each naming
+the section it should reach. An agent wrote them from the Acts' published section
+numbers; no person has graded them. Every expected section is in the index below, on
+one row, and its Register heading was read against its question. A hit is that section
+of that title in the first 5 or 10 results.
+
+| Ranker | Queries | Hit at 1 | Hit at 5 | Hit at 10 | Mean reciprocal rank | No results |
+|---|---:|---:|---:|---:|---:|---:|
+| `fadden search query`, base | 32 | 8 | 21 | 24 | 0.400 | 0 |
+| `fadden search query`, inflected | 14 | 1 | 1 | 1 | 0.071 | 1 |
+| MCP tier ranker, base | 32 | 11 | 17 | 22 | 0.422 | 0 |
+| MCP tier ranker, inflected | 14 | 1 | 3 | 3 | 0.121 | 0 |
+
+The MCP tier ranker is `search_sections` in `apps/aus-accounting-mcp/aus_accounting_mcp/corpus.py`
+of australian-accounting at `6462edc`. Rerun the first 2 rows with
+`FADDEN_REFERENCE_INDEX=<index> cargo test --locked --test fadden_search reference_questions_on_a_real_index -- --ignored --nocapture`.
+These counts describe this question set over these 6 titles, not retrieval over the
+whole corpus or legal correctness. The inflected rows show that neither ranker matches
+another form of a word: the MCP ranker's substring match reaches some forms, and only
+that way.
+
+The index holds 6 titles, 8,096 rows and 28,438 references, built with `fadden search
+build` from `sources.json` SHA-256 `43823bbd8b9ab8ab7128e2a4fcfd8b3b628ef4e1198550a8dbd54920422bfd29`:
+
+| Register ID | Title | Compilation | Date | EPUB SHA-256 |
+|---|---|---:|---|---|
+| C2004A05138 | *Income Tax Assessment Act 1997* | 268 | 1 October 2026 | `05b7d33fbbfba411672c0c9341d282d14a3f9517bcfc2e6d347c349f47ea92ba` |
+| C1936A00027 | *Income Tax Assessment Act 1936* | 192 | 1 July 2026 | `6b9686b4bdc77cd2c10816dcb086767d557b2a84fb3b80080ce2be3067fedb41` |
+| C1953A00001 | *Taxation Administration Act 1953* | 227 | 1 October 2026 | `7d80b65a08cdc28f63fa81634e46ad4c0572d45693bc86c4ddb7d06e1aa5894c` |
+| C2004A00446 | *A New Tax System (Goods and Services Tax) Act 1999* | 96 | 1 January 2026 | `a7e144d6139becf287ec49b86dbc9f7d07eb2de69a72b1e7ab3ad07deca52cb5` |
+| C2004A03280 | *Fringe Benefits Tax Assessment Act 1986* | 97 | 1 July 2026 | `21ee9133acc6dbc48393dfb4ea334324d348c1b6f886d84e347c984dd899f57c` |
+| F2025L01097 | *Income Tax Assessment (Effective Life of Depreciating Assets) Determination 2025* | 0 | 15 September 2025 | `aecb8c2f898f20a1556929c231564ebc18f53ebbc317395c5880fadab2c357ba` |
