@@ -1264,6 +1264,31 @@ fn cited_rows(
     Ok((rows, held))
 }
 
+fn citation_outcome(
+    in_range: bool,
+    no_one_title: bool,
+    rows: usize,
+    current: bool,
+    section: bool,
+) -> &'static str {
+    if in_range {
+        // `citations` reads only the first item of a range.
+        "multi_section"
+    } else if no_one_title {
+        "ambiguous"
+    } else if rows == 0 {
+        "not_held"
+    } else if !current {
+        "superseded"
+    } else if !section {
+        "container_level"
+    } else if rows > 1 {
+        "ambiguous"
+    } else {
+        "resolved"
+    }
+}
+
 /// The report object for one citation: the outcome, then the rows and build behind it.
 fn citation_report(
     connection: &Connection,
@@ -1287,22 +1312,13 @@ fn citation_report(
     };
     let from_title = |name: &str| held.as_ref().map_or(Json::Null, |t| field(t, name).clone());
     let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
-    let outcome = if range.match_at(draft, end).is_some() {
-        // `citations` reads only the first item of a range.
-        "multi_section"
-    } else if shared || (target.is_none() && act.is_none()) {
-        "ambiguous"
-    } else if rows.is_empty() {
-        "not_held"
-    } else if !from_title("version_is_current").truthy() {
-        "superseded"
-    } else if kind != "section" {
-        "container_level"
-    } else if rows.len() > 1 {
-        "ambiguous"
-    } else {
-        "resolved"
-    };
+    let outcome = citation_outcome(
+        range.match_at(draft, end).is_some(),
+        shared || (target.is_none() && act.is_none()),
+        rows.len(),
+        from_title("version_is_current").truthy(),
+        kind == "section",
+    );
     let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
     let row_ids = rows.iter().map(|r| field(r, "row_id").clone()).collect();
     Ok(object(vec![
