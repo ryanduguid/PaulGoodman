@@ -1516,6 +1516,44 @@ fn cite_check_does_not_give_a_name_it_cannot_read_to_the_title_flag() {
     assert_eq!(inside[0].2, "resolved");
 }
 
+#[test]
+fn cite_check_fails_closed_on_any_source_after_a_citation() {
+    let c = case();
+    let connection = built(&c);
+    for draft in [
+        "See section 2-1 in the regulations.",
+        "See section 2-1 under the regulations.",
+        "See section 2-1 to the regulations.",
+        "See section 2-1 made under the Sample Levy Ordinance.",
+        "See section 2-1 for the purposes of the regulations.",
+        "See section 2-1 within the rules.",
+        "See section 2-1 by the Fabricated Determination.",
+        "See section 2-1 from the Fabricated Code.",
+        "See section 2-1 pursuant to the rules.",
+        "See section 2-1, in the regulations.",
+        "See section 2-1 (in the regulations).",
+        "See section 2-1, Sample Levy Ordinance.",
+        "See section 2-1 Fabricated Code.",
+        "See section 1 in Schedule 1 to the regulations.",
+    ] {
+        let report = checked(&connection, draft, Some(ACT));
+        assert_eq!(report[0].2, "ambiguous", "{draft}");
+        assert!(report[0].3.is_empty(), "{draft}");
+    }
+    for draft in [
+        "Section 2-1 allows a deduction.",
+        "See section 2-1 under this Act.",
+        "See section 2-1 of Part 2.",
+        "See section 2-1, Division 2.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "resolved",
+            "{draft}"
+        );
+    }
+}
+
 /// The real-law question set: (query words, Register ID, section, form).
 fn reference_questions() -> Vec<[&'static str; 4]> {
     include_str!("fixtures/retrieval_real_law.tsv")

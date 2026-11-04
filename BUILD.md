@@ -493,7 +493,7 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   | --- | --- |
   | `resolved` | One row of a current title has that section |
   | `container_level` | A Division or Subdivision of a current title, which is not a pinpoint |
-  | `ambiguous` | No title is named and `--title` was not given, the words after the citation name something it cannot read, 2 titles share the cited name, or several rows share the number, as across Schedules |
+  | `ambiguous` | No title is named and `--title` was not given, a linking word such as `in` or `under`, or a capitalised word, follows the citation and `citations` cannot read a title from it, 2 titles share the cited name, or several rows share the number, as across Schedules |
   | `multi_section` | A range such as `sections 8-1 to 8-10`, of which only the first item is read |
   | `not_held` | The name is not a title or listed abbreviation in the index, or the title has no such row |
   | `superseded` | The rows exist, but `sources.json` marks the title's captured compilation as not current |
@@ -501,7 +501,8 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   `resolved` means the build holds a provision with that number. It does not
   show that the provision says what the draft claims or applied at any date.
   Forms `refs` does not read, such as `s 8-1`, are not counted, so a clean
-  result covers only the citations in the report.
+  result covers only the citations in the report. A name before the citation,
+  as in `In the regulations, section 8-1`, is not read, so `--title` still claims it.
 - A row's Division and Subdivision come from the headings in the title's
   `<register_id>.md`, because a row's `container` names only its innermost
   heading. A row with no matching heading, such as `Introductory material`,
