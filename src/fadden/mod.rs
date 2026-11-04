@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The corpus builder stages ported from the Python `fadden` package.
 //!
 //! Each stage keeps its Python command line: the program name, arguments,

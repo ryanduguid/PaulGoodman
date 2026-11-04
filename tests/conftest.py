@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Put the repository root on sys.path for the whole suite.
 
 The corpus half imports `fadden`, which is not an installed distribution.

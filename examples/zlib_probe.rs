@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Differential probe for `pyzlib::Decompress` against CPython's zlib.
 //!
 //! Each stdin line is one decompressor: calls separated by `;`, each

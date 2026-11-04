@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `HTTPRedirectHandler`'s loop check, which `Request` carries across the
 //! attempts that reuse one urllib `Request`.
 use tax_radar_au::fadden::http::Request;

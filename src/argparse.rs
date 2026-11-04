@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The subset of Python 3.15's argparse that the builder-operator-loop port needed: positionals (one or
 //! optional), store, store_true and append options, int conversion, choices with close-match
 //! suggestions, required subparsers, abbreviations, help and usage text with argparse's colour

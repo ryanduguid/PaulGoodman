@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! List pseudonymous client profiles whose workflows an intact impact queue names.
 //!
 //! The queue records which workflows a source change may touch. A profiles file

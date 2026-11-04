@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Fixtures shared by the radar test binaries: the shipped samples, JSON
 //! helpers and the queue and decision builders the Python suite used.
 #![allow(dead_code)]

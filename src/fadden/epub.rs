@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/download.py`'s bounded EPUB reader: `open_epub` and
 //! `read_epub_member` over CPython 3.15's `zipfile.ZipFile`.
 //!

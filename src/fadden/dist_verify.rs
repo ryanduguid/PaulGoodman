@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/dist_verify.py`: verify the distribution before it goes anywhere.
 //!
 //! Checks the claims the distribution makes about itself rather than trusting

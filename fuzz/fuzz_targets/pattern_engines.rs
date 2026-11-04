@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 #![no_main]
 // The privacy patterns run on the regex crate where they need no lookaround:
 // that fast path must find exactly what fancy_regex finds.

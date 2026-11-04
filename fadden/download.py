@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Stage 3: download the current EPUB for each resolved Act.
 
 Honours the Register's robots.txt Crawl-delay of 10 seconds.

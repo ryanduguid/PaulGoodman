@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden rulings`: ported from tests/corpus/test_rulings.py, with fabricated
 //! Legal Database pages and no network traffic.
 use std::path::Path;

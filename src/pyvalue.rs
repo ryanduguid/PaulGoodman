@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Python operations on decoded JSON values: `type()`, `repr()`, `str()`,
 //! `==`, `hash()` and one-line `json.dumps`, and the bytes `print` writes.
 use std::fmt::Write as _;

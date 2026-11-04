@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `zlib.decompressobj(-zlib.MAX_WBITS)` and `zlib.crc32`, as CPython 3.15
 //! drives zlib 1.3.1 (and zlib-ng 2.2.4, which keeps the same state machine).
 //!

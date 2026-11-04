@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Differential probe for `htmlparser::parse` against CPython's `HTMLParser`.
 //!
 //! Each stdin line is a path to a UTF-8 document. Each stdout line is a JSON

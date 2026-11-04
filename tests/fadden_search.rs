@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden search`: ported from tests/corpus/test_search.py. Every title, row
 //! and definition is fabricated.
 use std::collections::BTreeMap;

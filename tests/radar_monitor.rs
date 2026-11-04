@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! compare(), queue validation and validate_review(): ported from tests/radar/test_monitor.py.
 mod common;
 

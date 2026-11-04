@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `pathlib.Path` and `os.path` as CPython 3.15 parses, prints, joins and resolves paths.
 //!
 //! The radar prints its output paths and names its inputs in messages, so a

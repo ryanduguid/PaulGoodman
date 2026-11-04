@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 #![no_main]
 // The port of CPython's list.sort: the stable sort under a total order, and
 // every item kept under one that is not.

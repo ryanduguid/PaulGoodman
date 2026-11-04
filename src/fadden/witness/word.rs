@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The Word side of `fadden witness`: the section numbers and custom
 //! properties of each volume of the Register's Word rendition.
 use std::collections::BTreeMap;

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! HTTP for the network stages: `urllib.request.urlopen(Request(url,
 //! headers={"User-Agent": UA}), timeout=90)` as `fadden/http_fetch.py` and the
 //! rulings stage call it, the shared attempt budget, and the local date.

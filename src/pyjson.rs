@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! JSON read and written as CPython 3.15's `json` module does.
 //!
 //! Documents are read with the C scanner's grammar (NaN and infinities,

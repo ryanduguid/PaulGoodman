@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The former `fadden/extract.py`'s `Doc` parser, `md_table` and `epub_blocks`: an
 //! EPUB's XHTML documents as paragraph, image and table blocks.
 //!

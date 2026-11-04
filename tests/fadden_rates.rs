@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden rates`: ported from the rate tests in tests/corpus/test_regressions.py
 //! and tests/corpus/test_output_security.py. Every row is fabricated.
 use std::path::{Path, PathBuf};

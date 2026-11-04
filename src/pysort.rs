@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! CPython 3.15's `list.sort` (Objects/listobject.c): the same comparisons in
 //! the same order, so values that do not order raise the TypeError Python's
 //! sort meets first, and a comparison that is not a total order (NaN) leaves

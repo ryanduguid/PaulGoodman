@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Keep the retained interpreter jobs, coverage producer and release names aligned."""
 from __future__ import annotations
 

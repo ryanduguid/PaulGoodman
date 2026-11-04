@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden export_publication_bundles`: ported from
 //! tests/corpus/test_publication_bundle_export.py and
 //! test_publication_bundle_paths.py. The check that a live export leaves the
