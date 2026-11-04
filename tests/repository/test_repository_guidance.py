@@ -52,8 +52,9 @@ package build and the linters. Its Windows 3.14 matrix runs
 `tests/corpus/test_live_evidence_bundle_export.py` and
 `tests/corpus/test_live_evidence_publication_paths.py` under branch coverage so the
 supported live-evidence export boundary is exercised. Codecov merges that report with the
-Ubuntu 3.14 report. Only the Ubuntu report is held to the `fail_under` floor, because the
-Windows leg runs a subset. Other corpus modules remain excluded because
+Ubuntu 3.14 report. The Ubuntu report alone is held to the `fail_under` floor, because the
+Windows leg runs a subset, and the `coverage-merged` job holds the 2 legs' combined data to
+99%. Other corpus modules remain excluded because
 of pre-existing Windows failures around 8.3 short paths, junctions and reparse points;
 do not describe a local Windows full-suite failure in those paths as a radar regression
 without proving it.
