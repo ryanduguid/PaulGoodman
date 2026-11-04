@@ -1195,25 +1195,13 @@ const CLEAN_OUTCOMES: [&str; 2] = ["resolved", "container_level"];
 /// as held.
 const SHARED_NAME: &str = "";
 
-/// What may tie a citation to a source the citation pattern did not read, so `--title`
-/// must not claim it: a linking word, or a capitalised word such as an instrument's
-/// name. `this Act`, a provision of the same title or `this purpose` may follow, also
-/// after `the purposes of`. This fails closed: `to` in
-/// `section 8-1 to deduct` also stops `--title`, which costs a reader one look.
-const UNREAD_NAME: &str = r"[\s,(]+(?:(?:of|in|under|to|for|by|from|within|made|pursuant)\b|(?=[A-Z]))(?!\s*(?:(?:the\s+purposes?\s+of\s+)?(?:this\s+Act|(?:this\s+)?(?:Division|Subdivision|Part|Schedule|Chapter|section|subsection))|this\s+purpose)\b)";
-
-/// The words after `this` that keep a citation in the given title. The citation pattern
-/// reads any `of this` phrase, so `of this Regulation` needs refusing here.
-const SAME_TITLE: [&str; 8] = [
-    "Act",
-    "Division",
-    "Subdivision",
-    "Part",
-    "Schedule",
-    "Chapter",
-    "section",
-    "subsection",
-];
+/// Scans what follows a citation to the end of its sentence for a source the citation
+/// pattern did not read, so `--title` must not claim the citation. Any capitalised word
+/// counts unless `this Act`, a `this` provision or a numbered provision covers it, and so
+/// do the listed instrument words in any case form they are written. This fails closed:
+/// `as the Commissioner allows` or `in order to deduct` stops `--title` as well.
+/// shortcut: the lower-case words are a fixed list; add a word when a draft shows one.
+const SOURCE_TAIL: &str = r"(?P<stop>[.!?](?=\s+[A-Z(]|\s*\Z)|\n\s*\n)|\bthis\s+(?:Act|Division|Subdivision|Part|Schedule|Chapter|division|subdivision|part|schedule|chapter|section|subsection)\b|\b(?:Division|Subdivision|Part|Schedule|Chapter)\s+[0-9IVX][0-9A-Z-]*\b|(?P<source>\b[A-Z]|\b(?:regulations?|rules?|ordinances?|determinations?|instruments?|orders?|codes?|schedules?|acts?|laws?|legislation|statutes?|by-?laws?|rulings?|enactments?|treaty|treaties)\b)";
 
 const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
 not show that the provision says what the draft claims or applied at any date. Current and \
@@ -1258,14 +1246,18 @@ pub fn cite_check(
     .first()
     .map_or(Json::Null, |row| field(row, "value").clone());
     let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
-    let unread = pyre::re(UNREAD_NAME, 0);
+    let source_tail = pyre::re(SOURCE_TAIL, 0);
     let mut report = Vec::new();
     for (kind, key, act, citation, end) in citations(draft) {
-        let other_instrument = citation
-            .rsplit_once(" this ")
-            .is_some_and(|(_, word)| !SAME_TITLE.contains(&word));
-        let named = if act.is_none() && (other_instrument || unread.match_at(draft, end).is_some())
-        {
+        // The citation pattern reads any `of this` phrase, so the scan starts there.
+        let read_this = citation.rfind(" this ").map_or("", |at| &citation[at..]);
+        let tail = format!("{read_this}{}", &draft[end..]);
+        let source_follows = act.is_none()
+            && source_tail
+                .captures_iter(&tail)
+                .find(|found| found.name("stop").is_some() || found.name("source").is_some())
+                .is_some_and(|found| found.name("source").is_some());
+        let named = if source_follows {
             None
         } else {
             cited_title(draft, end, act.as_deref(), own.as_deref(), lookup)

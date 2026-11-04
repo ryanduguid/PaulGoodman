@@ -1614,6 +1614,95 @@ fn cite_check_keeps_a_purpose_phrase_with_the_title_flag() {
     }
 }
 
+#[test]
+fn cite_check_reads_the_whole_sentence_before_trusting_the_title_flag() {
+    let c = case();
+    let connection = built(&c);
+    let ambiguous = [
+        // Names the citation pattern does not read.
+        "See section 2-1 of the Sample Levy Ordinance.",
+        "See section 2-1 under the Fabricated Code.",
+        "See section 2-1 of that Act.",
+        "See section 2-1 of the regulations.",
+        "See section 2-1 in the regulations.",
+        "See section 2-1 under the regulations.",
+        "See section 2-1 to the regulations.",
+        "See section 2-1 made under the Sample Levy Ordinance.",
+        "See section 2-1 for the purposes of the regulations.",
+        "See section 2-1 for the purposes of the Sample Levy Ordinance.",
+        "See section 2-1 within the rules.",
+        "See section 2-1 by the Fabricated Determination.",
+        "See section 2-1 from the Fabricated Code.",
+        "See section 2-1 pursuant to the rules.",
+        "See section 2-1, in the regulations.",
+        "See section 2-1 (in the regulations).",
+        "See section 2-1, Sample Levy Ordinance.",
+        "See section 2-1 Fabricated Code.",
+        "See section 1 in Schedule 1 to the regulations.",
+        // `this` of something other than the title.
+        "See section 2-1 of this Regulation.",
+        "See section 2-1 in this Instrument.",
+        "See section 2-1 under this Regulation.",
+        "See section 2-1 for this Regulation.",
+        "See section 2-1 for the purposes of this Regulation.",
+        // A harmless phrase before or after a source.
+        "See section 2-1 for this purpose under the Sample Levy Ordinance.",
+        "See section 2-1 for this purpose in the regulations.",
+        "See section 2-1 under the regulations for this purpose.",
+        "See section 2-1 in this section of the Sample Levy Ordinance.",
+        "See section 2-1 for the purposes of this Act and the Sample Levy Rules.",
+        // More than one clause, and a wrapped line.
+        "See section 2-1, which for this purpose applies, as the regulations provide.",
+        "See section 2-1 and, for this purpose, the Fabricated Determination.",
+        "See section 2-1 for this purpose\nunder the rules.",
+        "See section 2-1 (No. 3 of the rules).",
+        // Lower-case instrument words.
+        "See section 2-1 of the ordinance.",
+        "See section 2-1 under the determination.",
+        "See section 2-1 in the instrument.",
+        "See section 2-1 under the order.",
+        "See section 2-1 in the code.",
+        "See section 2-1 in the schedule.",
+        "See section 2-1 of the other act.",
+        "See section 2-1 under the tax laws.",
+        "See section 2-1 under the by-law.",
+        // Harmless, and ambiguous all the same: the safe failure.
+        "See section 2-1 as the Commissioner allows.",
+        "See section 2-1 in order to deduct.",
+        "See section 2-1, the general rule.",
+        "See section 2-1 and Section 3-1.",
+    ];
+    let resolved = [
+        "Section 2-1 allows a deduction.",
+        "See section 2-1.",
+        "See section 2-1 of this Act.",
+        "See section 2-1 under this Act.",
+        "See section 2-1 of this Part.",
+        "See section 2-1 under this Division.",
+        "See section 2-1 in this section.",
+        "See section 2-1 for this purpose.",
+        "See section 2-1 for the purposes of this Act.",
+        "See section 2-1 for the purposes of this Part.",
+        "See section 2-1 for the purposes of this section.",
+        "See section 2-1 for the purposes of Division 2.",
+        "See section 2-1 in Division 2.",
+        "See section 2-1, Division 2.",
+        "See section 2-1 to deduct a cost.",
+        "See section 2-1. The Sample Levy Ordinance differs.",
+        "See section 2-1\n\nSample Levy Ordinance",
+    ];
+    let wrong: Vec<(&str, String)> = ambiguous
+        .iter()
+        .map(|draft| (*draft, "ambiguous"))
+        .chain(resolved.iter().map(|draft| (*draft, "resolved")))
+        .filter_map(|(draft, want)| {
+            let got = checked(&connection, draft, Some(ACT)).remove(0).2;
+            (got != want).then_some((draft, got))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// The real-law question set: (query words, Register ID, section, form).
 fn reference_questions() -> Vec<[&'static str; 4]> {
     include_str!("fixtures/retrieval_real_law.tsv")
