@@ -43,6 +43,10 @@ Seven builder stages reach the Federal Register and `rulings` reaches the ATO Le
 - [ATO rulings stage](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/rulings.md): reuse basis, accepted document families and fetch rules.
 - [Architecture](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/architecture.md), [monitor contract](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/monitor-contract.md), [evidence export](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/evidence-export.md) and [build evidence](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/build-evidence.md).
 
+## Reuse
+
+- [Reusing this code](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/AGENTS.md#reusing-this-code): Ryan Duguid's work under FSL-1.1-ALv2; keep its notices and licence; public credit is requested.
+
 ## Optional
 - [Compared with the Open Australian Legal Corpus](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/comparison.md)
 - [Route a source change to affected work](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/workpaper-impact.md)
