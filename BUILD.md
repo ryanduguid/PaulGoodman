@@ -494,6 +494,13 @@ python -m fadden search refs search.sqlite C2004A05138:0035:8-1
   `the` or `*` is dropped. Case counts. A name is read only when it ends in a
   year or in `Act`, `Regulation`, `Regulations` or `Rules`, so the table lists
   `FBTAA 1986` rather than `FBTAA`.
+- A name runs on to the end of a longer name it begins: capitalised words,
+  parenthesised parts and years on the same line, up to the next `Act`,
+  `Regulation`, `Regulations` or `Rules` and its year. So
+  `ITAA 1997 Amendment Act 2025` and
+  `Income Tax Assessment Act 1997 Amendment Act 2025` are read whole and
+  resolve only to a title of that name, never to the *Income Tax Assessment
+  Act 1997*.
 
 | Cited as | Title | Register ID |
 | --- | --- | --- |

@@ -67,6 +67,16 @@ fn cited() -> String {
     )
 }
 
+/// The rest of a longer name that a cited name begins, on the same line: capitalised
+/// words, parenthesised parts and years up to the first `Act`, `Regulation(s)` or
+/// `Rules`, and its year.
+fn name_tail() -> String {
+    const GAP: &str = "[ \t\u{a0}]+";
+    format!(
+        r"(?:{GAP}(?:[A-Z][A-Za-z]*|\([^()\n]{{1,80}}\)|{YEAR}))*?{GAP}(?:Act|Regulations?|Rules)\b(?:{GAP}{YEAR})?"
+    )
+}
+
 fn citation_pattern() -> String {
     let c = cited();
     format!(
@@ -188,6 +198,7 @@ pub fn definitions(text: &str) -> Vec<(String, String)> {
 pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
     let pattern = pyre::re(&citation_pattern(), 0);
     let separator = pyre::re(LIST_SEPARATOR, 0);
+    let tail = pyre::re(&name_tail(), 0);
     let mut out = Vec::new();
     for found in pattern.captures_iter(text) {
         let keyword = crate::py::casefold(found.name("keyword").expect("keyword").as_str());
@@ -196,12 +207,22 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
         } else {
             "section".to_string()
         };
-        let act = [3, 4]
+        let whole = found.get(0).expect("group 0");
+        // The pattern stops a name at its first year or `Act`, so `ITAA 1997 Amendment
+        // Act 2025` would read as `ITAA 1997`: carry the name on to its end.
+        let named = [3, 4]
             .into_iter()
-            .find_map(|g| found.get(g).map(|m| m.as_str()).filter(|s| !s.is_empty()))
-            .map(|a| crate::py::split_whitespace(a).join(" "));
-        let citation =
-            crate::py::split_whitespace(found.get(0).expect("group 0").as_str()).join(" ");
+            .find_map(|g| found.get(g).filter(|m| !m.as_str().is_empty()))
+            .map(|m| {
+                let end = tail
+                    .match_at(text, m.end())
+                    .map_or(m.end(), |more| more.get(0).expect("group 0").end());
+                (m.start(), end)
+            });
+        let act =
+            named.map(|(start, end)| crate::py::split_whitespace(&text[start..end]).join(" "));
+        let end = named.map_or(whole.end(), |(_, end)| end.max(whole.end()));
+        let citation = crate::py::split_whitespace(&text[whole.start()..end]).join(" ");
         let mut hyphenated: Option<bool> = None;
         for label in separator.split(found.name("labels").expect("labels").as_str()) {
             let key = section_key(label.split('(').next().unwrap_or(""));

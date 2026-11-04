@@ -993,6 +993,22 @@ const ABBREVIATED: [(&str, &str, &str); 5] = [
     ),
 ];
 
+/// (cited name, register id, target row count) for each citation in a `refs` report.
+fn cited_names(report: &Value) -> Vec<(Value, Value, usize)> {
+    report["cites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["cited_act"].clone(),
+                c["register_id"].clone(),
+                c["rows"].as_array().unwrap().len(),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn listed_abbreviations_resolve_and_any_other_name_stays_as_cited() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1022,19 +1038,9 @@ fn listed_abbreviations_resolve_and_any_other_name_stays_as_cited() {
     write_corpus(&c.root, &titles, &[]);
     build(&c);
     let connection = search::open_index(&s(&c.out)).unwrap();
-    let report = value(&search::refs(&connection, &format!("{OTHER}:0001:5")).unwrap());
-    let got: Vec<(Value, Value, usize)> = report["cites"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| {
-            (
-                c["cited_act"].clone(),
-                c["register_id"].clone(),
-                c["rows"].as_array().unwrap().len(),
-            )
-        })
-        .collect();
+    let got = cited_names(&value(
+        &search::refs(&connection, &format!("{OTHER}:0001:5")).unwrap(),
+    ));
     let mut expected: Vec<(Value, Value, usize)> = ABBREVIATED
         .iter()
         .map(|(abbreviation, rid, _)| (json!(abbreviation), json!(rid), 1))
@@ -1055,6 +1061,40 @@ fn listed_abbreviations_resolve_and_any_other_name_stays_as_cited() {
         expected.push((json!(unlisted), Value::Null, 0));
     }
     assert_eq!(got, expected);
+}
+
+#[test]
+fn a_longer_name_beginning_with_an_abbreviation_or_title_stays_unresolved_and_whole() {
+    let c = case();
+    let mut titles = Titles::new();
+    for (_, rid, name) in [ABBREVIATED[0], ABBREVIATED[3]] {
+        let text = row(rid, 1, Some("1"), "Fabricated text.", "1 Text", None);
+        titles.insert(rid, (name, vec![text]));
+    }
+    let text = "section 1 of the ITAA 1997 Amendment Act 2025, section 1 of the GST Act Amendment Act 2025, \
+        section 1 of the GST Act Transitional Amendment Act 2025, \
+        section 1 of the Income Tax Assessment Act 1997 Amendment Act 2025, section 1 of the ITAA 1997.";
+    let citing = row(OTHER, 1, Some("5"), text, "5 Citations", None);
+    titles.insert(OTHER, ("Other Sample Act 2099", vec![citing]));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let report = value(&search::refs(&connection, &format!("{OTHER}:0001:5")).unwrap());
+    let mut expected: Vec<(Value, Value, usize)> = [
+        "ITAA 1997 Amendment Act 2025",
+        "GST Act Amendment Act 2025",
+        "GST Act Transitional Amendment Act 2025",
+        "Income Tax Assessment Act 1997 Amendment Act 2025",
+    ]
+    .iter()
+    .map(|name| (json!(name), Value::Null, 0))
+    .collect();
+    expected.push((json!("ITAA 1997"), json!("C2004A05138"), 1));
+    assert_eq!(cited_names(&report), expected);
+    assert_eq!(
+        report["cites"][0]["citation"],
+        "section 1 of the ITAA 1997 Amendment Act 2025"
+    );
 }
 
 fn rows_with_division(c: &Case, rows: Vec<Value>, heading_at: usize, division: &str) {
