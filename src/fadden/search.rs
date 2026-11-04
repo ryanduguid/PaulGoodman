@@ -1209,6 +1209,122 @@ superseded are this build's record from the Register, not a check today; a later
 outdate them. Forms refs does \
 not read, such as s 8-1, are not counted.";
 
+/// The register ID `title` gives, refused unless the index holds it.
+fn given_title(connection: &Connection, title: Option<&str>) -> Result<Option<String>, Exc> {
+    let Some(t) = title.filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    let rid = register_id_str(t)?;
+    let sql = "SELECT 1 FROM titles WHERE register_id = ?";
+    if rows_of(connection, sql, &[Sql::Text(rid.clone())])?.is_empty() {
+        return Err(refused(format!("{rid} is not in the index")));
+    }
+    Ok(Some(rid))
+}
+
+/// Each title name and its register ID. Two titles sharing a name leave a citation of
+/// that name ambiguous, not absent, so the name maps to `SHARED_NAME`.
+fn title_names(connection: &Connection) -> Result<BTreeMap<String, String>, Exc> {
+    let mut names = BTreeMap::new();
+    for row in rows_of(connection, "SELECT name, register_id FROM titles", &[])? {
+        let rid = field(&row, "register_id").as_str().unwrap_or_default();
+        names
+            .entry(field(&row, "name").as_str().unwrap_or_default().to_string())
+            .and_modify(|slot: &mut String| *slot = SHARED_NAME.to_string())
+            .or_insert_with(|| rid.to_string());
+    }
+    Ok(names)
+}
+
+/// Whether the sentence after a citation names a possible source. The citation pattern
+/// reads any `of this` phrase, so the scan starts there.
+fn source_follows(citation: &str, after: &str) -> bool {
+    let read_this = citation.rfind(" this ").map_or("", |at| &citation[at..]);
+    pyre::re(SOURCE_TAIL, 0)
+        .captures_iter(&format!("{read_this}{after}"))
+        .find(|found| found.name("stop").is_some() || found.name("source").is_some())
+        .is_some_and(|found| found.name("source").is_some())
+}
+
+/// The rows a citation reaches in a title, and that title's row.
+fn cited_rows(
+    connection: &Connection,
+    rid: &str,
+    kind: &str,
+    key: &str,
+) -> Result<(Vec<Vec<(String, Json)>>, Option<Vec<(String, Json)>>), Exc> {
+    let title = Sql::Text(rid.to_string());
+    let rows = rows_of(
+        connection,
+        &target_sql(kind),
+        &[title.clone(), Sql::Text(key.to_string())],
+    )?;
+    let sql = "SELECT * FROM titles WHERE register_id = ?";
+    let held = rows_of(connection, sql, &[title])?.into_iter().next();
+    Ok((rows, held))
+}
+
+/// The report object for one citation: the outcome, then the rows and build behind it.
+fn citation_report(
+    connection: &Connection,
+    draft: &str,
+    (kind, key, act, citation, end): (String, String, Option<String>, String, usize),
+    own: Option<&str>,
+    names: &BTreeMap<String, String>,
+    digest: &Json,
+) -> Result<Json, Exc> {
+    let lookup = |name: &str| names.get(name).cloned();
+    let named = if act.is_none() && source_follows(&citation, &draft[end..]) {
+        None
+    } else {
+        cited_title(draft, end, act.as_deref(), own, lookup)
+    };
+    let shared = named.as_deref() == Some(SHARED_NAME);
+    let target = named.filter(|_| !shared);
+    let (rows, held) = match &target {
+        Some(rid) => cited_rows(connection, rid, &kind, &key)?,
+        None => (Vec::new(), None),
+    };
+    let from_title = |name: &str| held.as_ref().map_or(Json::Null, |t| field(t, name).clone());
+    let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
+    let outcome = if range.match_at(draft, end).is_some() {
+        // `citations` reads only the first item of a range.
+        "multi_section"
+    } else if shared || (target.is_none() && act.is_none()) {
+        "ambiguous"
+    } else if rows.is_empty() {
+        "not_held"
+    } else if !from_title("version_is_current").truthy() {
+        "superseded"
+    } else if kind != "section" {
+        "container_level"
+    } else if rows.len() > 1 {
+        "ambiguous"
+    } else {
+        "resolved"
+    };
+    let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
+    let row_ids = rows.iter().map(|r| field(r, "row_id").clone()).collect();
+    Ok(object(vec![
+        ("line".into(), Json::Int((newlines.count() + 1).into())),
+        ("citation".into(), Json::str(&citation)),
+        ("kind".into(), Json::str(&kind)),
+        ("key".into(), Json::str(&key)),
+        ("cited_act".into(), text_or_null(act)),
+        ("outcome".into(), Json::str(outcome)),
+        ("register_id".into(), text_or_null(target)),
+        ("rows".into(), Json::Array(row_ids)),
+        (
+            "compilation_number".into(),
+            from_title("compilation_number"),
+        ),
+        ("compilation_date".into(), from_title("compilation_date")),
+        ("retrieved".into(), from_title("retrieved")),
+        ("sections_sha256".into(), from_title("sections_sha256")),
+        ("sources_sha256".into(), digest.clone()),
+    ]))
+}
+
 /// One object per citation in `draft`, in its order, with the outcome and the rows and
 /// build it resolved against. `title` is what a citation naming no title means; without
 /// it that citation is `ambiguous`.
@@ -1217,116 +1333,16 @@ pub fn cite_check(
     draft: &str,
     title: Option<&str>,
 ) -> Result<Vec<Json>, Exc> {
-    let own = match title.filter(|t| !t.is_empty()) {
-        Some(t) => {
-            let rid = register_id_str(t)?;
-            let sql = "SELECT 1 FROM titles WHERE register_id = ?";
-            if rows_of(connection, sql, &[Sql::Text(rid.clone())])?.is_empty() {
-                return Err(refused(format!("{rid} is not in the index")));
-            }
-            Some(rid)
-        }
-        None => None,
-    };
-    // Two titles sharing a name leave a citation of that name ambiguous, not absent.
-    let mut names: BTreeMap<String, String> = BTreeMap::new();
-    for row in rows_of(connection, "SELECT name, register_id FROM titles", &[])? {
-        let rid = field(&row, "register_id").as_str().unwrap_or_default();
-        names
-            .entry(field(&row, "name").as_str().unwrap_or_default().to_string())
-            .and_modify(|slot| *slot = SHARED_NAME.to_string())
-            .or_insert_with(|| rid.to_string());
-    }
-    let lookup = |name: &str| names.get(name).cloned();
-    let digest = rows_of(
-        connection,
-        "SELECT value FROM meta WHERE key = 'sources_sha256'",
-        &[],
-    )?
-    .first()
-    .map_or(Json::Null, |row| field(row, "value").clone());
-    let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
-    let source_tail = pyre::re(SOURCE_TAIL, 0);
-    let mut report = Vec::new();
-    for (kind, key, act, citation, end) in citations(draft) {
-        // The citation pattern reads any `of this` phrase, so the scan starts there.
-        let read_this = citation.rfind(" this ").map_or("", |at| &citation[at..]);
-        let tail = format!("{read_this}{}", &draft[end..]);
-        let source_follows = act.is_none()
-            && source_tail
-                .captures_iter(&tail)
-                .find(|found| found.name("stop").is_some() || found.name("source").is_some())
-                .is_some_and(|found| found.name("source").is_some());
-        let named = if source_follows {
-            None
-        } else {
-            cited_title(draft, end, act.as_deref(), own.as_deref(), lookup)
-        };
-        let shared = named.as_deref() == Some(SHARED_NAME);
-        let target = named.filter(|_| !shared);
-        let (rows, held) = match &target {
-            Some(rid) => (
-                rows_of(
-                    connection,
-                    &target_sql(&kind),
-                    &[Sql::Text(rid.clone()), Sql::Text(key.clone())],
-                )?,
-                rows_of(
-                    connection,
-                    "SELECT * FROM titles WHERE register_id = ?",
-                    &[Sql::Text(rid.clone())],
-                )?
-                .into_iter()
-                .next(),
-            ),
-            None => (Vec::new(), None),
-        };
-        let from_title = |name: &str| held.as_ref().map_or(Json::Null, |t| field(t, name).clone());
-        let outcome = if range.match_at(draft, end).is_some() {
-            // `citations` reads only the first item of a range.
-            "multi_section"
-        } else if shared || (target.is_none() && act.is_none()) {
-            "ambiguous"
-        } else if rows.is_empty() {
-            "not_held"
-        } else if !from_title("version_is_current").truthy() {
-            "superseded"
-        } else if kind != "section" {
-            "container_level"
-        } else if rows.len() > 1 {
-            "ambiguous"
-        } else {
-            "resolved"
-        };
-        let line = draft.as_bytes()[..end]
-            .iter()
-            .filter(|byte| **byte == b'\n')
-            .count()
-            + 1;
-        let row_ids = rows
-            .iter()
-            .map(|row| field(row, "row_id").clone())
-            .collect();
-        report.push(object(vec![
-            ("line".into(), Json::Int(line.into())),
-            ("citation".into(), Json::str(&citation)),
-            ("kind".into(), Json::str(&kind)),
-            ("key".into(), Json::str(&key)),
-            ("cited_act".into(), text_or_null(act)),
-            ("outcome".into(), Json::str(outcome)),
-            ("register_id".into(), text_or_null(target)),
-            ("rows".into(), Json::Array(row_ids)),
-            (
-                "compilation_number".into(),
-                from_title("compilation_number"),
-            ),
-            ("compilation_date".into(), from_title("compilation_date")),
-            ("retrieved".into(), from_title("retrieved")),
-            ("sections_sha256".into(), from_title("sections_sha256")),
-            ("sources_sha256".into(), digest.clone()),
-        ]));
-    }
-    Ok(report)
+    let own = given_title(connection, title)?;
+    let names = title_names(connection)?;
+    let sql = "SELECT value FROM meta WHERE key = 'sources_sha256'";
+    let digest = rows_of(connection, sql, &[])?
+        .first()
+        .map_or(Json::Null, |row| field(row, "value").clone());
+    citations(draft)
+        .into_iter()
+        .map(|item| citation_report(connection, draft, item, own.as_deref(), &names, &digest))
+        .collect()
 }
 
 fn source_line(connection: &Connection) -> Result<String, Exc> {
@@ -1461,51 +1477,61 @@ fn shown_rows(rows: &[Json]) -> String {
     shown.join(", ")
 }
 
+fn outcome_of(item: &Json) -> String {
+    pyvalue::py_str(item.at("outcome"))
+}
+
+fn read_draft(path: &str) -> Result<String, Exc> {
+    let unreadable = |e: OsError| refused(format!("cannot read the draft ({})", strerror(&e)));
+    let bytes = read_all(crate::pyio::open(path).map_err(unreadable)?, path).map_err(unreadable)?;
+    String::from_utf8(bytes).map_err(|_| refused("the draft is not UTF-8 text"))
+}
+
+fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> Result<(), Exc> {
+    for item in report {
+        let s = |k: &str| pyvalue::py_str(item.at(k));
+        let rows = match item.at("rows") {
+            Json::Array(ids) => ids
+                .iter()
+                .map(|id| object(vec![("row_id".into(), id.clone())]))
+                .collect(),
+            _ => Vec::new(),
+        };
+        run.print(&format!(
+            "line {}: {}: {}: {}",
+            s("line"),
+            s("outcome"),
+            s("citation"),
+            shown_rows(&rows)
+        ));
+    }
+    let counted: Vec<String> = OUTCOMES
+        .iter()
+        .map(|name| {
+            let count = report.iter().filter(|i| outcome_of(i) == *name).count();
+            format!("{count} {name}")
+        })
+        .filter(|part| !part.starts_with("0 "))
+        .collect();
+    run.print(&format!(
+        "{} citations: {}. {CITE_CHECK_NOTICE}",
+        report.len(),
+        counted.join(", ")
+    ));
+    run.print(&source_line(connection)?);
+    Ok(())
+}
+
 fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let connection = open_index(&args.str("index").unwrap_or_default())?;
-    let path = args.str("draft").unwrap_or_default();
-    let unreadable = |e: OsError| refused(format!("cannot read the draft ({})", strerror(&e)));
-    let bytes =
-        read_all(crate::pyio::open(&path).map_err(unreadable)?, &path).map_err(unreadable)?;
-    let draft = String::from_utf8(bytes).map_err(|_| refused("the draft is not UTF-8 text"))?;
+    let draft = read_draft(&args.str("draft").unwrap_or_default())?;
     let report = cite_check(&connection, &draft, args.str("title").as_deref())?;
-    let outcome_of = |item: &Json| pyvalue::py_str(item.at("outcome"));
     if args.flag("json") {
         for item in &report {
             run.print_points(&dumps_line(item, false))?;
         }
     } else {
-        for item in &report {
-            let s = |k: &str| pyvalue::py_str(item.at(k));
-            let rows = match item.at("rows") {
-                Json::Array(ids) => ids
-                    .iter()
-                    .map(|id| object(vec![("row_id".into(), id.clone())]))
-                    .collect(),
-                _ => Vec::new(),
-            };
-            run.print(&format!(
-                "line {}: {}: {}: {}",
-                s("line"),
-                s("outcome"),
-                s("citation"),
-                shown_rows(&rows)
-            ));
-        }
-        let counted: Vec<String> = OUTCOMES
-            .iter()
-            .map(|name| {
-                let count = report.iter().filter(|i| outcome_of(i) == *name).count();
-                format!("{count} {name}")
-            })
-            .filter(|part| !part.starts_with("0 "))
-            .collect();
-        run.print(&format!(
-            "{} citations: {}. {CITE_CHECK_NOTICE}",
-            report.len(),
-            counted.join(", ")
-        ));
-        run.print(&source_line(&connection)?);
+        print_citations(&report, &connection, run)?;
     }
     let clean = report
         .iter()
