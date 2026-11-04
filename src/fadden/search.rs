@@ -47,10 +47,75 @@ const LIST_SEPARATOR: &str = r"(?:,\s+(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)";
 const SUBDIVISION: &str = r"\d+[A-Z]{0,4}[-‐‑][A-Z]{1,3}\b";
 const MARKDOWN_HEADING: &str = r"^#{1,6} (.+)$";
 
+/// Cited names that stand for a title's exact name, each checked against the
+/// Register on 4 November 2026. A cited name resolves only as a title's name or
+/// through this list, so any other abbreviation stays unresolved.
+const ABBREVIATIONS: [(&str, &str); 5] = [
+    ("ITAA 1997", "Income Tax Assessment Act 1997"),
+    ("ITAA 1936", "Income Tax Assessment Act 1936"),
+    ("TAA 1953", "Taxation Administration Act 1953"),
+    (
+        "GST Act",
+        "A New Tax System (Goods and Services Tax) Act 1999",
+    ),
+    ("FBTAA 1986", "Fringe Benefits Tax Assessment Act 1986"),
+];
+
 fn cited() -> String {
     format!(
         r"(?:the\s+)?\*?([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){{0,3}}\s+{YEAR}|(?=[A-Z])[^.;:,\n]{{0,150}}?\b(?:Act|Regulations?|Rules)\b(?:\s+{YEAR})?)"
     )
+}
+
+/// A lower-case word other than `and` or `or`, or a provision word: either may follow
+/// an abbreviation without carrying on its name.
+const NAME_ENDING_WORD: &str =
+    r"(?!(?:and|or)\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b";
+
+/// Whether an abbreviation ending at `end` ends its name there, rather than begin a
+/// longer one such as `ITAA 1997 Amendment Act 2025`. After any whitespace, line breaks
+/// included, only these may follow: the end of the text; `,` `.` `;` `:` `)` or `]`; a
+/// `NAME_ENDING_WORD`; a parenthesised part, then any of these; or `and` or `or`
+/// (optionally `the`) before a `NAME_ENDING_WORD` or before a listed abbreviation or
+/// held title that itself ends its name. Anything else, such as a capitalised word, a
+/// digit or the `-2` of `ITAA 1997-2`, does not.
+fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
+    let ending = pyre::re(
+        &format!(r"\s*(?:\Z|[,.;:)\]])|\s+(?:{NAME_ENDING_WORD})"),
+        0,
+    );
+    let part = pyre::re(r"\s*\((?:[^()\n]|\([^()\n]*\))*\)", 0);
+    let join = pyre::re(r"\s+(?:and|or)(?:\s+the)?\s+", 0);
+    let word = pyre::re(NAME_ENDING_WORD, 0);
+    let name = pyre::re(&cited(), 0);
+    loop {
+        if ending.match_at(text, end).is_some() {
+            return true;
+        }
+        if let Some(found) = part.match_at(text, end) {
+            end = found.get(0).expect("group 0").end();
+            continue;
+        }
+        let Some(found) = join.match_at(text, end) else {
+            return false;
+        };
+        let after = found.get(0).expect("group 0").end();
+        if word.match_at(text, after).is_some() {
+            return true;
+        }
+        let Some(next) = name.match_at(text, after).and_then(|found| found.get(1)) else {
+            return false;
+        };
+        let written = crate::py::split_whitespace(next.as_str()).join(" ");
+        if !ABBREVIATIONS
+            .iter()
+            .any(|(abbreviation, _)| *abbreviation == written)
+            && lookup(&written).is_none()
+        {
+            return false;
+        }
+        end = next.end();
+    }
 }
 
 fn citation_pattern() -> String {
@@ -170,8 +235,9 @@ pub fn definitions(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// (kind, key, cited act or None, citation text) for each reference in `text`.
-pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
+/// (kind, key, cited act or None, citation text, where the citation ends in `text`)
+/// for each reference in `text`.
+pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usize)> {
     let pattern = pyre::re(&citation_pattern(), 0);
     let separator = pyre::re(LIST_SEPARATOR, 0);
     let mut out = Vec::new();
@@ -186,8 +252,8 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
             .into_iter()
             .find_map(|g| found.get(g).map(|m| m.as_str()).filter(|s| !s.is_empty()))
             .map(|a| crate::py::split_whitespace(a).join(" "));
-        let citation =
-            crate::py::split_whitespace(found.get(0).expect("group 0").as_str()).join(" ");
+        let whole = found.get(0).expect("group 0");
+        let citation = crate::py::split_whitespace(whole.as_str()).join(" ");
         let mut hyphenated: Option<bool> = None;
         for label in separator.split(found.name("labels").expect("labels").as_str()) {
             let key = section_key(label.split('(').next().unwrap_or(""));
@@ -204,7 +270,13 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String)> {
                     || (kind == "division" && !format!("{key}{label}").contains(['-', '(']))
             };
             if fits {
-                out.push((kind.clone(), key, act.clone(), citation.clone()));
+                out.push((
+                    kind.clone(),
+                    key,
+                    act.clone(),
+                    citation.clone(),
+                    whole.end(),
+                ));
             }
         }
     }
@@ -757,13 +829,24 @@ fn insert_row(
             counts.definitions += 1;
         }
     }
-    for (kind, cited, act, citation) in citations(&text) {
+    let lookup = |name: &str| {
+        names
+            .iter()
+            .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
+            .and_then(|(_, v)| v.clone())
+    };
+    for (kind, cited, act, citation, end) in citations(&text) {
         let target = match &act {
             None => Some(rid.to_string()),
-            Some(name) => names
+            Some(written) => match ABBREVIATIONS
                 .iter()
-                .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
-                .and_then(|(_, v)| v.clone()),
+                .find(|(abbreviation, _)| *abbreviation == written.as_str())
+            {
+                // A blocked abbreviation stays unresolved rather than reach a wrong title.
+                Some(_) if !ends_name(&text, end, lookup) => None,
+                Some((_, name)) => lookup(name),
+                None => lookup(written),
+            },
         };
         run(
             connection,
