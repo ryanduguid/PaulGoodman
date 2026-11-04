@@ -1321,7 +1321,7 @@ fn citation_report(
     );
     let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
     let row_ids = rows.iter().map(|r| field(r, "row_id").clone()).collect();
-    Ok(object(vec![
+    let mut fields = vec![
         ("line".into(), Json::Int((newlines.count() + 1).into())),
         ("citation".into(), Json::str(&citation)),
         ("kind".into(), Json::str(&kind)),
@@ -1330,15 +1330,17 @@ fn citation_report(
         ("outcome".into(), Json::str(outcome)),
         ("register_id".into(), text_or_null(target)),
         ("rows".into(), Json::Array(row_ids)),
-        (
-            "compilation_number".into(),
-            from_title("compilation_number"),
-        ),
-        ("compilation_date".into(), from_title("compilation_date")),
-        ("retrieved".into(), from_title("retrieved")),
-        ("sections_sha256".into(), from_title("sections_sha256")),
-        ("sources_sha256".into(), digest.clone()),
-    ]))
+    ];
+    for name in [
+        "compilation_number",
+        "compilation_date",
+        "retrieved",
+        "sections_sha256",
+    ] {
+        fields.push((name.into(), from_title(name)));
+    }
+    fields.push(("sources_sha256".into(), digest.clone()));
+    Ok(object(fields))
 }
 
 /// One object per citation in `draft`, in its order, with the outcome and the rows and
