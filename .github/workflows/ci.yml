@@ -92,6 +92,14 @@ jobs:
           name: coverage-codecov
           path: coverage-codecov.xml
           retention-days: 1
+      - name: keep the coverage data for the merged floor
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-data-ubuntu
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 1
       # After the upload, so Codecov still receives a report that misses the floor.
       - name: hold whole-package coverage at the configured floor
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
@@ -118,6 +126,51 @@ jobs:
           name: coverage-windows
           path: coverage-windows.xml
           retention-days: 1
+      - name: keep the Windows coverage data for the merged floor
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-data-windows
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 1
+
+  # Neither leg alone shows what the two cover together: ubuntu cannot run the
+  # Windows-only publication transaction, and Windows runs a subset. This job
+  # holds their combined data to a floor above the ubuntu leg's own.
+  coverage-merged:
+    needs: test
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.14"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: install the locked toolchain
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-data-ubuntu
+          path: coverage-data/ubuntu
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-data-windows
+          path: coverage-data/windows
+      - name: combine the ubuntu and Windows coverage data
+        run: uv run --locked --extra dev coverage combine coverage-data/ubuntu/.coverage coverage-data/windows/.coverage  # NOSONAR: the environment is synced from uv.lock, whose dependencies install from wheels
+      - name: hold merged coverage at its floor
+        run: uv run --locked --extra dev coverage report --fail-under=99  # NOSONAR: the environment is synced from uv.lock, whose dependencies install from wheels
 
   # The upload runs apart from the tests so the OIDC token is never available
   # while test code runs. It is exempt from tests-gates: a Codecov outage must
@@ -256,7 +309,7 @@ jobs:
     # unless every job it needs succeeded, when a job in this file is missing
     # from needs, or when a pull request removes a job without adding a
     # "# removed-jobs: <job>" comment to this file.
-    needs: [test, package, lint, rust]
+    needs: [test, coverage-merged, package, lint, rust]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

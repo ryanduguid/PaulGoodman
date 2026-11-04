@@ -61,9 +61,15 @@ select = ["E4", "E7", "E9", "F", "I"]
 # C tracing records exception-unwinding paths that sysmon misses in the failure tests.
 core = "ctrace"
 
+[tool.coverage.paths]
+# The coverage-merged job combines data from ubuntu and Windows runners.
+source = ["fadden", "*/fadden", "*\\fadden"]
+
 [tool.coverage.report]
 # The ubuntu coverage leg cannot run the Windows-only live-evidence publication
-# transaction (ctypes.WinDLL, msvcrt), so the floor sits below 100. Those 182
+# transaction (ctypes.WinDLL, msvcrt), so this floor, for that leg alone, sits
+# below 100. The coverage-merged job in ci.yml holds the data combined with the
+# Windows leg to 99. Those 182
 # lines (181 before the UTF-16 name-length fix) predate the Rust port; moving
 # stages to the Rust fadden binary removed about 2,500 covered Python
 # statements, which lowered the total from 97% to 94%. Removing discover,
