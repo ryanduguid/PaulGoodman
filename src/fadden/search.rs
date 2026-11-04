@@ -1197,9 +1197,10 @@ const SHARED_NAME: &str = "";
 
 /// What may tie a citation to a source the citation pattern did not read, so `--title`
 /// must not claim it: a linking word, or a capitalised word such as an instrument's
-/// name. `this Act` or a provision of the same title may follow. This fails closed: `to` in
+/// name. `this Act`, a provision of the same title or `this purpose` may follow, also
+/// after `the purposes of`. This fails closed: `to` in
 /// `section 8-1 to deduct` also stops `--title`, which costs a reader one look.
-const UNREAD_NAME: &str = r"[\s,(]+(?:(?:of|in|under|to|for|by|from|within|made|pursuant)\b|(?=[A-Z]))(?!\s*(?:this\s+Act|(?:this\s+)?(?:Division|Subdivision|Part|Schedule|Chapter))\b)";
+const UNREAD_NAME: &str = r"[\s,(]+(?:(?:of|in|under|to|for|by|from|within|made|pursuant)\b|(?=[A-Z]))(?!\s*(?:(?:the\s+purposes?\s+of\s+)?(?:this\s+Act|(?:this\s+)?(?:Division|Subdivision|Part|Schedule|Chapter|section|subsection))|this\s+purpose)\b)";
 
 /// The words after `this` that keep a citation in the given title. The citation pattern
 /// reads any `of this` phrase, so `of this Regulation` needs refusing here.
