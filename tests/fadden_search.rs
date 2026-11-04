@@ -1583,6 +1583,37 @@ fn cite_check_gives_the_title_flag_only_this_act_or_its_provisions() {
     }
 }
 
+#[test]
+fn cite_check_keeps_a_purpose_phrase_with_the_title_flag() {
+    let c = case();
+    let connection = built(&c);
+    for draft in [
+        "See section 2-1 for this purpose.",
+        "See section 2-1 for the purposes of this Act.",
+        "See section 2-1 for the purposes of this Part.",
+        "See section 2-1 for the purposes of this section.",
+        "See section 2-1 for the purposes of Division 2.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "resolved",
+            "{draft}"
+        );
+    }
+    for draft in [
+        "See section 2-1 for this Regulation.",
+        "See section 2-1 for the purposes of this Regulation.",
+        "See section 2-1 for the purposes of the regulations.",
+        "See section 2-1 for the purposes of the Sample Levy Ordinance.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "ambiguous",
+            "{draft}"
+        );
+    }
+}
+
 /// The real-law question set: (query words, Register ID, section, form).
 fn reference_questions() -> Vec<[&'static str; 4]> {
     include_str!("fixtures/retrieval_real_law.tsv")

@@ -1204,13 +1204,15 @@ const UNREAD_NAME: &str = r"[\s,(]+(?:(?:of|in|under|to|for|by|from|within|made|
 
 /// The words after `this` that keep a citation in the given title. The citation pattern
 /// reads any `of this` phrase, so `of this Regulation` needs refusing here.
-const SAME_TITLE: [&str; 6] = [
+const SAME_TITLE: [&str; 8] = [
     "Act",
     "Division",
     "Subdivision",
     "Part",
     "Schedule",
     "Chapter",
+    "section",
+    "subsection",
 ];
 
 const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
