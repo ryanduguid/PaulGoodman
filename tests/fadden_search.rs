@@ -1481,13 +1481,10 @@ fn the_real_law_question_set_is_well_formed() {
     assert_eq!(questions.len(), 46);
     let unique: std::collections::BTreeSet<&str> = questions.iter().map(|q| q[0]).collect();
     assert_eq!(unique.len(), questions.len());
+    let register_id_form = regex::Regex::new(r"^[CF]\d{4}[AL]\d{5}$").unwrap();
     for [query, register_id, section, form] in questions {
         assert!(!query.trim().is_empty());
-        assert!(
-            regex::Regex::new(r"^[CF]\d{4}[AL]\d{5}$")
-                .unwrap()
-                .is_match(register_id)
-        );
+        assert!(register_id_form.is_match(register_id));
         assert!(!section.is_empty());
         assert!(["base", "inflected"].contains(&form), "{form}");
     }
