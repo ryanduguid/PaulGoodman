@@ -1462,3 +1462,60 @@ fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
     assert_eq!(code, 2);
     assert!(err.contains("python -m fadden search cite-check"));
 }
+
+/// The real-law question set: (query words, Register ID, section, form).
+fn reference_questions() -> Vec<[&'static str; 4]> {
+    include_str!("fixtures/retrieval_real_law.tsv")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            <[&str; 4]>::try_from(fields).unwrap_or_else(|_| panic!("4 fields: {line}"))
+        })
+        .collect()
+}
+
+#[test]
+fn the_real_law_question_set_is_well_formed() {
+    let questions = reference_questions();
+    assert_eq!(questions.len(), 46);
+    let unique: std::collections::BTreeSet<&str> = questions.iter().map(|q| q[0]).collect();
+    assert_eq!(unique.len(), questions.len());
+    for [query, register_id, section, form] in questions {
+        assert!(!query.trim().is_empty());
+        assert!(
+            regex::Regex::new(r"^[CF]\d{4}[AL]\d{5}$")
+                .unwrap()
+                .is_match(register_id)
+        );
+        assert!(!section.is_empty());
+        assert!(["base", "inflected"].contains(&form), "{form}");
+    }
+}
+
+/// Counts only. Point `FADDEN_REFERENCE_INDEX` at an index of the set's titles; the
+/// baseline and the corpus it came from are in docs/build-evidence.md.
+#[test]
+#[ignore = "requires FADDEN_REFERENCE_INDEX naming an index built from real titles"]
+fn reference_questions_on_a_real_index() {
+    let index = std::env::var("FADDEN_REFERENCE_INDEX").expect("set FADDEN_REFERENCE_INDEX");
+    let connection = search::open_index(&index).unwrap();
+    let mut counts = BTreeMap::<&str, [usize; 3]>::new();
+    for [query, register_id, section, form] in reference_questions() {
+        let words: Vec<String> = query.split_whitespace().map(str::to_string).collect();
+        let hits = values(search::query(&connection, &words, None, 10).unwrap());
+        let rank = hits.iter().position(|hit| {
+            hit["register_id"] == register_id
+                && hit["section"]
+                    .as_str()
+                    .is_some_and(|found| search::section_key(found) == section)
+        });
+        let count = counts.entry(form).or_default();
+        count[0] += 1;
+        count[1] += usize::from(rank.is_some_and(|r| r < 5));
+        count[2] += usize::from(rank.is_some());
+    }
+    for (form, [questions, top5, top10]) in counts {
+        println!("{form}: {questions} questions, hit at 5 {top5}, hit at 10 {top10}");
+    }
+}
