@@ -67,35 +67,55 @@ fn cited() -> String {
     )
 }
 
-/// Capitalised words that may follow an abbreviation without carrying on its name.
-const PROVISION_WORDS: [&str; 5] = ["Division", "Subdivision", "Part", "Schedule", "Chapter"];
+/// A lower-case word other than `and` or `or`, or a provision word: either may follow
+/// an abbreviation without carrying on its name.
+const NAME_ENDING_WORD: &str =
+    r"(?!(?:and|or)\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b";
 
-/// Whether the text from `end`, the end of an abbreviation, may carry on a longer
-/// name it begins (`ITAA 1997 Amendment Act 2025`): after whitespace, line breaks
-/// included, a capitalised word other than a provision word, or `and` or `or`
-/// (optionally `the`) before one that begins no listed abbreviation or held title.
-fn continues(text: &str, end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
-    let next = pyre::re(r"\s+(?:(and|or)(?:\s+the)?\s+)?([A-Z][A-Za-z]*)", 0);
-    let Some(found) = next.match_at(text, end) else {
-        return false;
-    };
-    let word = found.get(2).expect("word");
-    if PROVISION_WORDS.contains(&word.as_str()) {
-        return false;
-    }
-    if found.get(1).is_none() {
-        return true;
-    }
-    let name = pyre::re(&cited(), 0)
-        .match_at(text, word.start())
-        .and_then(|name| name.get(1))
-        .map(|name| crate::py::split_whitespace(name.as_str()).join(" "));
-    name.is_none_or(|name| {
-        !ABBREVIATIONS
+/// Whether an abbreviation ending at `end` ends its name there, rather than begin a
+/// longer one such as `ITAA 1997 Amendment Act 2025`. After any whitespace, line breaks
+/// included, only these may follow: the end of the text; `,` `.` `;` `:` `)` or `]`; a
+/// `NAME_ENDING_WORD`; a parenthesised part, then any of these; or `and` or `or`
+/// (optionally `the`) before a `NAME_ENDING_WORD` or before a listed abbreviation or
+/// held title that itself ends its name. Anything else, such as a capitalised word, a
+/// digit or the `-2` of `ITAA 1997-2`, does not.
+fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
+    let ending = pyre::re(
+        &format!(r"\s*(?:\Z|[,.;:)\]])|\s+(?:{NAME_ENDING_WORD})"),
+        0,
+    );
+    let part = pyre::re(r"\s*\((?:[^()\n]|\([^()\n]*\))*\)", 0);
+    let join = pyre::re(r"\s+(?:and|or)(?:\s+the)?\s+", 0);
+    let word = pyre::re(NAME_ENDING_WORD, 0);
+    let name = pyre::re(&cited(), 0);
+    loop {
+        if ending.match_at(text, end).is_some() {
+            return true;
+        }
+        if let Some(found) = part.match_at(text, end) {
+            end = found.get(0).expect("group 0").end();
+            continue;
+        }
+        let Some(found) = join.match_at(text, end) else {
+            return false;
+        };
+        let after = found.get(0).expect("group 0").end();
+        if word.match_at(text, after).is_some() {
+            return true;
+        }
+        let Some(next) = name.match_at(text, after).and_then(|found| found.get(1)) else {
+            return false;
+        };
+        let written = crate::py::split_whitespace(next.as_str()).join(" ");
+        if !ABBREVIATIONS
             .iter()
-            .any(|(abbreviation, _)| *abbreviation == name)
-            && lookup(&name).is_none()
-    })
+            .any(|(abbreviation, _)| *abbreviation == written)
+            && lookup(&written).is_none()
+        {
+            return false;
+        }
+        end = next.end();
+    }
 }
 
 fn citation_pattern() -> String {
@@ -823,7 +843,7 @@ fn insert_row(
                 .find(|(abbreviation, _)| *abbreviation == written.as_str())
             {
                 // A blocked abbreviation stays unresolved rather than reach a wrong title.
-                Some(_) if continues(&text, end, lookup) => None,
+                Some(_) if !ends_name(&text, end, lookup) => None,
                 Some((_, name)) => lookup(name),
                 None => lookup(written),
             },

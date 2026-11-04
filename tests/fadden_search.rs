@@ -1064,10 +1064,10 @@ fn listed_abbreviations_resolve_and_any_other_name_stays_as_cited() {
 }
 
 #[test]
-fn an_abbreviation_that_may_begin_a_longer_name_stays_unresolved() {
+fn an_abbreviation_resolves_only_before_what_ends_a_name() {
     let c = case();
     let mut titles = Titles::new();
-    for (_, rid, name) in [ABBREVIATED[0], ABBREVIATED[3]] {
+    for (_, rid, name) in [ABBREVIATED[0], ABBREVIATED[1], ABBREVIATED[3]] {
         let text = row(rid, 1, Some("1"), "Fabricated text.", "1 Text", None);
         titles.insert(rid, (name, vec![text]));
     }
@@ -1076,7 +1076,14 @@ fn an_abbreviation_that_may_begin_a_longer_name_stays_unresolved() {
         section 1 of the ITAA 1997 and Other Legislation Amendment Act 2025, \
         section 1 of the ITAA 1997\n\nThe next paragraph, section 1 of the ITAA 1997 and the GST Act, \
         section 1 of the GST Act and the ITAA 1997, section 1 of the ITAA 1997 and Division 7A, \
-        section 1 of the ITAA 1997 s 8-1, section 1 of the ITAA 1997";
+        section 1 of the ITAA 1997 (No. 2) Amendment Act 2025, section 1 of the ITAA 1997 2025 Amendment Act 2025, \
+        section 1 of the ITAA 1997-2, section 1 of the ITAA 1997 and ITAA 1936 Amendment Act 2025, \
+        section 1 of the ITAA 1997 and Income Tax Assessment Act 1936 Amendment Act 2025, \
+        section 1 of the ITAA 1997 and GST Act Transitional Amendment Act 2025, \
+        section 1 of the ITAA 1997 (Cth) Amendment Act 2025, section 1 of the ITAA 1997 (Cth), \
+        section 1 of the GST Act (other than paragraph (a)) applies, \
+        section 1 of the ITAA 1997 and section 2 of the GST Act, section 1 of the ITAA 1997 s 8-1, \
+        section 1 of the ITAA 1997";
     let citing = row(OTHER, 1, Some("5"), text, "5 Citations", None);
     titles.insert(OTHER, ("Other Sample Act 2099", vec![citing]));
     write_corpus(&c.root, &titles, &[]);
@@ -1085,6 +1092,7 @@ fn an_abbreviation_that_may_begin_a_longer_name_stays_unresolved() {
     let report = value(&search::refs(&connection, &format!("{OTHER}:0001:5")).unwrap());
     let blocked = |name: &str| (json!(name), Value::Null, 0);
     let itaa = (json!("ITAA 1997"), json!("C2004A05138"), 1);
+    let gst = |rows| (json!("GST Act"), json!("C2004A00446"), rows);
     assert_eq!(
         cited_names(&report),
         [
@@ -1096,9 +1104,22 @@ fn an_abbreviation_that_may_begin_a_longer_name_stays_unresolved() {
             // A citation ending a paragraph before one that opens with a capital: the accepted cost.
             blocked("ITAA 1997"),
             itaa.clone(),
-            (json!("GST Act"), json!("C2004A00446"), 1),
+            gst(1),
             itaa.clone(),
             (Value::Null, json!(OTHER), 0),
+            // `(No. 2)`, a year, `-2`, 3 names after `and` that run on, `(Cth) Amendment Act 2025`.
+            blocked("ITAA 1997"),
+            blocked("ITAA 1997"),
+            blocked("ITAA 1997"),
+            blocked("ITAA 1997"),
+            blocked("ITAA 1997"),
+            blocked("ITAA 1997"),
+            blocked("ITAA 1997"),
+            // `(Cth)`, a parenthesised note, then `and` before a lower-case word.
+            itaa.clone(),
+            gst(1),
+            itaa.clone(),
+            gst(0),
             itaa.clone(),
             itaa,
         ]

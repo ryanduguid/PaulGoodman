@@ -494,22 +494,37 @@ python -m fadden search refs search.sqlite C2004A05138:0035:8-1
   `the` or `*` is dropped. Case counts. A name is read only when it ends in a
   year or in `Act`, `Regulation`, `Regulations` or `Rules`, so the table lists
   `FBTAA 1986` rather than `FBTAA`.
-- An abbreviation stays unresolved when it may begin a longer name: when,
-  after whitespace (a line break included), the next word is capitalised, or
-  is `and` or `or` (optionally followed by `the`) before a name that is
-  neither in the table nor a held title. `Division`, `Subdivision`, `Part`,
-  `Schedule` and `Chapter` never block in either position, and nor does a
-  lowercase word such as `section`, `s` or `ss`. So
-  `ITAA 1997 Amendment Act 2025` and
-  `ITAA 1997 and Other Legislation Amendment Act 2025` resolve to nothing,
-  never to the *Income Tax Assessment Act 1997*, whilst
-  `ITAA 1997 and the GST Act` and `ITAA 1997 and Division 7A` resolve. The
-  cost is that an abbreviation ending a paragraph before one that opens with
-  a capital also stays unresolved. An exact title is not checked this way.
-  In a sample of 5 Acts and 6 instruments from the Register (3,676 cited
-  names, read from their EPUB text with a Python copy of the pattern on
-  4 November 2026), the check blocked none of the 214 abbreviation
-  resolutions.
+- An abbreviation resolves only where its name visibly ends, so that it
+  cannot stand for a longer name it begins. After any whitespace (a line
+  break included), only these may follow it:
+  - the end of the text, or `,`, `.`, `;`, `:`, `)` or `]`;
+  - a lower-case word other than `and` or `or`, such as `section`, `s` or
+    `ss`;
+  - `Division`, `Subdivision`, `Part`, `Schedule` or `Chapter`;
+  - a parenthesised part, such as `(Cth)` or a note, followed by any of
+    these;
+  - `and` or `or`, optionally followed by `the`, before one of those words or
+    before a listed abbreviation or held title whose own name ends by this
+    same test.
+
+  Anything else leaves the abbreviation unresolved, never sent to the base
+  Act: a capitalised word (`ITAA 1997 Amendment Act 2025`), a parenthesised
+  part followed by one (`ITAA 1997 (No. 2) Amendment Act 2025`), a digit
+  (`ITAA 1997 2025 Amendment Act 2025`), text joined to the year
+  (`ITAA 1997-2`) or a second name that runs on
+  (`ITAA 1997 and ITAA 1936 Amendment Act 2025`). The cost is that an
+  abbreviation ending a paragraph or table row before text that opens with a
+  capital or a number also stays unresolved. An exact title is not checked
+  this way.
+
+  Measured on 4 November 2026 with `fadden search build` over a corpus that
+  holds every title in `fadden/manifest_md.json`, with the EPUB text of 5 Acts
+  and 6 instruments from the Register each as one row: of 37,343 references,
+  234 name a listed abbreviation and 231 of those resolve. The 3 that do not
+  cite the GST Act in rows of a table in the *Income Tax Assessment Act
+  1997*, before a line break and an item number. The test changed no
+  reference to an exact title, and all 24 abbreviation references in the
+  texts of the golden search fixtures resolve.
 
 | Cited as | Title | Register ID |
 | --- | --- | --- |
