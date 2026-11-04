@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden capture_register`: ported from tests/corpus/test_live_register_capture.py
 //! and test_capture_register_paths.py. A [`MemorySession`] stands in for the
 //! Register, as the Python tests' session does; the production session runs

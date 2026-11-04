@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 #![no_main]
 // The hand-written ZIP reader for downloaded EPUBs: arbitrary bytes are
 // admitted or refused without a panic, and each member read back matches its

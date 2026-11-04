@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden export_live_evidence_bundles`: ported from
 //! tests/corpus/test_live_evidence_bundle_export.py and the refusal paths of
 //! test_live_evidence_paths.py and test_live_evidence_publication_paths.py.

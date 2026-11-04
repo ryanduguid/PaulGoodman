@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Differential probe for `fadden::epub` against `fadden/download.py`.
 //!
 //! Each stdin line is an archive path. Each stdout line is `E<hex error>` when

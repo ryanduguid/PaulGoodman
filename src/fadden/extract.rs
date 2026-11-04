@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The port of `fadden/extract.py` (stage 4; removed after the port): each downloaded EPUB as markdown, an
 //! endnotes file and per-section JSONL rows, then `manifest_md.json`.
 //!

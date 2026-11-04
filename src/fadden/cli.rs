@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden <stage> [arguments]`: run one ported corpus stage.
 use std::io::Write;
 

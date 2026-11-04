@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/capture_register.py`: capture immutable live metadata evidence from
 //! the Federal Register.
 //!

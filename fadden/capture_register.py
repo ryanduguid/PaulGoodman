@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Capture immutable live metadata evidence from the Federal Register.
 
 The public function owns the whole capture transaction.  Callers provide a

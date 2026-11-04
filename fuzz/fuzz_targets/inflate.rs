@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 #![no_main]
 // The raw-deflate inflater that reads EPUB members, against miniz_oxide: both
 // must agree on whether a stream is complete and on its bytes. Decoding in

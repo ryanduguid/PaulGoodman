@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The synthetic, provenance-first tax-change impact queue.
 //!
 //! `compare` turns a baseline title index, a synthetic Register observation and

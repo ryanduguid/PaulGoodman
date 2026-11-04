@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Staged queue writes with rollback; readers detect interrupted generations.
 use std::cell::RefCell;
 use std::io::Write;

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The au-tax-legislation-corpus tooling ported from Python.
 //!
 //! Stage 1 ports the change-review radar (`tax-radar-au`). The corpus builder

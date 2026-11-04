@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Opt-in references over independently identified official EPUBs. No network.
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

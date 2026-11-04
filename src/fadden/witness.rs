@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden witness`: for a small committed sample of titles, the section
 //! identifiers the `extract` stage yields from each title's EPUB against those
 //! the Register's Word rendition of the same compilation marks up.

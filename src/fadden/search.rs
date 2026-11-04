@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `fadden/search.py`: build and query a local search index over a finished corpus.
 //!
 //! `build` checks every row of a finished corpus against `sources.json` before

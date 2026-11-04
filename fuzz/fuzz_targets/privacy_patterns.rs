@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Fuzz the privacy patterns the PII scans, the distribution builder and its
 //! verifier run over every title. A pattern that backtracks without bound
 //! shows up as a timeout; a broken invariant aborts the run.
