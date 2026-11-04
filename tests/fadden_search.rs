@@ -1474,7 +1474,8 @@ fn cite_check_calls_a_name_two_titles_share_ambiguous_not_absent() {
     write_corpus(&c.root, &titles, &[]);
     build(&c);
     let connection = search::open_index(&s(&c.out)).unwrap();
-    let draft = "See section 2-1 of the Sample Levy Act 2099.\nSee section 9 of the Missing Act 2099.";
+    let draft =
+        "See section 2-1 of the Sample Levy Act 2099.\nSee section 9 of the Missing Act 2099.";
     for title in [None, Some(ACT)] {
         let report = values(search::cite_check(&connection, draft, title).unwrap());
         assert_eq!(report[0]["outcome"], "ambiguous");
