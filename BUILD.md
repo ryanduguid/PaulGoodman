@@ -494,9 +494,12 @@ python -m fadden search refs search.sqlite C2004A05138:0035:8-1
   `the` or `*` is dropped. Case counts. A name is read only when it ends in a
   year or in `Act`, `Regulation`, `Regulations` or `Rules`, so the table lists
   `FBTAA 1986` rather than `FBTAA`.
-- An abbreviation resolves only where its name visibly ends, so that it
-  cannot stand for a longer name it begins. After any whitespace (a line
-  break included), only these may follow it:
+- An abbreviation resolves only where what follows it is on a closed list,
+  so that it does not stand for the longer names it begins in the measured
+  sample. The list is a rule about the text, not a guarantee: a longer name
+  written inside brackets, such as `ITAA 1997 (Amendment Act 2025)`, still
+  resolves to the base Act. After any whitespace (a line break included),
+  only these may follow it:
   - the end of the text, or `,`, `.`, `;`, `:`, `)` or `]`;
   - a lower-case word other than `and` or `or`, such as `section`, `s` or
     `ss`;
