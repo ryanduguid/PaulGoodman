@@ -89,7 +89,7 @@ fn build(dir: &Path, superseded_from: Option<&str>) -> String {
 }
 
 fn value(json: &Json) -> Value {
-    serde_json::from_str(&dumps(json, Layout::Compact)).unwrap()
+    serde_json::from_str(&dumps(json, Layout::Canonical)).unwrap()
 }
 
 fn cli(dir: &Path, args: &[&str]) -> (i32, String, String) {
