@@ -28,7 +28,7 @@
 
 au-tax-legislation-corpus builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, for Australian tax researchers and tool builders. `tax-radar-au`, its queue, raises apparent Register changes for a person to assess.
 
-The repository holds code, not the corpus.
+The repository holds code, not the corpus. AI agents reach a finished build through the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, with `AUS_ACCOUNTING_CORPUS_ROOT` set to that build.
 
 ## Install and try it
 
@@ -67,7 +67,7 @@ The corpus builder (`python -m fadden`) produces retrieval material from Commonw
 
 ## Guides and reference
 
-The au-tax-legislation-corpus guides are grouped as how-to and reference pages.
+The au-tax-legislation-corpus guides are grouped as how-to, reference and background pages.
 
 How-to:
 

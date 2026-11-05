@@ -27,7 +27,7 @@
 
 **What talks to the network, and when.**
 Seven builder stages reach the Federal Register and `rulings` reaches the ATO Legal Database. Everything else, including the whole review queue, is local.
-- `discover` waits 3 seconds after each keyword and collection query and 2 seconds between full pages; its request count depends on the matching titles. `versions` resolves up to 8 titles a request: for 946 titles with no ambiguous groups, 120 requests and 178.5 seconds of fixed pauses (`BUILD.md`).
+- `discover` waits 3 seconds after each keyword and collection query and 2 seconds between full pages; its request count depends on the matching titles. `versions` resolves up to 8 titles a request: for 946 titles with no ambiguous groups, 119 resolution requests plus 1 diagnostic, with 178.5 seconds of fixed pauses (`BUILD.md`).
 - `download` fetches one EPUB per title through `curl`, sleeping 10 seconds between titles to honour the Register's `robots.txt` Crawl-delay. All 946 titles take about 2 hours 40 minutes, and titles already downloaded at the same version are skipped.
 - `probe13` reads version history for the titles `download` recorded as `no_epub`, and `retry13` downloads the latest published compilation for those it can recover.
 - `check_current` is a read-only staleness check: 946 API calls at 1.5 seconds, about half an hour.
@@ -55,4 +55,4 @@ Seven builder stages reach the Federal Register and `rulings` reaches the ATO Le
 - [Route a source change to affected work](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/workpaper-impact.md)
 - [RELEASING.md](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/RELEASING.md): release rules.
 - [AGENTS.md](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/AGENTS.md): the CI gates.
-- [Author's site](https://duguid.com.au/): Ryan Duguid's open source Australian accounting tools.
+- [Author's site](https://duguid.com.au/): Ryan Duguid's website.
