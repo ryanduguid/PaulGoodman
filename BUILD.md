@@ -550,8 +550,7 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   A quotation with `grade` `null` was not compared, and `reason` says why: the
   citation reached no one section, as with `not_held`, `superseded`, a Division or
   a range; the quotation has no closing mark before a blank line, when the first
-  200 characters are shown, which includes a straight mark closing after a space; or
-  the citation is inside the quotation and no citation
+  200 characters are shown; or the citation is inside the quotation and no citation
   outside it is beside it. It is never reported as `none`, which is a comparison
   that failed. `start` is the quotation's byte offset in the draft, and the summary
   counts each quotation once and each comparison with a citation.
@@ -584,6 +583,12 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
     `sections 8-1 and 8-5 say "..."` must hold in both to exit 0. A sentence ending
     inside its closing mark, as in `"...income." Section 8-5`, runs on into the next,
     with the same effect.
+  - Finding quotation marks fails closed but is not guaranteed. A stray straight
+    double mark before white space, a straight single mark after punctuation with no
+    quotation open and a straight mark closing after a space all read as an unclosed
+    quotation, so a draft can exit 1 with nothing misquoted. That is deliberate. A
+    mark straight after a letter or digit reads as an apostrophe or a closing mark,
+    so it opens nothing.
   - A single closing mark looks like an apostrophe, so a single quotation closes at
     the last candidate before the next opening mark in the paragraph:
     `the taxpayers' income` never stops at `taxpayers`. That can read past the

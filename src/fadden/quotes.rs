@@ -69,14 +69,16 @@ fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
     let chars: Vec<(usize, char)> = paragraph.char_indices().collect();
     let at = |i: usize| chars.get(i).map(|&(_, c)| c);
     let before = |i: usize| i.checked_sub(1).and_then(at);
-    // A mark before white space opens too, so a stray space cannot hide a quotation. A
-    // straight single mark must then also stand clear of the text before it, because
-    // after punctuation it is the closing mark in `'costs.' and`.
+    // With no quotation open, any mark clear of a word starts one, so a stray space or
+    // the colon in `says:' words'` cannot hide it.
+    let may_open = |i: usize| !before(i).is_some_and(char::is_alphanumeric);
+    // Only this bounds an open single quotation: a straight mark before white space and
+    // after punctuation closes it, as in `'costs.' and`.
     let opens = |i: usize| {
         let tight = at(i + 1).is_some_and(|c| !c.is_whitespace());
         let clear = chars[i].1 != '\''
             || before(i).is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '['));
-        !before(i).is_some_and(char::is_alphanumeric) && (tight || clear)
+        may_open(i) && (tight || clear)
     };
     let closes = |i: usize| {
         before(i).is_some_and(|c| !c.is_whitespace())
@@ -94,7 +96,7 @@ fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
     while i < chars.len() {
         let (place, mark) = chars[i];
         let kind = MARKS.iter().position(|(open, _)| *open == mark);
-        let Some(kind) = kind.filter(|_| opens(i)) else {
+        let Some(kind) = kind.filter(|_| may_open(i)) else {
             i += 1;
             continue;
         };
@@ -121,8 +123,8 @@ fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
                 )
             }
             None => {
-                let shown = paragraph[inside..].trim_start().chars();
-                (shown.take(UNCLOSED_SHOWN).collect(), inside, i + 1)
+                let shown = paragraph[inside..].chars().take(UNCLOSED_SHOWN);
+                (shown.collect(), inside, i + 1)
             }
         };
         if closing.is_none() || text.chars().any(char::is_alphanumeric) {
@@ -212,13 +214,13 @@ pub struct Grade {
 
 impl Grade {
     /// Whether the row holds the whole quotation.
-    pub(super) fn held(&self) -> bool {
+    pub fn held(&self) -> bool {
         matches!(self.grade, "exact" | "normalised")
     }
 }
 
 /// A quotation's grade against one row's text.
-pub(super) fn grade(quote: &str, text: &str) -> Grade {
+pub fn grade(quote: &str, text: &str) -> Grade {
     let folded_quote = folded(quote);
     let quote_words = crate::py::split_whitespace(&folded_quote);
     let result = |grade, matched_words| Grade {
