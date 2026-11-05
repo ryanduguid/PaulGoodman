@@ -46,7 +46,7 @@ fn build(dir: &Path, superseded_from: Option<&str>) -> String {
                 1,
                 "1",
                 "1 Widgets",
-                "A widget attracts the sample levy.",
+                "A widget attracts the sample levy, as section 9 says.",
             ),
             row(
                 CURRENT,
@@ -215,9 +215,17 @@ fn the_limit_counts_only_rows_it_may_show() {
     let dir = tempfile::tempdir().unwrap();
     let index = build(dir.path(), Some(NEXT_VERSION));
     let connection = search::open_index(&index).unwrap();
-    let words = ["widget".to_string()];
+    // Section 9 of the superseded title ranks first, so it must not take the one place.
+    let words = ["widget".to_string(), "9".to_string()];
+    let top = search::query(&connection, &words, None, 1).unwrap();
+    assert_eq!(value(&top[0])["register_id"], SUPERSEDED);
     let report = search::query_as_at(&connection, &words, None, 1, NEXT_VERSION).unwrap();
-    assert_eq!(report.hits.len(), 1);
+    let rids: Vec<Value> = report
+        .hits
+        .iter()
+        .map(|h| value(h)["register_id"].clone())
+        .collect();
+    assert_eq!(rids, [CURRENT]);
     assert_eq!(value(&report.refusals[0])["matching_rows"], 1);
 }
 
