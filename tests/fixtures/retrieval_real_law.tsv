@@ -1,0 +1,48 @@
+# Query words, Register ID, section, form. Written before any run, by an agent, from the Acts' published
+# section numbers. A hit is any row of that section of that title. `inflected` queries use other word forms.
+general deductions	C2004A05138	8-1	base
+ordinary income assessable	C2004A05138	6-5	base
+statutory income	C2004A05138	6-10	base
+specific deductions	C2004A05138	8-5	base
+CGT event disposal asset	C2004A05138	104-10	base
+main residence exemption	C2004A05138	118-110	base
+discount capital gain	C2004A05138	115-5	base
+small business entity	C2004A05138	328-110	base
+decline in value depreciating asset	C2004A05138	40-25	base
+effective life depreciating asset	C2004A05138	40-95	base
+low cost assets small business	C2004A05138	328-180	base
+personal services income	C2004A05138	84-5	base
+concessional contributions	C2004A05138	291-25	base
+employment termination payment	C2004A05138	82-130	base
+franking credit gross up	C2004A05138	207-20	base
+holder depreciating asset	C2004A05138	40-40	base
+loan private company dividend	C1936A00027	109D	base
+beneficiary presently entitled trust	C1936A00027	97	base
+scheme dominant purpose tax benefit	C1936A00027	177D	base
+taxable supply	C2004A00446	9-5	base
+creditable acquisition	C2004A00446	11-5	base
+food GST free	C2004A00446	38-2	base
+registration turnover threshold	C2004A00446	23-15	base
+margin scheme	C2004A00446	75-5	base
+car fringe benefit	C2004A03280	7	base
+loan fringe benefit	C2004A03280	16	base
+portable electronic device	C2004A03280	58X	base
+promoter penalty	C1953A00001	290-50	base
+general interest charge	C1953A00001	8AAC	base
+withhold payment employee	C1953A00001	12-35	base
+private ruling	C1953A00001	359-5	base
+false misleading statement penalty	C1953A00001	284-75	base
+losses outgoings incurred deductible	C2004A05138	8-1	inflected
+disposing CGT assets	C2004A05138	104-10	inflected
+main residences exempt	C2004A05138	118-110	inflected
+discounted capital gains	C2004A05138	115-5	inflected
+holders leased depreciating assets	C2004A05138	40-40	inflected
+franked distributions gross	C2004A05138	207-20	inflected
+loans private companies dividends	C1936A00027	109D	inflected
+trustees beneficiaries presently entitled	C1936A00027	97	inflected
+taxable supplies	C2004A00446	9-5	inflected
+creditable acquisitions	C2004A00446	11-5	inflected
+cars fringe benefits	C2004A03280	7	inflected
+employees payments withholding	C1953A00001	12-35	inflected
+penalties false statements	C1953A00001	284-75	inflected
+promoters penalties schemes	C1953A00001	290-50	inflected

@@ -13,7 +13,7 @@
 //!
 //! The index is built with the transaction pattern Python's `sqlite3` used:
 //! the schema script in autocommit mode, then every insert in one transaction.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::types::Value as Sql;
 use rusqlite::{Connection, OpenFlags, params_from_iter};
@@ -70,28 +70,34 @@ fn cited() -> String {
     )
 }
 
-/// A lower-case word other than `and` or `or`, or a provision word: either may follow
-/// an abbreviation without carrying on its name.
-const NAME_ENDING_WORD: &str =
-    r"(?!(?:and|or)\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b";
+/// Lower-case words that name a source, in a sentence or straight after a title's name.
+const SOURCE_WORDS: &str = "bills?|regs?|regulations?|rules?|ordinances?|determinations?|instruments?|orders?|codes?|schedules?|acts?|laws?|legislation|statutes?|by-?laws?|rulings?|enactments?|treaty|treaties";
+
+/// A lower-case word other than `and`, `or` or a source word, or a provision word: either
+/// may follow a name without carrying it on.
+fn name_ending_word() -> String {
+    format!(
+        r"(?!(?:and|or|{SOURCE_WORDS})\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b"
+    )
+}
 
 /// Whether an abbreviation ending at `end` ends its name there, rather than begin a
 /// longer one such as `ITAA 1997 Amendment Act 2025`. After any whitespace, line breaks
-/// included, only these may follow: the end of the text; `,` `.` `;` `:` `)` or `]`; a
-/// `NAME_ENDING_WORD`; a parenthesised part, then any of these; or `and` or `or`
-/// (optionally `the`) before a `NAME_ENDING_WORD` or before a listed abbreviation or
+/// included, only these may follow, past any closing `*`: the end of the text; `,` `.` `;`
+/// `:` `)` or `]`; a
+/// `name_ending_word`; a parenthesised part, then any of these; or `and` or `or`
+/// (optionally `the`) before a `name_ending_word` or before a listed abbreviation or
 /// held title that itself ends its name. Anything else, such as a capitalised word, a
 /// digit or the `-2` of `ITAA 1997-2`, does not.
 fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
-    let ending = pyre::re(
-        &format!(r"\s*(?:\Z|[,.;:)\]])|\s+(?:{NAME_ENDING_WORD})"),
-        0,
-    );
+    let word_pattern = name_ending_word();
+    let ending = pyre::re(&format!(r"\s*(?:\Z|[,.;:)\]])|\s+(?:{word_pattern})"), 0);
     let part = pyre::re(r"\s*\((?:[^()\n]|\([^()\n]*\))*\)", 0);
     let join = pyre::re(r"\s+(?:and|or)(?:\s+the)?\s+", 0);
-    let word = pyre::re(NAME_ENDING_WORD, 0);
+    let word = pyre::re(&word_pattern, 0);
     let name = pyre::re(&cited(), 0);
     loop {
+        end += text[end..].len() - text[end..].trim_start_matches('*').len();
         if ending.match_at(text, end).is_some() {
             return true;
         }
@@ -118,6 +124,29 @@ fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>
             return false;
         }
         end = next.end();
+    }
+}
+
+/// The title a citation names: `own` for a bare citation or one `of this Act`,
+/// otherwise by exact name or through a listed abbreviation that ends its name.
+fn cited_title(
+    text: &str,
+    end: usize,
+    act: Option<&str>,
+    own: Option<&str>,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let Some(written) = act else {
+        return own.map(str::to_string);
+    };
+    match ABBREVIATIONS
+        .iter()
+        .find(|(abbreviation, _)| *abbreviation == written)
+    {
+        // A blocked abbreviation stays unresolved rather than reach a wrong title.
+        Some(_) if !ends_name(text, end, &lookup) => None,
+        Some((_, name)) => lookup(name),
+        None => lookup(written),
     }
 }
 
@@ -839,18 +868,7 @@ fn insert_row(
             .and_then(|(_, v)| v.clone())
     };
     for (kind, cited, act, citation, end) in citations(&text) {
-        let target = match &act {
-            None => Some(rid.to_string()),
-            Some(written) => match ABBREVIATIONS
-                .iter()
-                .find(|(abbreviation, _)| *abbreviation == written.as_str())
-            {
-                // A blocked abbreviation stays unresolved rather than reach a wrong title.
-                Some(_) if !ends_name(&text, end, lookup) => None,
-                Some((_, name)) => lookup(name),
-                None => lookup(written),
-            },
-        };
+        let target = cited_title(&text, end, act.as_deref(), Some(rid), lookup);
         run(
             connection,
             "INSERT INTO refs VALUES (?,?,?,?,?,?)",
@@ -1168,6 +1186,249 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
     ]))
 }
 
+/// What `cite-check` calls a citation, in the order its summary lists them.
+const OUTCOMES: [&str; 7] = [
+    "resolved",
+    "assumed",
+    "container_level",
+    "ambiguous",
+    "multi_section",
+    "not_held",
+    "superseded",
+];
+/// The 3 that let `cite-check` exit 0.
+const CLEAN_OUTCOMES: [&str; 3] = ["resolved", "assumed", "container_level"];
+/// Stands in for the register ID of a name two titles share, so the name still counts
+/// as held.
+const SHARED_NAME: &str = "";
+
+/// A full stop, or the like, that ends a sentence, or a blank line. A stop after a listed
+/// lower-case abbreviation does not, and anything unsure runs on: the wider scan is safer.
+const SENTENCE_END: &str = r"(?<!\bcf)(?<!\bviz)(?<!\betc)(?<!\be\.g)(?<!\bi\.e)(?<!\breg)(?<!\bregs)[.!?](?=\s+[A-Z(]|\s*\Z)|\n\s*\n";
+
+/// What may follow `this` and stay in the title.
+const THIS_PROVISION: &str = "Act|Division|Subdivision|Part|Schedule|Chapter|division|subdivision|part|schedule|chapter|section|subsection";
+
+/// Anything in a sentence that may name a source. `this` provisions and numbered
+/// provisions are skipped first; then any capitalised word counts, as do `of the` and
+/// `of this` phrases and the listed instrument words.
+/// shortcut: the instrument words are a fixed list. What it misses stays `assumed`.
+fn source_pattern() -> String {
+    format!(
+        r"\bthis\s+(?:{THIS_PROVISION})\b|\b(?:Sections?|Subsections?|Paragraphs?|Subparagraphs?|Divisions?|Subdivisions?|Parts?|Schedules?|Chapters?)\s+[0-9IVX][0-9A-Z-]*\b|(?P<source>(?<![A-Za-z0-9])[A-Z]|\bof\s+(?:the\s+[a-z]|that\b)|\b(?:of|in|under)\s+this\s+(?!(?:{THIS_PROVISION})\b)|(?<![A-Za-z0-9])(?:{SOURCE_WORDS})(?![A-Za-z0-9]))"
+    )
+}
+
+/// Whether the sentence around a citation ending at `end` may name a source, so that
+/// `--title` cannot stand in for the Act. A sentence's own capitalised first word does
+/// not count, but `ITAA 1936 section 8-1` opens with a name and does.
+fn sentence_names_a_source(draft: &str, end: usize) -> bool {
+    let (mut start, mut stop) = (0, draft.len());
+    for found in pyre::re(SENTENCE_END, 0).captures_iter(draft) {
+        let boundary = found.get(0).expect("group 0");
+        if boundary.end() <= end {
+            start = boundary.end();
+        } else {
+            stop = boundary.start();
+            break;
+        }
+    }
+    let sentence = &draft[start..stop];
+    let opening = pyre::re(r"\W*[A-Z]?[a-z]*\b", 0)
+        .match_at(sentence, 0)
+        .map_or(0, |found| found.get(0).expect("group 0").end());
+    pyre::re(&source_pattern(), 0)
+        .captures_iter(&sentence[opening..])
+        .any(|found| found.name("source").is_some())
+}
+
+const CITE_CHECK_NOTICE: &str = "A resolved citation names its Act and a provision this build holds. An \
+assumed citation names no Act in its sentence, so it shows only that --title holds the \
+provision, not that the author meant that title. Neither shows \
+that the provision says what the draft claims or applied at any date. Current and \
+superseded are this build's record from the Register, not a check today; a later amendment can \
+outdate them. Forms refs does \
+not read, such as s 8-1, are not counted.";
+
+/// The register ID `title` gives, refused unless the index holds it.
+fn given_title(connection: &Connection, title: Option<&str>) -> Result<Option<String>, Exc> {
+    let Some(t) = title.filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    let rid = register_id_str(t)?;
+    let sql = "SELECT 1 FROM titles WHERE register_id = ?";
+    if rows_of(connection, sql, &[Sql::Text(rid.clone())])?.is_empty() {
+        return Err(refused(format!("{rid} is not in the index")));
+    }
+    Ok(Some(rid))
+}
+
+/// Each title name and its register ID. Two titles sharing a name leave a citation of
+/// that name ambiguous, not absent, so the name maps to `SHARED_NAME`.
+fn title_names(connection: &Connection) -> Result<BTreeMap<String, String>, Exc> {
+    let mut names = BTreeMap::new();
+    for row in rows_of(connection, "SELECT name, register_id FROM titles", &[])? {
+        let rid = field(&row, "register_id").as_str().unwrap_or_default();
+        names
+            .entry(field(&row, "name").as_str().unwrap_or_default().to_string())
+            .and_modify(|slot: &mut String| *slot = SHARED_NAME.to_string())
+            .or_insert_with(|| rid.to_string());
+    }
+    Ok(names)
+}
+
+/// The title a citation reaches and, when it cannot reach one, why that is `ambiguous`.
+/// A bare citation reaches `own` only if nothing in its sentence may name a source. A
+/// named title must end where the name does. A name that is not held has no reason.
+fn citation_target(
+    draft: &str,
+    end: usize,
+    act: Option<&str>,
+    own: Option<&str>,
+    names: &BTreeMap<String, String>,
+) -> (Option<String>, Option<&'static str>) {
+    let lookup = |name: &str| names.get(name).cloned();
+    if act.is_some() {
+        if !ends_name(draft, end, lookup) {
+            return (None, None);
+        }
+    } else if own.is_none() {
+        return (None, Some("no title is named"));
+    } else if sentence_names_a_source(draft, end) {
+        return (None, Some("its sentence may name another source"));
+    }
+    match cited_title(draft, end, act, own, lookup) {
+        Some(rid) if rid == SHARED_NAME => (None, Some("2 titles share this name")),
+        target => (target, None),
+    }
+}
+
+/// A row of `rows_of`.
+type Row = Vec<(String, Json)>;
+
+/// The rows a citation reaches in a title, and that title's row.
+fn cited_rows(
+    connection: &Connection,
+    rid: &str,
+    kind: &str,
+    key: &str,
+) -> Result<(Vec<Row>, Option<Row>), Exc> {
+    let title = Sql::Text(rid.to_string());
+    let rows = rows_of(
+        connection,
+        &target_sql(kind),
+        &[title.clone(), Sql::Text(key.to_string())],
+    )?;
+    let sql = "SELECT * FROM titles WHERE register_id = ?";
+    let held = rows_of(connection, sql, &[title])?.into_iter().next();
+    Ok((rows, held))
+}
+
+fn citation_outcome(
+    in_range: bool,
+    no_one_title: bool,
+    rows: usize,
+    current: bool,
+    section: bool,
+    bare: bool,
+) -> &'static str {
+    if in_range {
+        // `citations` reads only the first item of a range.
+        "multi_section"
+    } else if no_one_title {
+        "ambiguous"
+    } else if rows == 0 {
+        "not_held"
+    } else if !current {
+        "superseded"
+    } else if !section && !bare {
+        "container_level"
+    } else if section && rows > 1 {
+        "ambiguous"
+    } else if bare {
+        "assumed"
+    } else {
+        "resolved"
+    }
+}
+
+/// The columns of the cited title that pin a result to the build.
+const TITLE_FIELDS: [&str; 4] = [
+    "compilation_number",
+    "compilation_date",
+    "retrieved",
+    "sections_sha256",
+];
+
+/// One citation found in a draft: kind, key, the Act it names, its text and where it ends.
+type FoundCitation = (String, String, Option<String>, String, usize);
+
+/// The report object for one citation: the outcome, then the rows and build behind it.
+fn citation_report(
+    connection: &Connection,
+    draft: &str,
+    item: FoundCitation,
+    own: Option<&str>,
+    names: &BTreeMap<String, String>,
+    digest: &Json,
+) -> Result<Json, Exc> {
+    let (kind, key, act, citation, end) = item;
+    let (target, reason) = citation_target(draft, end, act.as_deref(), own, names);
+    let (rows, held) = match &target {
+        Some(rid) => cited_rows(connection, rid, &kind, &key)?,
+        None => (Vec::new(), None),
+    };
+    let from_title = |name: &str| held.as_ref().map_or(Json::Null, |t| field(t, name).clone());
+    let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
+    let outcome = citation_outcome(
+        range.match_at(draft, end).is_some(),
+        reason.is_some(),
+        rows.len(),
+        from_title("version_is_current").truthy(),
+        kind == "section",
+        act.is_none(),
+    );
+    let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
+    let reason = reason.or((outcome == "ambiguous").then_some("several rows share this number"));
+    let row_ids = rows.iter().map(|r| field(r, "row_id").clone()).collect();
+    let mut fields = vec![
+        ("line".into(), Json::Int((newlines.count() + 1).into())),
+        ("citation".into(), Json::str(&citation)),
+        ("kind".into(), Json::str(&kind)),
+        ("key".into(), Json::str(&key)),
+        ("cited_act".into(), text_or_null(act)),
+        ("outcome".into(), Json::str(outcome)),
+        ("reason".into(), text_or_null(reason.map(str::to_string))),
+        ("register_id".into(), text_or_null(target)),
+        ("rows".into(), Json::Array(row_ids)),
+    ];
+    for name in TITLE_FIELDS {
+        fields.push((name.into(), from_title(name)));
+    }
+    fields.push(("sources_sha256".into(), digest.clone()));
+    Ok(object(fields))
+}
+
+/// One object per citation in `draft`, in its order, with the outcome and the rows and
+/// build it resolved against. `title` is what a citation naming no title means; without
+/// it that citation is `ambiguous`.
+pub fn cite_check(
+    connection: &Connection,
+    draft: &str,
+    title: Option<&str>,
+) -> Result<Vec<Json>, Exc> {
+    let own = given_title(connection, title)?;
+    let names = title_names(connection)?;
+    let sql = "SELECT value FROM meta WHERE key = 'sources_sha256'";
+    let digest = rows_of(connection, sql, &[])?
+        .first()
+        .map_or(Json::Null, |row| field(row, "value").clone());
+    citations(draft)
+        .into_iter()
+        .map(|item| citation_report(connection, draft, item, own.as_deref(), &names, &digest))
+        .collect()
+}
+
 fn source_line(connection: &Connection) -> Result<String, Exc> {
     let meta = rows_of(connection, "SELECT key, value FROM meta", &[])?;
     let lookup = |key: &str| -> Option<Json> {
@@ -1204,7 +1465,10 @@ fn describe(hit: &Json) -> String {
 
 fn parser() -> Parser {
     Parser::new("python -m fadden search")
-        .description("Build and query a local full-text, definitions and reference index.")
+        .description(
+            "Build and query a local full-text, definitions and reference index. \
+             search cite-check INDEX DRAFT checks a draft's citations against one.",
+        )
         .subcommands("command")
         .sub("build", Some("index a finished corpus root"), |p| {
             p.arg(Action::positional("corpus_root")).arg(
@@ -1250,6 +1514,16 @@ fn parser() -> Parser {
         )
 }
 
+/// Apart from `parser`, whose usage line is frozen by the Python parity fixtures.
+fn cite_check_parser() -> Parser {
+    Parser::new("python -m fadden search cite-check")
+        .description("Report how each citation in a UTF-8 draft resolves against an index.")
+        .arg(Action::positional("index"))
+        .arg(Action::positional("draft"))
+        .arg(Action::option("--title").help("register id to check a citation naming no Act against; it is reported as assumed, never resolved"))
+        .arg(Action::flag("--json").help("print one object per citation"))
+}
+
 fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
     match args.get(key) {
         Some(crate::argparse::Value::List(items)) => items.clone(),
@@ -1258,10 +1532,13 @@ fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
 }
 
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
-    let args = parser().parse(argv)?;
-    let outcome = execute(&args, run);
+    let outcome = if argv.first().is_some_and(|word| word == "cite-check") {
+        execute_cite_check(&cite_check_parser().parse(&argv[1..])?, run)
+    } else {
+        execute(&parser().parse(argv)?, run).map(|()| 0)
+    };
     Ok(match outcome {
-        Ok(()) => 0,
+        Ok(code) => code,
         // `except (SearchIndexError, ValueError, OSError, sqlite3.Error)`.
         Err(error @ (Exc::Value { .. } | Exc::UnicodeEncode(_) | Exc::Os(_) | Exc::Sqlite(_))) => {
             run.eprint(&format!("error: {error}"));
@@ -1269,6 +1546,82 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
         }
         Err(error) => run.uncaught(&error),
     })
+}
+
+/// Up to 5 row ids, then how many more.
+fn shown_rows(rows: &[Json]) -> String {
+    let mut shown: Vec<String> = rows
+        .iter()
+        .take(5)
+        .map(|r| pyvalue::py_str(r.at("row_id")))
+        .collect();
+    if rows.len() > 5 {
+        shown.push(format!("and {} more", rows.len() - 5));
+    }
+    shown.join(", ")
+}
+
+fn outcome_of(item: &Json) -> String {
+    pyvalue::py_str(item.at("outcome"))
+}
+
+fn read_draft(path: &str) -> Result<String, Exc> {
+    let unreadable = |e: OsError| refused(format!("cannot read the draft ({})", strerror(&e)));
+    let bytes = read_all(crate::pyio::open(path).map_err(unreadable)?, path).map_err(unreadable)?;
+    String::from_utf8(bytes).map_err(|_| refused("the draft is not UTF-8 text"))
+}
+
+fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> Result<(), Exc> {
+    for item in report {
+        let s = |k: &str| pyvalue::py_str(item.at(k));
+        let why = item.at("reason").as_str().unwrap_or_default();
+        let rows = match item.at("rows") {
+            Json::Array(ids) => ids
+                .iter()
+                .map(|id| object(vec![("row_id".into(), id.clone())]))
+                .collect(),
+            _ => Vec::new(),
+        };
+        run.print(&format!(
+            "line {}: {}: {}: {}",
+            s("line"),
+            s("outcome"),
+            s("citation"),
+            format!("{} {why}", shown_rows(&rows)).trim()
+        ));
+    }
+    let counted: Vec<String> = OUTCOMES
+        .iter()
+        .map(|name| {
+            let count = report.iter().filter(|i| outcome_of(i) == *name).count();
+            format!("{count} {name}")
+        })
+        .filter(|part| !part.starts_with("0 "))
+        .collect();
+    run.print(&format!(
+        "{} citations: {}. {CITE_CHECK_NOTICE}",
+        report.len(),
+        counted.join(", ")
+    ));
+    run.print(&source_line(connection)?);
+    Ok(())
+}
+
+fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
+    let connection = open_index(&args.str("index").unwrap_or_default())?;
+    let draft = read_draft(&args.str("draft").unwrap_or_default())?;
+    let report = cite_check(&connection, &draft, args.str("title").as_deref())?;
+    if args.flag("json") {
+        for item in &report {
+            run.print_points(&dumps_line(item, false))?;
+        }
+    } else {
+        print_citations(&report, &connection, run)?;
+    }
+    let clean = report
+        .iter()
+        .all(|item| CLEAN_OUTCOMES.contains(&outcome_of(item).as_str()));
+    Ok(i32::from(!clean))
 }
 
 fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> {
@@ -1354,12 +1707,7 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
                         Json::Array(rows) => rows.clone(),
                         _ => Vec::new(),
                     };
-                    let mut shown: Vec<String> =
-                        rows.iter().take(5).map(|r| s(r.at("row_id"))).collect();
-                    if rows.len() > 5 {
-                        shown.push(format!("and {} more", rows.len() - 5));
-                    }
-                    let joined = shown.join(", ");
+                    let joined = shown_rows(&rows);
                     let place = if !joined.is_empty() {
                         joined
                     } else if matches!(reference.at("register_id"), Json::Null) {

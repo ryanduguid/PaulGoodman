@@ -13,6 +13,7 @@ use tax_radar_au::pyjson::{Json, Layout, dumps, loads_standard};
 
 const ACT: &str = "C2099A00001";
 const OTHER: &str = "C2099A00002";
+const ITAA: &str = "C2004A05138";
 const INSTRUMENT: &str = "F2099L00003";
 const NBH: &str = "\u{2011}";
 
@@ -1321,4 +1322,571 @@ fn a_failed_write_leaves_no_staging_file() {
     sources["titles"][0]["collection"] = json!([]);
     std::fs::write(&path, sources.to_string()).unwrap();
     refused(&c, "type 'list' is not supported");
+}
+
+/// (line, key, outcome, row ids) for each citation in `draft`.
+fn checked(
+    connection: &rusqlite::Connection,
+    draft: &str,
+    title: Option<&str>,
+) -> Vec<(u64, String, String, Vec<String>)> {
+    values(search::cite_check(connection, draft, title).unwrap())
+        .iter()
+        .map(|item| {
+            (
+                item["line"].as_u64().unwrap(),
+                item["key"].as_str().unwrap().to_string(),
+                item["outcome"].as_str().unwrap().to_string(),
+                item["rows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.as_str().unwrap().to_string())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn cite_check_gives_each_citation_one_outcome_against_the_build() {
+    let c = case();
+    let connection = built(&c);
+    let draft = [
+        "See section 2-1 of the Sample Levy Act 2099.",
+        "See section 1 of the Sample Levy Act 2099.",
+        "See Division 2 of the Sample Levy Act 2099.",
+        "See section 5 of the Other Sample Act 2099.",
+        "See section 9 of the Sample Levy Act 2099.",
+        "See section 9 of the Fabricated Missing Act 2099.",
+        "See section 2-1.",
+        "See sections 2-1 to 3-1 of the Sample Levy Act 2099.",
+        "See sections 2-1 and 3-1 of the Sample Levy Act 2099.",
+    ]
+    .join("\n");
+    let report = checked(&connection, &draft, None);
+    let outcomes: Vec<(u64, &str, &str)> = report
+        .iter()
+        .map(|(line, key, outcome, _)| (*line, key.as_str(), outcome.as_str()))
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            (1, "2-1", "resolved"),
+            (2, "1", "ambiguous"),
+            (3, "2", "container_level"),
+            (4, "5", "superseded"),
+            (5, "9", "not_held"),
+            (6, "9", "not_held"),
+            (7, "2-1", "ambiguous"),
+            (8, "2-1", "multi_section"),
+            (9, "2-1", "resolved"),
+            (9, "3-1", "resolved"),
+        ]
+    );
+    assert_eq!(report[0].3, [format!("{ACT}:0002:2{NBH}1")]);
+    assert_eq!(report[1].3.len(), 2);
+    assert!(report[4].3.is_empty());
+    let scoped = checked(&connection, "See section 2-1 and section 5.", Some(ACT));
+    assert_eq!(scoped[0].2, "assumed");
+    assert_eq!(scoped[1].2, "not_held");
+}
+
+#[test]
+fn cite_check_pins_each_result_to_the_build() {
+    let c = case();
+    let connection = built(&c);
+    let report = search::cite_check(&connection, "See section 2-1 of the ITAA 1997 Act.", None);
+    assert_eq!(values(report.unwrap())[0]["outcome"], "not_held");
+    let report = search::cite_check(
+        &connection,
+        "See section 2-1 of the Sample Levy Act 2099.",
+        None,
+    );
+    let item = &values(report.unwrap())[0];
+    assert_eq!(item["register_id"], ACT);
+    assert_eq!(item["compilation_number"], "1");
+    assert_eq!(item["compilation_date"], "2099-07-01");
+    assert_eq!(item["retrieved"], "2099-08-01");
+    let digest = |sql: &str| -> String { connection.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        item["sources_sha256"],
+        digest("SELECT value FROM meta WHERE key = 'sources_sha256'")
+    );
+    assert_eq!(
+        item["sections_sha256"],
+        digest("SELECT sections_sha256 FROM titles WHERE register_id = 'C2099A00001'")
+    );
+}
+
+#[test]
+fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
+    let c = case();
+    built(&c);
+    let dir = c.out.parent().unwrap();
+    let clean =
+        "See section 2-1 of the Sample Levy Act 2099 and Division 2 of the Sample Levy Act 2099.";
+    std::fs::write(dir.join("clean.md"), clean).unwrap();
+    std::fs::write(dir.join("empty.md"), "No citations here.").unwrap();
+    std::fs::write(dir.join("bad.md"), "See section 9.").unwrap();
+    std::fs::write(dir.join("binary.md"), [0xff, 0xfe, 0x00]).unwrap();
+    let check = |args: &[&str]| {
+        let mut argv = vec!["cite-check", "index.sqlite"];
+        argv.extend(args);
+        cli(&argv, dir)
+    };
+    let (code, out, _) = check(&["clean.md"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("line 1: resolved: "));
+    assert!(out.contains("2 citations: 1 resolved, 1 container_level."));
+    assert!(out.contains("Neither shows"), "{out}");
+    assert!(out.contains("not a check today"));
+    assert!(out.contains(search::NOTICE));
+    let (code, out, _) = check(&["empty.md"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("0 citations"));
+    let (code, out, _) = check(&["bad.md", "--title", ACT, "--json"]);
+    assert_eq!(code, 1);
+    let item: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(item["outcome"], "not_held");
+    for (args, message) in [
+        (vec!["binary.md"], "not UTF-8"),
+        (vec!["missing.md"], "cannot read the draft"),
+        (
+            vec!["clean.md", "--title", "F2099L00099"],
+            "not in the index",
+        ),
+    ] {
+        let (code, out, err) = check(&args);
+        assert_eq!(code, 1, "{args:?}");
+        assert_eq!(out, "");
+        assert!(err.contains(message), "{err}");
+    }
+    let (code, _, err) = cli(&["cite-check"], dir);
+    assert_eq!(code, 2);
+    assert!(err.contains("python -m fadden search cite-check"));
+}
+
+#[test]
+fn cite_check_calls_a_name_two_titles_share_ambiguous_not_absent() {
+    let c = case();
+    let mut titles = sample_titles();
+    titles.get_mut(OTHER).unwrap().0 = "Sample Levy Act 2099";
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let draft =
+        "See section 2-1 of the Sample Levy Act 2099.\nSee section 9 of the Missing Act 2099.";
+    for title in [None, Some(ACT)] {
+        let report = values(search::cite_check(&connection, draft, title).unwrap());
+        assert_eq!(report[0]["outcome"], "ambiguous");
+        assert_eq!(report[0]["register_id"], Value::Null);
+        assert_eq!(report[1]["outcome"], "not_held");
+    }
+}
+
+#[test]
+fn cite_check_does_not_give_a_name_it_cannot_read_to_the_title_flag() {
+    let c = case();
+    let connection = built(&c);
+    let draft = [
+        "See section 2-1 of the Sample Levy Ordinance.",
+        "See section 2-1 under the Fabricated Code.",
+        "See section 2-1 of that Act.",
+        "See section 2-1 of the regulations.",
+        "See section 2-1 of this Act.",
+        "See section 2-1.",
+    ]
+    .join("\n");
+    let outcomes: Vec<String> = checked(&connection, &draft, Some(ACT))
+        .into_iter()
+        .map(|(_, _, outcome, _)| outcome)
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            "ambiguous",
+            "ambiguous",
+            "ambiguous",
+            "ambiguous",
+            "assumed",
+            "assumed"
+        ]
+    );
+    let inside = checked(&connection, "See section 2-1 in Division 2.", Some(ACT));
+    assert_eq!(inside[0].2, "assumed");
+}
+
+#[test]
+fn cite_check_fails_closed_on_any_source_after_a_citation() {
+    let c = case();
+    let connection = built(&c);
+    for draft in [
+        "See section 2-1 in the regulations.",
+        "See section 2-1 under the regulations.",
+        "See section 2-1 to the regulations.",
+        "See section 2-1 made under the Sample Levy Ordinance.",
+        "See section 2-1 for the purposes of the regulations.",
+        "See section 2-1 within the rules.",
+        "See section 2-1 by the Fabricated Determination.",
+        "See section 2-1 from the Fabricated Code.",
+        "See section 2-1 pursuant to the rules.",
+        "See section 2-1, in the regulations.",
+        "See section 2-1 (in the regulations).",
+        "See section 2-1, Sample Levy Ordinance.",
+        "See section 2-1 Fabricated Code.",
+        "See section 1 in Schedule 1 to the regulations.",
+    ] {
+        let report = checked(&connection, draft, Some(ACT));
+        assert_eq!(report[0].2, "ambiguous", "{draft}");
+        assert!(report[0].3.is_empty(), "{draft}");
+    }
+    for draft in [
+        "Section 2-1 allows a deduction.",
+        "See section 2-1 under this Act.",
+        "See section 2-1 of Part 2.",
+        "See section 2-1, Division 2.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "assumed",
+            "{draft}"
+        );
+    }
+}
+
+#[test]
+fn cite_check_gives_the_title_flag_only_this_act_or_its_provisions() {
+    let c = case();
+    let connection = built(&c);
+    for draft in [
+        "See section 2-1 of this Regulation.",
+        "See section 2-1 in this Instrument.",
+        "See section 2-1 under this Regulation.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "ambiguous",
+            "{draft}"
+        );
+    }
+    for draft in [
+        "See section 2-1 of this Act.",
+        "See section 2-1 under this Act.",
+        "See section 2-1 of this Part.",
+        "See section 2-1 under this Division.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "assumed",
+            "{draft}"
+        );
+    }
+}
+
+#[test]
+fn cite_check_keeps_a_purpose_phrase_with_the_title_flag() {
+    let c = case();
+    let connection = built(&c);
+    for draft in [
+        "See section 2-1 for this purpose.",
+        "See section 2-1 for the purposes of this Act.",
+        "See section 2-1 for the purposes of this Part.",
+        "See section 2-1 for the purposes of this section.",
+        "See section 2-1 for the purposes of Division 2.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "assumed",
+            "{draft}"
+        );
+    }
+    for draft in [
+        "See section 2-1 for this Regulation.",
+        "See section 2-1 for the purposes of this Regulation.",
+        "See section 2-1 for the purposes of the regulations.",
+        "See section 2-1 for the purposes of the Sample Levy Ordinance.",
+    ] {
+        assert_eq!(
+            checked(&connection, draft, Some(ACT))[0].2,
+            "ambiguous",
+            "{draft}"
+        );
+    }
+}
+
+#[test]
+fn cite_check_reads_the_whole_sentence_before_trusting_the_title_flag() {
+    let c = case();
+    let connection = built(&c);
+    let ambiguous = [
+        // Names the citation pattern does not read.
+        "See section 2-1 of the Sample Levy Ordinance.",
+        "See section 2-1 under the Fabricated Code.",
+        "See section 2-1 of that Act.",
+        "See section 2-1 of the regulations.",
+        "See section 2-1 in the regulations.",
+        "See section 2-1 under the regulations.",
+        "See section 2-1 to the regulations.",
+        "See section 2-1 made under the Sample Levy Ordinance.",
+        "See section 2-1 for the purposes of the regulations.",
+        "See section 2-1 for the purposes of the Sample Levy Ordinance.",
+        "See section 2-1 within the rules.",
+        "See section 2-1 by the Fabricated Determination.",
+        "See section 2-1 from the Fabricated Code.",
+        "See section 2-1 pursuant to the rules.",
+        "See section 2-1, in the regulations.",
+        "See section 2-1 (in the regulations).",
+        "See section 2-1, Sample Levy Ordinance.",
+        "See section 2-1 Fabricated Code.",
+        "See section 1 in Schedule 1 to the regulations.",
+        // `this` of something other than the title.
+        "See section 2-1 of this Regulation.",
+        "See section 2-1 in this Instrument.",
+        "See section 2-1 under this Regulation.",
+        "See section 2-1 for this Regulation.",
+        "See section 2-1 for the purposes of this Regulation.",
+        // A harmless phrase before or after a source.
+        "See section 2-1 for this purpose under the Sample Levy Ordinance.",
+        "See section 2-1 for this purpose in the regulations.",
+        "See section 2-1 under the regulations for this purpose.",
+        "See section 2-1 in this section of the Sample Levy Ordinance.",
+        "See section 2-1 for the purposes of this Act and the Sample Levy Rules.",
+        // More than one clause, and a wrapped line.
+        "See section 2-1, which for this purpose applies, as the regulations provide.",
+        "See section 2-1 and, for this purpose, the Fabricated Determination.",
+        "See section 2-1 for this purpose\nunder the rules.",
+        "See section 2-1 (No. 3 of the rules).",
+        // Lower-case instrument words.
+        "See section 2-1 of the ordinance.",
+        "See section 2-1 under the determination.",
+        "See section 2-1 in the instrument.",
+        "See section 2-1 under the order.",
+        "See section 2-1 in the code.",
+        "See section 2-1 in the schedule.",
+        "See section 2-1 of the other act.",
+        "See section 2-1 under the tax laws.",
+        "See section 2-1 under the by-law.",
+        // Harmless, and ambiguous all the same: the safe failure.
+        "See section 2-1 as the Commissioner allows.",
+        "See section 2-1 in order to deduct.",
+        "See section 2-1, the general rule.",
+    ];
+    let assumed = [
+        "See section 2-1 and Section 3-1.",
+        "Section 2-1 allows a deduction.",
+        "See section 2-1.",
+        "See section 2-1 of this Act.",
+        "See section 2-1 under this Act.",
+        "See section 2-1 of this Part.",
+        "See section 2-1 under this Division.",
+        "See section 2-1 in this section.",
+        "See section 2-1 for this purpose.",
+        "See section 2-1 for the purposes of this Act.",
+        "See section 2-1 for the purposes of this Part.",
+        "See section 2-1 for the purposes of this section.",
+        "See section 2-1 for the purposes of Division 2.",
+        "See section 2-1 in Division 2.",
+        "See section 2-1, Division 2.",
+        "See section 2-1 to deduct a cost.",
+        "See section 2-1. The Sample Levy Ordinance differs.",
+        "See section 2-1\n\nSample Levy Ordinance",
+    ];
+    let wrong: Vec<(&str, String)> = ambiguous
+        .iter()
+        .map(|draft| (*draft, "ambiguous"))
+        .chain(assumed.iter().map(|draft| (*draft, "assumed")))
+        .filter_map(|(draft, want)| {
+            let got = checked(&connection, draft, Some(ACT)).remove(0).2;
+            (got != want).then_some((draft, got))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// `sample_titles` plus a title the reference abbreviations reach.
+fn cited_corpus(c: &Case) -> rusqlite::Connection {
+    let mut titles = sample_titles();
+    let section = format!("2{NBH}1");
+    let rows = vec![row(
+        ITAA,
+        1,
+        Some(&section),
+        "A sample.",
+        "2-1 Sample",
+        None,
+    )];
+    titles.insert(ITAA, ("Income Tax Assessment Act 1997", rows));
+    write_corpus(&c.root, &titles, &[]);
+    build(c);
+    search::open_index(&s(&c.out)).unwrap()
+}
+
+#[test]
+fn cite_check_never_resolves_a_citation_that_names_no_act() {
+    let c = case();
+    let connection = cited_corpus(&c);
+    let ambiguous = [
+        "See section 2-1 of the regs.",
+        "See section 2-1 of the bill.",
+        "See section 2-1 of the constitution.",
+        "See section 2-1 of this report.",
+        "See section 2-1 of this agreement.",
+        "Paragraph 2-1 of the judgment.",
+        "See Division 2 of the regs.",
+        "See section 2-1; cf. Sample Levy Ordinance 2000.",
+        "See section 2-1 (cf. Smith v Jones).",
+        "See section 2-1, e.g. Sample Levy Ordinance 2000.",
+        "See section 2-1, i.e. Sample Levy Ordinance 2000.",
+        "See section 2-1, viz. Sample Levy Ordinance 2000.",
+        "See section 2-1, etc. Sample Levy Ordinance 2000.",
+        "See section 2-1 at reg. Sample Levy Ordinance 2000.",
+        "ITAA 1936 section 2-1.",
+        "Corporations Act 2001 section 2-1.",
+        "See section 5 of the Other Sample Act 2099 and section 2-1.",
+        "See section 2-1 of the ITAA 1997 and section 3-1.",
+        "See section 2-1 of the _ITAA 1936_.",
+        "See section 2-1 of the _Regulations_.",
+        "See section 2-1 of the _Income Tax Assessment Act 1997_ regulations.",
+        "See section 2-1 of the _ITAA 1997_ bill.",
+        "Section 2-1 allows a deduction for GST.",
+    ];
+    let assumed = [
+        "See section 2-1.",
+        "See section 2-1 of this Act.",
+        "See Division 2.",
+        "- See section 2-1.",
+        "See section 2-1 of no. 38 of 1936.",
+        "See section 2-1 of \u{c9}ire.",
+        "See section 2-1\n\nof the regulations.",
+    ];
+    let not_held = [
+        "See section 2-1 of the Income Tax Assessment Act 1997 Regulations.",
+        "See section 2-1 of the Income Tax Assessment Act 1997 Amendment Act 2100.",
+        "See section 2-1 of the Sample Levy Act 2099 Rules.",
+        "See section 2-1 of the ITAA 1997 regulations.",
+        "See section 2-1 of the ITAA 1997 bill.",
+        "See section 2-1 of the *Income Tax Assessment Act 1997* regulations.",
+        "See section 2-1 of the *ITAA 1997* bill.",
+        "See section 2-1 of the *Income Tax Assessment Act 1997* Regulations.",
+        "See section 2-1 of the Income Tax Assessment Act 1997 bill.",
+        "See section 2-1 of the Sample Levy Act 2099 ruling.",
+    ];
+    let named = [
+        "See section 2-1 of the Sample Levy Act 2099.",
+        "See section 2-1 of the Income Tax Assessment Act 1997.",
+        "See section 2-1 of the ITAA 1997.",
+        "See section 2-1 of the *Income Tax Assessment Act 1997*.",
+    ];
+    let wrong: Vec<(&str, String)> = [
+        (&ambiguous[..], "ambiguous"),
+        (&assumed[..], "assumed"),
+        (&not_held[..], "not_held"),
+        (&named[..], "resolved"),
+    ]
+    .into_iter()
+    .flat_map(|(drafts, want)| drafts.iter().map(move |draft| (*draft, want)))
+    .filter_map(|(draft, want)| {
+        let got = checked(&connection, draft, Some(ACT)).pop().unwrap().2;
+        (got != want).then_some((draft, got))
+    })
+    .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    let report = values(search::cite_check(&connection, ambiguous[8], Some(ACT)).unwrap());
+    assert_eq!(report[0]["reason"], "its sentence may name another source");
+    let report = values(search::cite_check(&connection, "See section 2-1.", None).unwrap());
+    assert_eq!(report[0]["outcome"], "ambiguous");
+    assert_eq!(report[0]["reason"], "no title is named");
+    let draft = "See section 1 of the Sample Levy Act 2099.";
+    let report = values(search::cite_check(&connection, draft, None).unwrap());
+    assert_eq!(report[0]["outcome"], "ambiguous");
+    assert_eq!(report[0]["reason"], "several rows share this number");
+}
+
+#[test]
+fn cite_check_counts_assumed_and_exits_0_on_it() {
+    let c = case();
+    built(&c);
+    let dir = c.out.parent().unwrap();
+    std::fs::write(dir.join("bare.md"), "See section 2-1.").unwrap();
+    let (code, out, _) = cli(
+        &["cite-check", "index.sqlite", "bare.md", "--title", ACT],
+        dir,
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("line 1: assumed: "), "{out}");
+    assert!(out.contains("1 citations: 1 assumed."), "{out}");
+    assert!(!out.contains(": resolved: "), "{out}");
+}
+
+/// The real-law question set: (query words, Register ID, section, form).
+fn reference_questions() -> Vec<[&'static str; 4]> {
+    include_str!("fixtures/retrieval_real_law.tsv")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            <[&str; 4]>::try_from(fields).unwrap_or_else(|_| panic!("4 fields: {line}"))
+        })
+        .collect()
+}
+
+#[test]
+fn the_real_law_question_set_is_well_formed() {
+    let questions = reference_questions();
+    assert_eq!(questions.len(), 46);
+    let unique: std::collections::BTreeSet<&str> = questions.iter().map(|q| q[0]).collect();
+    assert_eq!(unique.len(), questions.len());
+    let register_id_form = regex::Regex::new(r"^[CF]\d{4}[AL]\d{5}$").unwrap();
+    for [query, register_id, section, form] in questions {
+        assert!(!query.trim().is_empty());
+        assert!(register_id_form.is_match(register_id));
+        assert!(!section.is_empty());
+        assert!(["base", "inflected"].contains(&form), "{form}");
+    }
+}
+
+/// Counts only. Point `FADDEN_REFERENCE_INDEX` at an index of the set's titles; the
+/// baseline and the corpus it came from are in docs/build-evidence.md.
+#[test]
+#[ignore = "requires FADDEN_REFERENCE_INDEX naming an index built from real titles"]
+fn reference_questions_on_a_real_index() {
+    let index = std::env::var("FADDEN_REFERENCE_INDEX").expect("set FADDEN_REFERENCE_INDEX");
+    let connection = search::open_index(&index).unwrap();
+    let mut results = BTreeMap::<&str, Vec<(Option<usize>, bool)>>::new();
+    for [query, register_id, section, form] in reference_questions() {
+        let words: Vec<String> = query.split_whitespace().map(str::to_string).collect();
+        let hits = values(search::query(&connection, &words, None, 10).unwrap());
+        let rank = hits.iter().position(|hit| {
+            hit["register_id"] == register_id
+                && hit["section"]
+                    .as_str()
+                    .is_some_and(|found| search::section_key(found) == section)
+        });
+        results
+            .entry(form)
+            .or_default()
+            .push((rank, hits.is_empty()));
+    }
+    for (form, ranks) in results {
+        let hit = |n: usize| {
+            ranks
+                .iter()
+                .filter(|(rank, _)| rank.is_some_and(|r| r < n))
+                .count()
+        };
+        let reciprocal: f64 = ranks
+            .iter()
+            .filter_map(|(rank, _)| rank.map(|r| 1.0 / (r + 1) as f64))
+            .sum();
+        println!(
+            "{form}: {} queries, hit at 1 {}, hit at 5 {}, hit at 10 {}, mean reciprocal rank {:.3}, no results {}",
+            ranks.len(),
+            hit(1),
+            hit(5),
+            hit(10),
+            reciprocal / ranks.len() as f64,
+            ranks.iter().filter(|(_, empty)| *empty).count()
+        );
+    }
 }

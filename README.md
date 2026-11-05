@@ -67,7 +67,7 @@ The corpus builder (`python -m fadden`) produces retrieval material from Commonw
 
 How-to:
 
-- [Pipeline commands and operating boundaries](BUILD.md)
+- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`. A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty
 - [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md): checksum and SLSA provenance
 
 Reference:
