@@ -12,7 +12,9 @@ use tax_radar_au::fadden::Run;
 use tax_radar_au::fadden::http::{Failure, Http, RETRY_DELAY, Request, Response};
 use tax_radar_au::fadden::rulings::{
     self, BASE_URL, MAX_BYTES, MAX_TARGETS, NOTICE, Parsed, RulingsError, TargetsError,
+    WITHDRAWAL_WARNING, withdrawal_lines,
 };
+use tax_radar_au::pyjson::loads_standard;
 use tax_radar_au::pypath::PyPath;
 
 const DOCID: &str = "TXR/TR20991/NAT/ATO/00001";
@@ -908,4 +910,31 @@ fn main_reports_an_invalid_target_list() {
         "rulings: targets must be a JSON array of docid strings\n"
     );
     assert!(!dir.path().join("out").exists());
+}
+
+#[test]
+fn a_captured_notice_is_reported_with_what_it_leaves_open() {
+    let record = |docid: &str, status: &str, notice: &str| {
+        loads_standard(
+            &json!({"docid": docid, "withdrawal_status": status, "withdrawal_notice": notice})
+                .to_string(),
+        )
+        .unwrap()
+    };
+    let documents = [
+        record(
+            "TXR/1",
+            "NOTICE_PRESENT",
+            "This fabricated ruling is withdrawn.",
+        ),
+        record("TXR/2", "UNKNOWN", ""),
+    ];
+    assert_eq!(
+        withdrawal_lines(&documents),
+        [
+            "  withdrawal notice in TXR/1: This fabricated ruling is withdrawn.",
+            WITHDRAWAL_WARNING,
+        ]
+    );
+    assert!(withdrawal_lines(&documents[1..]).is_empty());
 }
