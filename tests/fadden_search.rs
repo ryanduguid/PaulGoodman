@@ -1893,7 +1893,7 @@ fn reference_questions_on_a_real_index() {
 
 /// Fabricated text for the quotation tests, in section 7-1 of the sample Act, shaped
 /// like a Register row: a defined-term asterisk, list marks and a non-breaking hyphen.
-const QUOTED: &str = "(1) You may claim the *sample offset for a year\u{2019}s widget levy if:\n\n- (a) the widget costs less than $1.50; or\n\n- (b) the taxpayers\u{2019} widgets are nondeductible.\n\nThe \u{fb01}nal amount is worked out under non\u{2011}widget rules.";
+const QUOTED: &str = "(1) You may claim the *sample offset for a year\u{2019}s widget levy if:\n\n- (a) the widget costs less than $1.50; or\n\n- (b) the taxpayers\u{2019} widgets are nondeductible.\n\nThe \u{fb01}nal amount is worked out under non\u{2011}widget rules. The cap is $18,200 a year. The rate is 10% for the 2019\u{2013}20 year, or 1/2 of it. Apply a factor of 5*3 for the purposes of this Act.";
 const AT: &str = "Section 7-1 of the Sample Levy Act 2099";
 
 fn quoted_case() -> (Case, rusqlite::Connection) {
@@ -1901,6 +1901,12 @@ fn quoted_case() -> (Case, rusqlite::Connection) {
     let mut titles = sample_titles();
     let quoted = row(ACT, 6, Some("7-1"), QUOTED, "7-1 Offset", None);
     titles.get_mut(ACT).unwrap().1.push(quoted);
+    let stock = format!("A gizmo counts for the purposes of this Act and is non{NBH}widget stock.");
+    let stock = row(ACT, 7, Some("7-2"), &stock, "7-2 Gizmos", None);
+    titles.get_mut(ACT).unwrap().1.push(stock);
+    let plural = "Widgets count for the purposes of this Acts register only.";
+    let plural = row(ACT, 8, Some("7-3"), plural, "7-3 Registers", None);
+    titles.get_mut(ACT).unwrap().1.push(plural);
     write_corpus(&c.root, &titles, &[]);
     build(&c);
     let connection = search::open_index(&s(&c.out)).unwrap();
@@ -1984,7 +1990,7 @@ fn a_quotation_that_differs_in_case_or_stops_inside_a_word_or_number_is_not_matc
         ("deductible", "none"),
         ("costs less than $1", "none"),
         ("50; or", "none"),
-        ("a year", "none"),
+        ("for a year", "none"),
         ("widget rules", "none"),
         ("the widget costs more", "none"),
         ("the widget costs less than $1.05", "partial"),
@@ -2149,13 +2155,11 @@ fn cite_check_exits_0_only_on_exact_and_normalised_quotations_and_prints_each() 
         "{AT} says \"the widget costs\" and \"the sample offset\"."
     ));
     assert_eq!(code, 0, "{out}");
-    assert!(
-        out.contains("  quotation exact: the widget costs\n"),
-        "{out}"
-    );
-    let line = "  quotation normalised: the sample offset\n";
+    let line = "  quotation exact, not distinct, 0 other rows hold it: the widget costs\n";
     assert!(out.contains(line), "{out}");
-    let line = "2 quotations beside citations: 1 exact, 1 normalised.\n";
+    let line = "  quotation normalised, not distinct, 0 other rows hold it: the sample offset\n";
+    assert!(out.contains(line), "{out}");
+    let line = "2 quotations, 2 comparisons with citations: 1 exact, 1 normalised.\n";
     assert!(out.contains(line), "{out}");
     assert!(out.contains("not that they are fairly quoted"), "{out}");
     let (code, out, _) = check(format!("{AT} says \"an invented phrase\"."));
@@ -2168,6 +2172,208 @@ fn cite_check_exits_0_only_on_exact_and_normalised_quotations_and_prints_each() 
     assert_eq!(code, 1);
     let line = "  quotation partial, longest run 5 of 8 words: amount";
     assert!(out.contains(line), "{out}");
-    let line = "1 quotations beside citations: 1 partial.\n";
+    let line = "1 quotations, 1 comparisons with citations: 1 partial.\n";
     assert!(out.contains(line), "{out}");
+}
+
+/// One citation's quotations as JSON.
+fn quotations_at(connection: &rusqlite::Connection, draft: &str) -> Vec<Value> {
+    let report = values(search::cite_check(connection, draft, None).unwrap());
+    report[0]["quotations"].as_array().unwrap().clone()
+}
+
+#[test]
+fn a_quotation_stopping_on_punctuation_inside_a_number_is_not_matched() {
+    let (_c, connection) = quoted_case();
+    for (quote, grade) in [
+        ("the widget costs less than $1.50", "exact"),
+        ("the widget costs less than $1.", "partial"),
+        ("cap is $18,200", "exact"),
+        ("cap is $18,", "none"),
+        // Each of these reaches `normalised` if the number's edge is not checked there.
+        ("cap\u{a0}is $18,", "none"),
+        ("the widget costs\u{a0}less than $1.", "partial"),
+        (".50; or", "none"),
+    ] {
+        let draft = format!("{AT} says \"{quote}\".");
+        assert_eq!(grade_of(&connection, &draft), grade, "{quote}");
+    }
+}
+
+#[test]
+fn a_quotation_stopping_before_a_percentage_year_or_fraction_is_not_matched() {
+    let (_c, connection) = quoted_case();
+    for (quote, grade) in [
+        ("The rate is 10%", "exact"),
+        ("The rate is 10", "none"),
+        ("for the 2019\u{2013}20 year", "exact"),
+        ("for the 2019", "none"),
+        ("20 year, or 1/2 of it", "partial"),
+        ("or 1/2 of it", "exact"),
+        ("or 1", "none"),
+    ] {
+        let draft = format!("{AT} says \"{quote}\".");
+        assert_eq!(grade_of(&connection, &draft), grade, "{quote}");
+    }
+}
+
+#[test]
+fn a_possessive_after_the_citation_does_not_lose_a_single_quotation() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    for draft in [
+        "'no widget is ever levied' is what section 7-1 of the Sample Levy Act 2099 says about the taxpayers' widgets.",
+        "'no widget is ever levied' is what section 7-1 of the Sample Levy Act 2099 says. The taxpayers' widgets differ.",
+    ] {
+        let found = graded(&connection, draft, None);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].1, "resolved");
+        assert_eq!(found[0].3, "none");
+        std::fs::write(dir.join("draft.md"), draft).unwrap();
+        assert_eq!(cli(&["cite-check", "index.sqlite", "draft.md"], dir).0, 1);
+    }
+}
+
+#[test]
+fn a_markdown_mark_counts_only_in_the_row() {
+    let (_c, connection) = quoted_case();
+    for quote in ["> $1.50", "- $1.50", "> - $1.50"] {
+        let draft = format!("{AT} says \"{quote}\".");
+        assert_eq!(grade_of(&connection, &draft), "none", "{quote}");
+    }
+}
+
+#[test]
+fn only_an_asterisk_opening_a_word_is_set_aside() {
+    let (_c, connection) = quoted_case();
+    let draft = format!("{AT} says \"Apply a factor of 53 for\".");
+    assert_eq!(grade_of(&connection, &draft), "partial");
+    let draft = format!("{AT} says \"Apply a factor of 5*3 for\".");
+    assert_eq!(grade_of(&connection, &draft), "exact");
+}
+
+#[test]
+fn a_quotation_with_only_its_own_citation_inside_is_listed_uncompared() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let draft = format!("\"{AT} applies\", the note says.");
+    let found = quotations_at(&connection, &draft);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0]["grade"].is_null());
+    assert_eq!(found[0]["reason"], "the citation is inside this quotation");
+    std::fs::write(dir.join("draft.md"), &draft).unwrap();
+    assert_eq!(cli(&["cite-check", "index.sqlite", "draft.md"], dir).0, 1);
+    // With a citation outside it, that one answers and the inner one lists nothing.
+    let draft = format!("Section 2-1 of the Sample Levy Act 2099 is cited in \"{AT} applies\".");
+    let report = values(search::cite_check(&connection, &draft, None).unwrap());
+    assert_eq!(report[0]["quotations"].as_array().unwrap().len(), 1);
+    assert_eq!(report[1]["quotations"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn the_summary_counts_a_quotation_once_and_prints_it_on_one_line() {
+    let (c, _connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let draft = "Sections 2-1 and 7-1 of the Sample Levy Act 2099 say \"widget attracts\nthe sample levy\".";
+    std::fs::write(dir.join("draft.md"), draft).unwrap();
+    let (_, out, _) = cli(&["cite-check", "index.sqlite", "draft.md"], dir);
+    let line = "1 quotations, 2 comparisons with citations: 1 normalised, 1 none.\n";
+    assert!(out.contains(line), "{out}");
+    assert!(out.contains(": widget attracts the sample levy\n"), "{out}");
+}
+
+#[test]
+fn a_flood_of_opening_marks_reports_a_bounded_text_for_each() {
+    let (_c, connection) = quoted_case();
+    let draft = format!("{AT} says {}", "\"a ".repeat(3000));
+    let found = quotations_at(&connection, &draft);
+    assert_eq!(found.len(), 3000);
+    let longest = found.iter().map(|q| q["quote"].as_str().unwrap().len());
+    assert_eq!(longest.max(), Some(200));
+    assert!(found.iter().all(|q| q["grade"].is_null()));
+}
+
+#[test]
+fn a_held_quotation_reports_how_many_other_rows_hold_it() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    // A stock phrase: rows 7-1 and 7-2 hold it, and row 7-3's `Acts` is another word.
+    let stock = quotations_at(
+        &connection,
+        &format!("{AT} says \"for the purposes of this Act\"."),
+    );
+    assert_eq!(stock[0]["grade"], "exact");
+    assert_eq!(stock[0]["other_rows"], 1);
+    assert_eq!(stock[0]["distinct"], false);
+    // A fold counts in another row as it does in the row reached.
+    let folded = quotations_at(&connection, &format!("{AT} says \"non-widget\"."));
+    assert_eq!(folded[0]["grade"], "normalised");
+    assert_eq!(folded[0]["other_rows"], 1);
+    // No other row, but under the floor.
+    let short = quotations_at(&connection, &format!("{AT} says \"the widget costs\"."));
+    assert_eq!(short[0]["other_rows"], 0);
+    assert_eq!(short[0]["quote_words"], 3);
+    assert_eq!(short[0]["distinct"], false);
+    // No other row, and at the floor of 10 words.
+    let ten = "for a year\u{2019}s widget levy if: (a) the widget costs";
+    let long = quotations_at(&connection, &format!("{AT} says \"{ten}\"."));
+    assert_eq!(long[0]["quote_words"], 10);
+    assert_eq!(long[0]["other_rows"], 0);
+    assert_eq!(long[0]["distinct"], true, "{long:?}");
+    let nine = "a year\u{2019}s widget levy if: (a) the widget costs";
+    let draft = format!("{AT} says \"{nine}\".");
+    assert_eq!(quotations_at(&connection, &draft)[0]["quote_words"], 9);
+    assert_eq!(quotations_at(&connection, &draft)[0]["distinct"], false);
+    // Neither is reported without a held quotation, and neither changes the exit status.
+    for quote in [
+        "amount is worked out under some other rules",
+        "an invented phrase",
+    ] {
+        let found = quotations_at(&connection, &format!("{AT} says \"{quote}\"."));
+        assert!(found[0]["other_rows"].is_null(), "{found:?}");
+        assert!(found[0]["distinct"].is_null(), "{found:?}");
+    }
+    let draft = format!("{AT} says \"for the purposes of this Act\".");
+    std::fs::write(dir.join("draft.md"), draft).unwrap();
+    let (code, out, _) = cli(&["cite-check", "index.sqlite", "draft.md"], dir);
+    assert_eq!(code, 0, "{out}");
+    let line = "  quotation exact, not distinct, 1 other rows hold it: for the purposes";
+    assert!(out.contains(line), "{out}");
+}
+
+/// Prints, for each length of word run, how many runs in the rows of a real index only
+/// one row holds. The floor and the build it came from are in docs/build-evidence.md.
+#[test]
+#[ignore = "requires FADDEN_REFERENCE_INDEX naming an index built from real titles"]
+fn distinct_floor_on_a_real_index() {
+    use std::collections::HashMap;
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let index = std::env::var("FADDEN_REFERENCE_INDEX").expect("set FADDEN_REFERENCE_INDEX");
+    let connection = search::open_index(&index).unwrap();
+    let mut statement = connection
+        .prepare("SELECT text FROM rows ORDER BY id")
+        .unwrap();
+    let rows: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .map(|text| tax_radar_au::fadden::quotes::folded_row(&text.unwrap()))
+        .collect();
+    let rows: Vec<Vec<&str>> = rows.iter().map(|r| r.split(' ').collect()).collect();
+    for length in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 20, 24, 30, 40] {
+        let mut seen = HashMap::<u64, (usize, usize, bool)>::new();
+        let mut total = 0;
+        for (number, words) in rows.iter().enumerate() {
+            for run in words.windows(length) {
+                total += 1;
+                let mut hasher = DefaultHasher::new();
+                run.hash(&mut hasher);
+                let entry = seen.entry(hasher.finish()).or_insert((number, 0, false));
+                entry.1 += 1;
+                entry.2 |= entry.0 != number;
+            }
+        }
+        let alone: usize = seen.values().filter(|e| !e.2).map(|e| e.1).sum();
+        let share = 100.0 * alone as f64 / total as f64;
+        println!("{length} words: {total} runs, {alone} in one row only, {share:.2}%");
+    }
 }

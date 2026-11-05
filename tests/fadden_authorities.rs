@@ -269,6 +269,38 @@ fn a_withdrawal_in_any_capture_leaves_the_ruling_out() {
 }
 
 #[test]
+fn a_withdrawal_under_another_docid_leaves_the_id_out() {
+    let export = rulings(&file(&[
+        ruling("TXR/1", "TR 2099/1 - Fabricated", "NOTICE_PRESENT"),
+        ruling("TXR/2", "TR 2099/1 - Fabricated", "UNKNOWN"),
+        ruling("TXR/3", "TR 2099/2 - Fabricated", "UNKNOWN"),
+    ]));
+    assert_eq!(listed(&export), ["TR 2099/2"]);
+    let line = "ruling id TR 2099/1: another document with it is withdrawn";
+    assert!(
+        export.skipped.iter().any(|s| s == line),
+        "{:?}",
+        export.skipped
+    );
+}
+
+#[test]
+fn a_withdrawal_status_the_stage_never_writes_stops_the_export() {
+    for line in [
+        json!({"docid": "TXR/1", "title": "TR 2099/1"}).to_string(),
+        ruling("TXR/1", "TR 2099/1", "withdrawn"),
+        ruling("TXR/1", "TR 2099/1", ""),
+    ] {
+        let mut export = Export::default();
+        let error = add_rulings(&file(&[line]), &mut export).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "rulings.jsonl:1 has no withdrawal status the rulings stage writes"
+        );
+    }
+}
+
+#[test]
 fn a_malformed_rulings_row_stops_the_export() {
     for (line, message) in [
         ("not json".to_string(), "rulings.jsonl:2 is not JSON"),
@@ -360,8 +392,54 @@ fn nothing_to_export_writes_no_file() {
     let (code, _, stderr) = fadden(&[&s(&case.index), "--out", &s(&out)]);
     assert_eq!(
         (code, stderr.as_str()),
-        (1, "error: nothing to export: no entry the gate can read\n")
+        (
+            1,
+            "error: nothing to export: no section the gate can read\n"
+        )
     );
+    assert!(!out.exists());
+}
+
+#[test]
+fn rulings_alone_or_an_empty_rulings_file_write_no_file() {
+    let good = ruling("TXR/1", "TR 2099/1 - Fabricated", "UNKNOWN");
+    let case = indexed(&[act("F2099L00001", "Sample Levy Rules 2099")]);
+    let out = case.dir.path().join("authorities.json");
+    let list = case.dir.path().join("rulings.jsonl");
+    std::fs::write(&list, &good).unwrap();
+    let (code, _, stderr) = fadden(&[&s(&case.index), "--out", &s(&out), "--rulings", &s(&list)]);
+    assert_eq!(
+        (code, stderr.as_str()),
+        (
+            1,
+            "error: nothing to export: no section the gate can read\n"
+        )
+    );
+    assert!(!out.exists());
+    let case = indexed(&[act("C2099A00001", "Sample Levy Act 2099")]);
+    let out = case.dir.path().join("authorities.json");
+    let list = case.dir.path().join("rulings.jsonl");
+    for empty in ["", "\n  \n"] {
+        std::fs::write(&list, empty).unwrap();
+        let (code, _, stderr) =
+            fadden(&[&s(&case.index), "--out", &s(&out), "--rulings", &s(&list)]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.ends_with("has no rulings rows\n"), "{stderr}");
+        assert!(!out.exists());
+    }
+}
+
+#[test]
+fn an_index_without_its_provenance_writes_no_file() {
+    let case = indexed(&[act("C2099A00001", "Sample Levy Act 2099")]);
+    let out = case.dir.path().join("authorities.json");
+    let connection = rusqlite::Connection::open(&case.index).unwrap();
+    connection
+        .execute("DELETE FROM meta WHERE key = 'sources_sha256'", [])
+        .unwrap();
+    drop(connection);
+    let (code, _, stderr) = fadden(&[&s(&case.index), "--out", &s(&out)]);
+    assert_eq!(code, 1, "{stderr}");
     assert!(!out.exists());
 }
 

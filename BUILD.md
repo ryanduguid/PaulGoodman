@@ -510,19 +510,31 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   a citation's sentence. Each citation lists its own under `quotations`, and each
   is graded against the one row a `resolved` or `assumed` section reached,
   case-sensitively and by whole words, so `deductible` is not found in
-  `nondeductible`, nor `$1` in `$1.50`.
+  `nondeductible`, nor `$1` or `$1.` in `$1.50`, `10` in `10%`, `2019` in `2019–20`
+  or `1` in `1/2`.
 
   | Grade | Meaning |
   | --- | --- |
   | `exact` | The quotation's characters appear unchanged in the row |
-  | `normalised` | They appear once both are folded: Unicode compatibility forms (NFKC), the Register's non-breaking hyphen, curly quotation marks and apostrophes, white space, the asterisk before a defined term and the Markdown mark opening a line |
+  | `normalised` | They appear once both are folded: Unicode compatibility forms (NFKC), the Register's non-breaking hyphen, curly quotation marks and apostrophes, white space and the asterisk opening a defined term, and, in the row only, the Markdown mark opening a line |
   | `partial` | Neither, but at least 4 consecutive quotation words match. `matched_words` and `quote_words` give the longest run |
   | `none` | None of these |
 
   A quotation with `grade` `null` was not compared, and `reason` says why: the
   citation reached no one section, as with `not_held`, `superseded`, a Division or
-  a range, or the quotation has no closing mark before a blank line. It is never
-  reported as `none`, which is a comparison that failed.
+  a range; the quotation has no closing mark before a blank line, when the first
+  200 characters are shown; or the citation is inside the quotation and no citation
+  outside it is beside it. It is never reported as `none`, which is a comparison
+  that failed. `start` is the quotation's byte offset in the draft, and the summary
+  counts each quotation once and each comparison with a citation.
+
+  A quotation the section holds, whole, also reports `other_rows`: how many other
+  rows in the index hold it, by the same test, across every title. `distinct` is
+  true when that is 0 and the quotation has at least 10 words, a floor measured on
+  one build ([build evidence](docs/build-evidence.md)). Neither changes the exit
+  status. A stock phrase can be `exact` in the cited section and in many others, so
+  `distinct` is the stronger sign that the words came from this section. It is not
+  proof: a build holding fewer titles has fewer rows to repeat them.
 
   Know these limits before relying on a grade:
 
@@ -535,7 +547,9 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   - An empty `quotations` does not show the sentence quotes nothing that matters.
     A block quotation, unmarked wording and a quotation in another sentence are not
     read, and a quotation beside a form `refs` does not read has no citation to
-    answer to.
+    answer to. A sentence ends at a stop, `!` or `?` before a capital or `(`, or at a
+    blank line, so a quotation opening the next sentence with its mark is read with
+    the citation before it.
   - With `--title`, a capitalised word in a quotation may name another source, so
     the citation is `ambiguous` and its quotation is not compared.
   - Each quotation in a sentence is compared with each citation in it, so
@@ -543,8 +557,11 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
     inside its closing mark, as in `"...income." Section 8-5`, runs on into the next,
     with the same effect.
   - A single closing mark looks like an apostrophe, so a single quotation closes at
-    the last candidate before the next opening mark. That can only read too much and
-    lower a grade: `the taxpayers' income` never stops at `taxpayers`.
+    the last candidate before the next opening mark in the paragraph:
+    `the taxpayers' income` never stops at `taxpayers`. That can read past the
+    author's closing mark, even past the citation, which lowers a grade. It never
+    drops the quotation: one with several candidates is compared with any citation it
+    runs over.
 
   A sentence that never names the Act cannot prove which Act it means, so a bare
   citation is never `resolved`, even `of this Act`. With `--title` it is `assumed`:
@@ -668,14 +685,17 @@ the gate cannot read would make it refuse the whole file, so these are left out:
   decision impact statement or edited private advice, and any ruling carrying a
   withdrawal notice in any capture.
 
-If nothing remains, it stops with exit 1 and writes no file, because the gate refuses an
-empty list.
+It stops with exit 1 and writes no file if no section remains, because a list of rulings
+alone would send every section a draft cites to review, if a `--rulings` file has no rows,
+or if a row carries a `withdrawal_status` the `rulings` stage does not write.
 
 Know these limits before relying on a result:
 
 - A listed authority exists in this build. That is all it shows: not that the section
   was the law on the draft's date or says what the draft claims. A ruling with no
-  notice (`UNKNOWN`) is not thereby current.
+  notice (`UNKNOWN`) is not thereby current. A withdrawn document's id comes from its
+  title, so a withdrawn capture with an empty title cannot take another document's
+  listing of that id out.
 - The gate compares citations exactly, and the list holds whole sections, so `s 8-1(1)`
   is not `s 8-1` and goes to review. So does `s 8-1 ITAA 1997`: the gate reads an Act
   named in full only.

@@ -128,12 +128,17 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
 }
 
 /// Each ruling id named at the start of a captured document's title. `files` holds
-/// each `rulings.jsonl` with the path to report; a row the stage could not have
-/// written stops the export. A document withdrawn in any capture is left out.
+/// each `rulings.jsonl` with the path to report; a file with no rows, or a row the
+/// stage could not have written, stops the export. An id with a withdrawal notice in
+/// any capture of any document is left out.
 pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<(), Exc> {
     let mut documents: BTreeMap<String, (String, bool)> = BTreeMap::new();
     for (path, text) in files {
-        for (index, line) in py::splitlines(text).into_iter().enumerate() {
+        let lines = py::splitlines(text);
+        if lines.iter().all(|line| py::strip(line).is_empty()) {
+            return Err(Exc::value(format!("{path} has no rulings rows")));
+        }
+        for (index, line) in lines.into_iter().enumerate() {
             if py::strip(line).is_empty() {
                 continue;
             }
@@ -147,22 +152,41 @@ pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<()
             let document = documents
                 .entry(docid.to_string())
                 .or_insert_with(|| (title.to_string(), false));
-            document.1 |= field("withdrawal_status") == Some("NOTICE_PRESENT");
+            let status = field("withdrawal_status");
+            if !matches!(status, Some("UNKNOWN" | "NOTICE_PRESENT")) {
+                return Err(Exc::value(format!(
+                    "{place} has no withdrawal status the rulings stage writes"
+                )));
+            }
+            document.1 |= status == Some("NOTICE_PRESENT");
         }
     }
     let id = pattern(&format!(r"^({SERIES})\s+({RULING_ID})(?:\s|$)"));
+    let mut withdrawn_ids = BTreeSet::new();
     for (docid, (title, withdrawn)) in documents {
-        match id.captures(&title) {
-            _ if withdrawn => export
-                .skipped
-                .push(format!("ruling {docid}: it carries a withdrawal notice")),
-            Some(found) => {
-                let series = py::split_whitespace(&found[1]).join(" ");
-                export.rulings.insert(format!("{series} {}", &found[2]));
+        let read = id.captures(&title).map(|found| {
+            let series = py::split_whitespace(&found[1]).join(" ");
+            format!("{series} {}", &found[2])
+        });
+        if withdrawn {
+            withdrawn_ids.extend(read);
+            let reason = format!("ruling {docid}: it carries a withdrawal notice");
+            export.skipped.push(reason);
+            continue;
+        }
+        match read {
+            Some(ruling) => {
+                export.rulings.insert(ruling);
             }
             None => export.skipped.push(format!(
                 "ruling {docid}: its title does not start with an id the gate reads"
             )),
+        }
+    }
+    for ruling in withdrawn_ids {
+        if export.rulings.remove(&ruling) {
+            let reason = format!("ruling id {ruling}: another document with it is withdrawn");
+            export.skipped.push(reason);
         }
     }
     Ok(())
@@ -227,10 +251,22 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
         files.push((path, text));
     }
     add_rulings(&files, &mut export)?;
-    if export.sections.is_empty() && export.rulings.is_empty() {
-        // The gate refuses an empty list, so no file can help.
-        return Err(Exc::value("nothing to export: no entry the gate can read"));
+    if export.sections.is_empty() {
+        // A list of rulings alone would send every section a draft cites to review.
+        return Err(Exc::value(
+            "nothing to export: no section the gate can read",
+        ));
     }
+    let meta = |key: &str| {
+        connection.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+    };
+    let source = format!(
+        "From the index of the corpus retrieved {}, sources.json sha256 {}.",
+        meta("corpus_retrieved").map_err(|e| sqlite(&e))?,
+        meta("sources_sha256").map_err(|e| sqlite(&e))?
+    );
     let out = args.str("out").unwrap_or_default();
     write_new(&out, &render(&export))?;
     for line in &export.skipped {
@@ -241,16 +277,7 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
         export.sections.len(),
         export.rulings.len()
     ));
-    let meta = |key: &str| {
-        connection.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
-            row.get::<_, String>(0)
-        })
-    };
-    run.print(&format!(
-        "From the index of the corpus retrieved {}, sources.json sha256 {}.",
-        meta("corpus_retrieved").map_err(|e| sqlite(&e))?,
-        meta("sources_sha256").map_err(|e| sqlite(&e))?
-    ));
+    run.print(&source);
     for digest in &digests {
         run.print(digest);
     }

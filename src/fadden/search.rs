@@ -1204,6 +1204,10 @@ const CLEAN_OUTCOMES: [&str; 3] = ["resolved", "assumed", "container_level"];
 const GRADES: [&str; 4] = ["exact", "normalised", "partial", "none"];
 /// The 2 that let `cite-check` exit 0.
 const CLEAN_GRADES: [&str; 2] = ["exact", "normalised"];
+/// The shortest quotation called `distinct`, in words. The share of word runs of each
+/// length that only one row holds is in docs/build-evidence.md; this is the first length
+/// at which 4 in 5 did on that build. It is a measurement of that build, not a guarantee.
+const DISTINCT_FLOOR_WORDS: usize = 10;
 /// Stands in for the register ID of a name two titles share, so the name still counts
 /// as held.
 const SHARED_NAME: &str = "";
@@ -1260,7 +1264,7 @@ provision, not that the author meant that title. Neither shows \
 that the provision says what the draft claims or applied at any date. A quotation is read \
 only in quotation marks in the citation's sentence, and only against a resolved or assumed \
 section. Exact and normalised show those words are in that row of this build, not that they \
-are fairly quoted, authorised text or the law at any date. Current and \
+are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source. Current and \
 superseded are this build's record from the Register, not a check today; a later amendment can \
 outdate them. Forms refs does \
 not read, such as s 8-1, are not counted.";
@@ -1378,54 +1382,105 @@ const TITLE_FIELDS: [&str; 4] = [
 /// One citation found in a draft: kind, key, the Act it names, its text and where it ends.
 type FoundCitation = (String, String, Option<String>, String, usize);
 
-/// The report object for one quotation. `text` is the row to grade it against; without
-/// one, or without a closing mark, it has no grade, because nothing was compared.
-fn quotation_report(quotation: &Quotation, text: Option<&str>) -> Json {
-    let (grade, words, reason) = match text {
-        _ if !quotation.closed => (None, None, Some("it has no closing mark")),
-        None => (None, None, Some("the citation reached no one section")),
-        Some(text) => {
-            let (grade, words) = quotes::grade(&quotation.text, text);
-            (Some(grade), words, None)
-        }
+/// How many rows other than `row_id` hold all of `quote`. FTS finds the rows with its
+/// words in order, and `quotes::grade` then applies the same test as the row reached.
+fn other_rows(connection: &Connection, quote: &str, row_id: &str) -> Result<usize, Exc> {
+    let sql = "SELECT r.row_id, r.text FROM rows_fts JOIN rows r ON r.id = rows_fts.rowid \
+               WHERE rows_fts MATCH ?";
+    let phrase = format!("text : {}", match_expression(&[quote.to_string()])?);
+    let found = rows_of(connection, sql, &[Sql::Text(phrase)])?;
+    let other = |row: &&Row| {
+        field(row, "row_id").as_str() != Some(row_id)
+            && quotes::grade(quote, field(row, "text").as_str().unwrap_or_default()).held()
     };
-    let count = |n: Option<usize>| n.map_or(Json::Null, |n| Json::Int(n.into()));
-    object(vec![
+    Ok(found.iter().filter(other).count())
+}
+
+/// Why a quotation was not compared, or `None` if it can be.
+fn not_compared(quotation: &Quotation, row: Option<&Json>, end: usize) -> Option<&'static str> {
+    if !quotation.closed {
+        Some("it has no closing mark")
+    } else if quotation.surrounds(end) {
+        Some("the citation is inside this quotation")
+    } else if row.is_none() {
+        Some("the citation reached no one section")
+    } else {
+        None
+    }
+}
+
+/// The report object for one quotation beside a citation ending at `end`. `row` is the
+/// row the citation reached. A quotation not compared has no grade and a reason.
+fn quotation_report(
+    connection: &Connection,
+    quotation: &Quotation,
+    row: Option<&Json>,
+    end: usize,
+) -> Result<Json, Exc> {
+    let mut report = vec![
         ("quote".into(), Json::str(&quotation.text)),
-        ("grade".into(), text_or_null(grade.map(str::to_string))),
+        ("start".into(), Json::Int(quotation.start.into())),
+    ];
+    let count = |n: Option<usize>| n.map_or(Json::Null, |n| Json::Int(n.into()));
+    let reason = not_compared(quotation, row, end);
+    let (mut grade, mut matched, mut words, mut others, mut distinct) =
+        (Json::Null, None, None, None, Json::Null);
+    if let (None, Some(row)) = (reason, row) {
+        let row_id = row.as_str().unwrap_or_default();
+        let sql = "SELECT text FROM rows WHERE row_id = ?";
+        let held = rows_of(connection, sql, &[Sql::Text(row_id.to_string())])?;
+        let text = held.first().and_then(|r| field(r, "text").as_str());
+        let found = quotes::grade(&quotation.text, text.unwrap_or_default());
+        grade = Json::str(found.grade);
+        (matched, words) = (found.matched_words, Some(found.quote_words));
+        if found.held() {
+            let others_found = other_rows(connection, &quotation.text, row_id)?;
+            others = Some(others_found);
+            let long_enough = found.quote_words >= DISTINCT_FLOOR_WORDS;
+            distinct = Json::Bool(others_found == 0 && long_enough);
+        }
+    }
+    report.extend([
+        ("grade".into(), grade),
         ("reason".into(), text_or_null(reason.map(str::to_string))),
-        ("matched_words".into(), count(words.map(|w| w.0))),
-        ("quote_words".into(), count(words.map(|w| w.1))),
-    ])
+        ("matched_words".into(), count(matched)),
+        ("quote_words".into(), count(words)),
+        ("other_rows".into(), count(others)),
+        ("distinct".into(), distinct),
+    ]);
+    Ok(object(report))
+}
+
+/// A draft's quotations, and each citation's end with the sentence around it.
+struct DraftQuotes {
+    all: Vec<Quotation>,
+    citations: Vec<(usize, (usize, usize))>,
 }
 
 /// Each quotation in the sentence around a citation ending at `end`, compared with `row`
 /// if there is one. A citation inside a quotation is what is quoted, not its source, so
-/// that quotation is left out.
+/// it does not answer for that quotation if another citation beside it can; if none can,
+/// the quotation is listed uncompared rather than lost.
 fn sentence_quotations(
     connection: &Connection,
     draft: &str,
     end: usize,
-    all: &[Quotation],
+    quotes: &DraftQuotes,
     row: Option<&Json>,
 ) -> Result<Json, Exc> {
-    let (start, stop) = sentence_around(draft, end);
-    let beside = |q: &&Quotation| {
-        q.start < stop && start < q.end && !(q.closed && q.start < end && end <= q.end)
-    };
-    let near: Vec<&Quotation> = all.iter().filter(beside).collect();
-    let mut text = None;
-    if let Some(row_id) = row.filter(|_| !near.is_empty()) {
-        let sql = "SELECT text FROM rows WHERE row_id = ?";
-        let id = Sql::Text(row_id.as_str().unwrap_or_default().to_string());
-        let held = rows_of(connection, sql, &[id])?;
-        text = held
-            .first()
-            .and_then(|r| field(r, "text").as_str())
-            .map(str::to_string);
+    if quotes.all.is_empty() {
+        return Ok(Json::Array(Vec::new()));
     }
-    let reports = near.iter().map(|q| quotation_report(q, text.as_deref()));
-    Ok(Json::Array(reports.collect()))
+    let sentence = sentence_around(draft, end);
+    let answered = |q: &Quotation| {
+        let outside = |c: &&(usize, (usize, usize))| !q.surrounds(c.0) && q.in_sentence(c.1);
+        quotes.citations.iter().find(outside).is_some()
+    };
+    let near = quotes.all.iter().filter(|q| q.in_sentence(sentence));
+    let reports = near
+        .filter(|q| !(q.surrounds(end) && answered(q)))
+        .map(|q| quotation_report(connection, q, row, end));
+    Ok(Json::Array(reports.collect::<Result<_, _>>()?))
 }
 
 /// The report object for one citation: the outcome, then the rows and build behind it.
@@ -1436,7 +1491,7 @@ fn citation_report(
     own: Option<&str>,
     names: &BTreeMap<String, String>,
     digest: &Json,
-    all_quotes: &[Quotation],
+    quotes: &DraftQuotes,
 ) -> Result<Json, Exc> {
     let (kind, key, act, citation, end) = item;
     let (target, reason) = citation_target(draft, end, act.as_deref(), own, names);
@@ -1458,8 +1513,8 @@ fn citation_report(
     let reason = reason.or((outcome == "ambiguous").then_some("several rows share this number"));
     let row_ids: Vec<Json> = rows.iter().map(|r| field(r, "row_id").clone()).collect();
     let graded = matches!(outcome, "resolved" | "assumed") && kind == "section";
-    let row = row_ids.first().filter(|_| graded && row_ids.len() == 1);
-    let quotations = sentence_quotations(connection, draft, end, all_quotes, row)?;
+    let row = row_ids.first().filter(|_| graded);
+    let quotations = sentence_quotations(connection, draft, end, quotes, row)?;
     let mut fields = vec![
         ("line".into(), Json::Int((newlines.count() + 1).into())),
         ("citation".into(), Json::str(&citation)),
@@ -1493,12 +1548,19 @@ pub fn cite_check(
     let digest = rows_of(connection, sql, &[])?
         .first()
         .map_or(Json::Null, |row| field(row, "value").clone());
-    let all_quotes = quotes::quotations(draft);
-    citations(draft)
+    let found = citations(draft);
+    let all = quotes::quotations(draft);
+    let spans = |item: &FoundCitation| (item.4, sentence_around(draft, item.4));
+    let spans = found.iter().filter(|_| !all.is_empty()).map(spans);
+    let draft_quotes = DraftQuotes {
+        citations: spans.collect(),
+        all,
+    };
+    found
         .into_iter()
         .map(|item| {
             let own = own.as_deref();
-            citation_report(connection, draft, item, own, &names, &digest, &all_quotes)
+            citation_report(connection, draft, item, own, &names, &digest, &draft_quotes)
         })
         .collect()
 }
@@ -1649,8 +1711,19 @@ fn quotations_of(item: &Json) -> &[Json] {
 
 fn print_quotation(quotation: &Json, run: &mut Run) {
     let s = |key: &str| pyvalue::py_str(quotation.at(key));
-    let quote = s("quote");
+    let quote = crate::py::split_whitespace(&s("quote")).join(" ");
     let line = match quotation.at("grade").as_str() {
+        Some(grade @ ("exact" | "normalised")) => {
+            let distinct = if quotation.at("distinct").truthy() {
+                "distinct"
+            } else {
+                "not distinct"
+            };
+            format!(
+                "  quotation {grade}, {distinct}, {} other rows hold it: {quote}",
+                s("other_rows")
+            )
+        }
         Some("partial") => format!(
             "  quotation partial, longest run {} of {} words: {quote}",
             s("matched_words"),
@@ -1690,10 +1763,10 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             print_quotation(quotation, run);
         }
     }
-    let all_quotes: Vec<&Json> = report.iter().flat_map(quotations_of).collect();
-    if !all_quotes.is_empty() {
+    let pairs: Vec<&Json> = report.iter().flat_map(quotations_of).collect();
+    if !pairs.is_empty() {
         let count = |grade: Option<&str>| {
-            all_quotes
+            pairs
                 .iter()
                 .filter(|q| q.at("grade").as_str() == grade)
                 .count()
@@ -1704,9 +1777,14 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             .collect();
         parts.push(format!("{} not compared", count(None)));
         parts.retain(|part| !part.starts_with("0 "));
+        let quotes: BTreeSet<String> = pairs
+            .iter()
+            .map(|q| pyvalue::py_str(q.at("start")))
+            .collect();
         run.print(&format!(
-            "{} quotations beside citations: {}.",
-            all_quotes.len(),
+            "{} quotations, {} comparisons with citations: {}.",
+            quotes.len(),
+            pairs.len(),
             parts.join(", ")
         ));
     }
