@@ -1360,11 +1360,14 @@ const TITLE_FIELDS: [&str; 4] = [
     "sections_sha256",
 ];
 
+/// One citation found in a draft: kind, key, the Act it names, its text and where it ends.
+type FoundCitation = (String, String, Option<String>, String, usize);
+
 /// The report object for one citation: the outcome, then the rows and build behind it.
 fn citation_report(
     connection: &Connection,
     draft: &str,
-    item: (String, String, Option<String>, String, usize),
+    item: FoundCitation,
     own: Option<&str>,
     names: &BTreeMap<String, String>,
     digest: &Json,
