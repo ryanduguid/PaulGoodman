@@ -14,7 +14,6 @@ use tax_radar_au::fadden::rulings::{
     self, BASE_URL, MAX_BYTES, MAX_TARGETS, NOTICE, Parsed, RulingsError, TargetsError,
     WITHDRAWAL_WARNING,
 };
-use tax_radar_au::pyjson::loads_standard;
 use tax_radar_au::pypath::PyPath;
 
 const DOCID: &str = "TXR/TR20991/NAT/ATO/00001";
