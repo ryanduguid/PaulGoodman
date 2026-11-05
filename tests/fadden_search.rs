@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{Value, json};
-use tax_radar_au::fadden::search;
+use tax_radar_au::fadden::{quotes, search};
 use tax_radar_au::pyjson::{Json, Layout, dumps, loads_standard};
 
 const ACT: &str = "C2099A00001";
@@ -2409,6 +2409,33 @@ fn a_space_after_an_opening_mark_does_not_hide_a_quotation() {
     assert_eq!(found[0]["grade"], "exact");
     assert_eq!(found[0]["quote"], "the widget costs");
     assert_eq!(found[0]["start"], AT.len() + 6);
+    // Such a mark also bounds a single quotation already open.
+    for lead in [" ", " ("] {
+        let quote = format!("' the widget costs' and{lead}' less than'");
+        let found = quotations_at(&connection, &draft(&quote));
+        assert_eq!(found[0]["quote"], "the widget costs", "{quote}");
+        assert_eq!(found[1]["quote"], "less than", "{quote}");
+    }
+    // The mark can touch the punctuation that introduces it, or stand a space after it.
+    let invented = "Section 7-1 of the Sample Levy Act 2099 says:' invented words'.";
+    let introduced = ["' ", "\" ", "\u{2018} ", "\u{201c} "].map(|open| {
+        let close = match open {
+            "\u{2018} " => '\u{2019}',
+            "\u{201c} " => '\u{201d}',
+            _ => open.chars().next().unwrap(),
+        };
+        [":", ",", ": ", ", "].map(|lead| format!("{AT} says{lead}{open}invented words{close}."))
+    });
+    for draft in std::iter::once(invented.to_string()).chain(introduced.into_iter().flatten()) {
+        std::fs::write(dir.join("draft.md"), &draft).unwrap();
+        let (code, out, _) = cli(&["cite-check", "index.sqlite", "draft.md"], dir);
+        assert_eq!(code, 1, "{draft}: {out}");
+        assert_eq!(
+            quotations_at(&connection, &draft)[0]["grade"],
+            "none",
+            "{draft}"
+        );
+    }
     // A mark closing before a space, or standing alone, is not lost either.
     for quote in [
         "\"invented words \"",
@@ -2436,12 +2463,17 @@ fn a_closing_or_possessive_mark_does_not_open_a_quotation() {
         assert_eq!(cli(&["cite-check", "index.sqlite", "draft.md"], dir).0, 0);
     }
     // Punctuation before a closing mark and a space after it leaves it a closing mark.
-    let draft = format!("{AT} says 'the widget costs,' and 'less than'.");
-    let quotes: Vec<String> = graded(&connection, &draft, None)
-        .into_iter()
-        .map(|found| found.2)
-        .collect();
-    assert_eq!(quotes, ["the widget costs,", "less than"]);
+    for stop in [",", ".", ":"] {
+        let draft = format!("{AT} says 'the widget costs{stop}' and 'less than'.");
+        let quotes: Vec<String> = graded(&connection, &draft, None)
+            .into_iter()
+            .map(|found| found.2)
+            .collect();
+        assert_eq!(
+            quotes,
+            [format!("the widget costs{stop}"), "less than".into()]
+        );
+    }
 }
 
 #[test]
@@ -2502,4 +2534,75 @@ fn other_rows_reads_a_quotation_holding_a_double_mark() {
     let found = quotations_at(&connection, &draft).remove(0);
     assert_eq!(found["grade"], "exact");
     assert_eq!(found["other_rows"], 1);
+}
+
+/// Rows in the forms `other_rows` and `quotes::grade` might read differently.
+const FORMS: [&str; 18] = [
+    "the final non-widget amount",
+    "the \u{fb01}nal non\u{2011}widget amount",
+    "the\u{a0}final  non\u{2010}widget\namount",
+    "the \u{ff46}inal non-widget amount",
+    "the final *non-widget amount",
+    "The Final Non-Widget Amount",
+    "the f\u{ed}nal non-widget amount",
+    "levy \u{f0b7} then the return",
+    "levy \u{f0b7} then the return",
+    "levy then the return",
+    "the taxpayer's \"widget\" rate",
+    "the taxpayer\u{2019}s \u{201c}widget\u{201d} rate",
+    "a 5\" widget (see NEAR AND OR NOT) ^ rate",
+    "a 5\" widget (see NEAR AND OR NOT) ^ rate",
+    "$1.50 at 10% of 5*3: rate",
+    "$1.50 at 10% of 53: rate",
+    "- (a) the first thing\n> Note: a rule",
+    "(a) the first thing Note: a rule",
+];
+
+#[test]
+fn other_rows_agrees_with_grading_every_indexed_row() {
+    let c = case();
+    let mut titles = sample_titles();
+    let rows = &mut titles.get_mut(ACT).unwrap().1;
+    for (ordinal, text) in (6..).zip(FORMS) {
+        let section = format!("8-{ordinal}");
+        rows.push(row(ACT, ordinal, Some(&section), text, &section, None));
+    }
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let mut statement = connection.prepare("SELECT row_id, text FROM rows").unwrap();
+    let read = |row: &rusqlite::Row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?));
+    let indexed: Vec<(String, String)> = statement
+        .query_map([], read)
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    let (mut compared, mut repeated) = (0, 0);
+    for quote in FORMS {
+        let (open, close) = [('"', '"'), ('\u{201c}', '\u{201d}')]
+            .into_iter()
+            .find(|(open, close)| !quote.contains([*open, *close]))
+            .unwrap();
+        for (ordinal, text) in (6..).zip(FORMS) {
+            if !quotes::grade(quote, text).held() {
+                continue;
+            }
+            let id = format!("{ACT}:{ordinal:04}:8-{ordinal}");
+            let holds = |(other, text): &&(String, String)| {
+                *other != id && quotes::grade(quote, text).held()
+            };
+            let draft = format!(
+                "Section 8-{ordinal} of the Sample Levy Act 2099 says {open}{quote}{close}."
+            );
+            let found = quotations_at(&connection, &draft).remove(0);
+            assert_eq!(found["quote"], quote);
+            let expected = indexed.iter().filter(holds).count();
+            assert_eq!(found["other_rows"], expected, "{quote} in 8-{ordinal}");
+            compared += 1;
+            repeated += usize::from(expected > 0);
+        }
+    }
+    // Each form must have reached the comparison, or the test proves nothing.
+    assert!(compared >= FORMS.len(), "{compared} compared");
+    assert!(repeated >= 8, "{repeated} repeated");
 }
