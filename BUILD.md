@@ -588,6 +588,60 @@ rows indexed in about 5 seconds into a 77 MB file, with 8,426 definition
 paragraphs and 62,224 section, Division and Subdivision references. Keep the index with the corpus it
 came from and out of git; rebuild it after any corpus rebuild.
 
+## Exporting an authorities list
+
+`python -m fadden authorities` writes the closed list that `gate --authorities` in
+[llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails) reads, so that
+gate can check a draft's citations against your build. Run it on your own build; the
+file describes that build and, like an index, stays out of git. It makes no request.
+
+```bash
+python -m fadden authorities search.sqlite --out authorities.json --rulings rulings-run/rulings.jsonl
+```
+
+`--out` must not exist. `--rulings` is optional; repeat it for each `rulings` run. The
+file holds one key, the only one the gate accepts:
+
+```json
+{
+  "authorities": [
+    "TR 2022/1",
+    "s 8-1 of the Income Tax Assessment Act 1997"
+  ]
+}
+```
+
+So provenance goes to stdout: the `sources.json` digest, each rulings file's digest and
+a `skipped` line for every title, row or document left out, with its reason. An entry
+the gate cannot read would make it refuse the whole file, so these are left out:
+
+- a title whose name the gate does not read as an Act: every legislative and notifiable
+  instrument, and of the 175 Acts in `fadden/titles_principal.json`, 9 such as
+  `Taxation (Deficit Reduction) Act (No. 3) 1993`;
+- a title sharing its name with another, or whose compilation is not the current one in
+  this build;
+- a numbered row directly under a Schedule, which is a clause or item and not a section,
+  such as the items in Schedules 1 and 2 of the GST Act;
+- a section label the gate does not read;
+- a ruling whose title does not start with an id in the gate's series, such as a
+  decision impact statement or edited private advice, and any ruling carrying a
+  withdrawal notice in any capture.
+
+If nothing remains, it stops with exit 1 and writes no file, because the gate refuses an
+empty list.
+
+Know these limits before relying on a result:
+
+- A listed authority exists in this build. That is all it shows: not that the section
+  was the law on the draft's date or says what the draft claims. A ruling with no
+  notice (`UNKNOWN`) is not thereby current.
+- The gate compares citations exactly, and the list holds whole sections, so `s 8-1(1)`
+  is not `s 8-1` and goes to review. So does `s 8-1 ITAA 1997`: the gate reads an Act
+  named in full only.
+- A section is listed by its label in the title. A provision in a Schedule with its own
+  Divisions, such as Schedule 1 to the *Taxation Administration Act 1953*, is listed as
+  a section of the Act, and `container` cannot show which Schedule it sits in.
+
 ## Witnessing section structure
 
 `extract` takes each title's section structure from the EPUB alone, so a section
@@ -719,7 +773,7 @@ From an empty checkout, run the stages in order. Stage names are unchanged;
 the dispatcher lives at `python -m fadden <stage>`. Intermediate JSON files
 are written beside the stage modules under `fadden/`.
 
-The `as_at`, `compare_builds`, `discover`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles`, `extract`, `finalize`, `pii_scan`, `pii_scan2`, `probe13`, `rates`, `rulings`, `search` and `versions` stages are the Rust `fadden` binary, built
+The `as_at`, `authorities`, `compare_builds`, `discover`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles`, `extract`, `finalize`, `pii_scan`, `pii_scan2`, `probe13`, `rates`, `rulings`, `search` and `versions` stages are the Rust `fadden` binary, built
 with `cargo build --locked --release`; the dispatcher runs it with the same
 arguments and the binary keeps their command lines, messages and exit
 statuses. `FADDEN_BIN` names another build of it. An exception those Python

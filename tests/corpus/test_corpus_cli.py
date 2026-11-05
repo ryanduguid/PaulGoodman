@@ -137,6 +137,7 @@ class FaddenCliTests(unittest.TestCase):
                 "as_at",
                 "compare_builds",
                 "search",
+                "authorities",
                 "witness",
             ),
         )

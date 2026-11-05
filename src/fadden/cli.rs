@@ -5,9 +5,9 @@
 use std::io::Write;
 
 use super::{
-    Run, as_at, capture_register, compare_builds, discover, dist, dist_verify, extract, finalize,
-    live_evidence, monitor_contract, pii_scan, probe13, publication_bundles, rates, rulings,
-    search, versions, witness,
+    Run, as_at, authorities, capture_register, compare_builds, discover, dist, dist_verify,
+    extract, finalize, live_evidence, monitor_contract, pii_scan, probe13, publication_bundles,
+    rates, rulings, search, versions, witness,
 };
 use crate::argparse::Exit;
 
@@ -15,8 +15,9 @@ use crate::argparse::Exit;
 /// `capture_register` and `export_live_evidence_bundles` are here for
 /// verification only: `python -m fadden` still runs their Python stages,
 /// which the publication workflow uses.
-pub const STAGES: [&str; 19] = [
+pub const STAGES: [&str; 20] = [
     "as_at",
+    "authorities",
     "capture_register",
     "compare_builds",
     "discover",
@@ -37,7 +38,7 @@ pub const STAGES: [&str; 19] = [
     "witness",
 ];
 
-const USAGE: &str = "usage: fadden {as_at,capture_register,compare_builds,discover,dist,dist_verify,export_live_evidence_bundles,export_monitor_contract,export_publication_bundles,extract,finalize,pii_scan,pii_scan2,probe13,rates,rulings,search,versions,witness} [arguments ...]\n";
+const USAGE: &str = "usage: fadden {as_at,authorities,capture_register,compare_builds,discover,dist,dist_verify,export_live_evidence_bundles,export_monitor_contract,export_publication_bundles,extract,finalize,pii_scan,pii_scan2,probe13,rates,rulings,search,versions,witness} [arguments ...]\n";
 
 /// Text-mode output: newlines become the platform's line separator.
 fn text_mode(bytes: &[u8]) -> Vec<u8> {
@@ -60,6 +61,7 @@ pub fn main(argv: &[String]) -> i32 {
     let mut run = Run::default();
     let outcome = match argv.split_first() {
         Some((stage, rest)) if stage == "as_at" => as_at::main(rest, &mut run),
+        Some((stage, rest)) if stage == "authorities" => authorities::main(rest, &mut run),
         Some((stage, rest)) if stage == "capture_register" => {
             capture_register::main(rest, &mut run)
         }
