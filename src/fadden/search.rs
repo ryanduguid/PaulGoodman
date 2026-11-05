@@ -1246,13 +1246,16 @@ fn source_follows(citation: &str, after: &str) -> bool {
         .is_some_and(|found| found.name("source").is_some())
 }
 
+/// A row of `rows_of`.
+type Row = Vec<(String, Json)>;
+
 /// The rows a citation reaches in a title, and that title's row.
 fn cited_rows(
     connection: &Connection,
     rid: &str,
     kind: &str,
     key: &str,
-) -> Result<(Vec<Vec<(String, Json)>>, Option<Vec<(String, Json)>>), Exc> {
+) -> Result<(Vec<Row>, Option<Row>), Exc> {
     let title = Sql::Text(rid.to_string());
     let rows = rows_of(
         connection,
