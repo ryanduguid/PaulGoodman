@@ -556,7 +556,7 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   abbreviation ending a paragraph or table row before text that opens with a
   capital or a number also stays unresolved. `refs` does not check an exact title
   this way; `cite-check` does, so `Sample Levy Act 2099 Rules` is `not_held`. A
-  word such as `regulations` or `rules` after a name carries it on.
+  source word such as `bill`, `regulations` or `rules` after a name carries it on.
 
   Measured on 4 November 2026 with `fadden search build` over a corpus that
   holds every title in `fadden/manifest_md.json`, with the EPUB text of 5 Acts

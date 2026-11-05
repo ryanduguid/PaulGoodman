@@ -70,25 +70,30 @@ fn cited() -> String {
     )
 }
 
-/// A lower-case word other than `and`, `or` or a regulations or rules word, or a provision
-/// word: either may follow a name without carrying it on.
-const NAME_ENDING_WORD: &str = r"(?!(?:and|or|regs?|regulations?|rules?)\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b";
+/// Lower-case words that name a source, in a sentence or straight after a title's name.
+const SOURCE_WORDS: &str = "bills?|regs?|regulations?|rules?|ordinances?|determinations?|instruments?|orders?|codes?|schedules?|acts?|laws?|legislation|statutes?|by-?laws?|rulings?|enactments?|treaty|treaties";
+
+/// A lower-case word other than `and`, `or` or a source word, or a provision word: either
+/// may follow a name without carrying it on.
+fn name_ending_word() -> String {
+    format!(
+        r"(?!(?:and|or|{SOURCE_WORDS})\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b"
+    )
+}
 
 /// Whether an abbreviation ending at `end` ends its name there, rather than begin a
 /// longer one such as `ITAA 1997 Amendment Act 2025`. After any whitespace, line breaks
 /// included, only these may follow: the end of the text; `,` `.` `;` `:` `)` `]` or `*`; a
-/// `NAME_ENDING_WORD`; a parenthesised part, then any of these; or `and` or `or`
-/// (optionally `the`) before a `NAME_ENDING_WORD` or before a listed abbreviation or
+/// `name_ending_word`; a parenthesised part, then any of these; or `and` or `or`
+/// (optionally `the`) before a `name_ending_word` or before a listed abbreviation or
 /// held title that itself ends its name. Anything else, such as a capitalised word, a
 /// digit or the `-2` of `ITAA 1997-2`, does not.
 fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
-    let ending = pyre::re(
-        &format!(r"\s*(?:\Z|[,.;:)\]*])|\s+(?:{NAME_ENDING_WORD})"),
-        0,
-    );
+    let word_pattern = name_ending_word();
+    let ending = pyre::re(&format!(r"\s*(?:\Z|[,.;:)\]*])|\s+(?:{word_pattern})"), 0);
     let part = pyre::re(r"\s*\((?:[^()\n]|\([^()\n]*\))*\)", 0);
     let join = pyre::re(r"\s+(?:and|or)(?:\s+the)?\s+", 0);
-    let word = pyre::re(NAME_ENDING_WORD, 0);
+    let word = pyre::re(&word_pattern, 0);
     let name = pyre::re(&cited(), 0);
     loop {
         if ending.match_at(text, end).is_some() {
@@ -1208,7 +1213,7 @@ const THIS_PROVISION: &str = "Act|Division|Subdivision|Part|Schedule|Chapter|div
 /// shortcut: the instrument words are a fixed list. What it misses stays `assumed`.
 fn source_pattern() -> String {
     format!(
-        r"\bthis\s+(?:{THIS_PROVISION})\b|\b(?:Sections?|Subsections?|Paragraphs?|Subparagraphs?|Divisions?|Subdivisions?|Parts?|Schedules?|Chapters?)\s+[0-9IVX][0-9A-Z-]*\b|(?P<source>(?<![A-Za-z0-9])[A-Z]|\bof\s+(?:the\s+[a-z]|that\b)|\b(?:of|in|under)\s+this\s+(?!(?:{THIS_PROVISION})\b)|(?<![A-Za-z0-9])(?:regs?|regulations?|rules?|ordinances?|determinations?|instruments?|orders?|codes?|schedules?|acts?|laws?|legislation|statutes?|by-?laws?|rulings?|enactments?|treaty|treaties)(?![A-Za-z0-9]))"
+        r"\bthis\s+(?:{THIS_PROVISION})\b|\b(?:Sections?|Subsections?|Paragraphs?|Subparagraphs?|Divisions?|Subdivisions?|Parts?|Schedules?|Chapters?)\s+[0-9IVX][0-9A-Z-]*\b|(?P<source>(?<![A-Za-z0-9])[A-Z]|\bof\s+(?:the\s+[a-z]|that\b)|\b(?:of|in|under)\s+this\s+(?!(?:{THIS_PROVISION})\b)|(?<![A-Za-z0-9])(?:{SOURCE_WORDS})(?![A-Za-z0-9]))"
     )
 }
 

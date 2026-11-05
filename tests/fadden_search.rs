@@ -1763,6 +1763,9 @@ fn cite_check_never_resolves_a_citation_that_names_no_act() {
         "See section 2-1 of the Income Tax Assessment Act 1997 Amendment Act 2100.",
         "See section 2-1 of the Sample Levy Act 2099 Rules.",
         "See section 2-1 of the ITAA 1997 regulations.",
+        "See section 2-1 of the ITAA 1997 bill.",
+        "See section 2-1 of the Income Tax Assessment Act 1997 bill.",
+        "See section 2-1 of the Sample Levy Act 2099 ruling.",
     ];
     let named = [
         "See section 2-1 of the Sample Levy Act 2099.",
