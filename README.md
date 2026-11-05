@@ -63,7 +63,7 @@ The corpus builder (`python -m fadden`) produces retrieval material from Commonw
 
 ## Reference
 
-- [Pipeline commands and operating boundaries](BUILD.md)
+- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`. A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty
 - [Synthetic review queue](RADAR.md)
 - [Monitor export and recovery contract](docs/monitor-contract.md)
 - [Live capture and publication evidence boundaries](docs/evidence-export.md)

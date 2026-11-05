@@ -13,6 +13,7 @@ use tax_radar_au::pyjson::{Json, Layout, dumps, loads_standard};
 
 const ACT: &str = "C2099A00001";
 const OTHER: &str = "C2099A00002";
+const ITAA: &str = "C2004A05138";
 const INSTRUMENT: &str = "F2099L00003";
 const NBH: &str = "\u{2011}";
 
@@ -1387,7 +1388,7 @@ fn cite_check_gives_each_citation_one_outcome_against_the_build() {
     assert_eq!(report[1].3.len(), 2);
     assert!(report[4].3.is_empty());
     let scoped = checked(&connection, "See section 2-1 and section 5.", Some(ACT));
-    assert_eq!(scoped[0].2, "resolved");
+    assert_eq!(scoped[0].2, "assumed");
     assert_eq!(scoped[1].2, "not_held");
 }
 
@@ -1508,12 +1509,12 @@ fn cite_check_does_not_give_a_name_it_cannot_read_to_the_title_flag() {
             "ambiguous",
             "ambiguous",
             "ambiguous",
-            "resolved",
-            "resolved"
+            "assumed",
+            "assumed"
         ]
     );
     let inside = checked(&connection, "See section 2-1 in Division 2.", Some(ACT));
-    assert_eq!(inside[0].2, "resolved");
+    assert_eq!(inside[0].2, "assumed");
 }
 
 #[test]
@@ -1548,7 +1549,7 @@ fn cite_check_fails_closed_on_any_source_after_a_citation() {
     ] {
         assert_eq!(
             checked(&connection, draft, Some(ACT))[0].2,
-            "resolved",
+            "assumed",
             "{draft}"
         );
     }
@@ -1577,7 +1578,7 @@ fn cite_check_gives_the_title_flag_only_this_act_or_its_provisions() {
     ] {
         assert_eq!(
             checked(&connection, draft, Some(ACT))[0].2,
-            "resolved",
+            "assumed",
             "{draft}"
         );
     }
@@ -1596,7 +1597,7 @@ fn cite_check_keeps_a_purpose_phrase_with_the_title_flag() {
     ] {
         assert_eq!(
             checked(&connection, draft, Some(ACT))[0].2,
-            "resolved",
+            "assumed",
             "{draft}"
         );
     }
@@ -1670,9 +1671,9 @@ fn cite_check_reads_the_whole_sentence_before_trusting_the_title_flag() {
         "See section 2-1 as the Commissioner allows.",
         "See section 2-1 in order to deduct.",
         "See section 2-1, the general rule.",
-        "See section 2-1 and Section 3-1.",
     ];
-    let resolved = [
+    let assumed = [
+        "See section 2-1 and Section 3-1.",
         "Section 2-1 allows a deduction.",
         "See section 2-1.",
         "See section 2-1 of this Act.",
@@ -1694,13 +1695,116 @@ fn cite_check_reads_the_whole_sentence_before_trusting_the_title_flag() {
     let wrong: Vec<(&str, String)> = ambiguous
         .iter()
         .map(|draft| (*draft, "ambiguous"))
-        .chain(resolved.iter().map(|draft| (*draft, "resolved")))
+        .chain(assumed.iter().map(|draft| (*draft, "assumed")))
         .filter_map(|(draft, want)| {
             let got = checked(&connection, draft, Some(ACT)).remove(0).2;
             (got != want).then_some((draft, got))
         })
         .collect();
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// `sample_titles` plus a title the reference abbreviations reach.
+fn cited_corpus(c: &Case) -> rusqlite::Connection {
+    let mut titles = sample_titles();
+    let section = format!("2{NBH}1");
+    let rows = vec![row(
+        ITAA,
+        1,
+        Some(&section),
+        "A sample.",
+        "2-1 Sample",
+        None,
+    )];
+    titles.insert(ITAA, ("Income Tax Assessment Act 1997", rows));
+    write_corpus(&c.root, &titles, &[]);
+    build(c);
+    search::open_index(&s(&c.out)).unwrap()
+}
+
+#[test]
+fn cite_check_never_resolves_a_citation_that_names_no_act() {
+    let c = case();
+    let connection = cited_corpus(&c);
+    let ambiguous = [
+        "See section 2-1 of the regs.",
+        "See section 2-1 of the bill.",
+        "See section 2-1 of the constitution.",
+        "See section 2-1 of this report.",
+        "See section 2-1 of this agreement.",
+        "Paragraph 2-1 of the judgment.",
+        "See Division 2 of the regs.",
+        "See section 2-1; cf. Sample Levy Ordinance 2000.",
+        "See section 2-1 (cf. Smith v Jones).",
+        "See section 2-1, e.g. Sample Levy Ordinance 2000.",
+        "See section 2-1, i.e. Sample Levy Ordinance 2000.",
+        "See section 2-1, viz. Sample Levy Ordinance 2000.",
+        "See section 2-1, etc. Sample Levy Ordinance 2000.",
+        "See section 2-1 at reg. Sample Levy Ordinance 2000.",
+        "ITAA 1936 section 2-1.",
+        "Corporations Act 2001 section 2-1.",
+        "See section 5 of the Other Sample Act 2099 and section 2-1.",
+        "See section 2-1 of the ITAA 1997 and section 3-1.",
+        "See section 2-1 of the _ITAA 1936_.",
+        "See section 2-1 of the _Regulations_.",
+        "Section 2-1 allows a deduction for GST.",
+    ];
+    let assumed = [
+        "See section 2-1.",
+        "See section 2-1 of this Act.",
+        "See Division 2.",
+        "- See section 2-1.",
+        "See section 2-1 of no. 38 of 1936.",
+        "See section 2-1 of \u{c9}ire.",
+        "See section 2-1\n\nof the regulations.",
+    ];
+    let not_held = [
+        "See section 2-1 of the Income Tax Assessment Act 1997 Regulations.",
+        "See section 2-1 of the Income Tax Assessment Act 1997 Amendment Act 2100.",
+        "See section 2-1 of the Sample Levy Act 2099 Rules.",
+        "See section 2-1 of the ITAA 1997 regulations.",
+    ];
+    let named = [
+        "See section 2-1 of the Sample Levy Act 2099.",
+        "See section 2-1 of the Income Tax Assessment Act 1997.",
+        "See section 2-1 of the ITAA 1997.",
+        "See section 2-1 of the *Income Tax Assessment Act 1997*.",
+    ];
+    let wrong: Vec<(&str, String)> = [
+        (&ambiguous[..], "ambiguous"),
+        (&assumed[..], "assumed"),
+        (&not_held[..], "not_held"),
+        (&named[..], "resolved"),
+    ]
+    .into_iter()
+    .flat_map(|(drafts, want)| drafts.iter().map(move |draft| (*draft, want)))
+    .filter_map(|(draft, want)| {
+        let got = checked(&connection, draft, Some(ACT)).pop().unwrap().2;
+        (got != want).then_some((draft, got))
+    })
+    .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    let report = values(search::cite_check(&connection, ambiguous[8], Some(ACT)).unwrap());
+    assert_eq!(report[0]["reason"], "its sentence may name another source");
+    let report = values(search::cite_check(&connection, "See section 2-1.", None).unwrap());
+    assert_eq!(report[0]["outcome"], "ambiguous");
+    assert_eq!(report[0]["reason"], "no title is named");
+}
+
+#[test]
+fn cite_check_counts_assumed_and_exits_0_on_it() {
+    let c = case();
+    built(&c);
+    let dir = c.out.parent().unwrap();
+    std::fs::write(dir.join("bare.md"), "See section 2-1.").unwrap();
+    let (code, out, _) = cli(
+        &["cite-check", "index.sqlite", "bare.md", "--title", ACT],
+        dir,
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("line 1: assumed: "), "{out}");
+    assert!(out.contains("1 citations: 1 assumed."), "{out}");
+    assert!(!out.contains(": resolved: "), "{out}");
 }
 
 /// The real-law question set: (query words, Register ID, section, form).

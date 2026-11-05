@@ -486,28 +486,35 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   to this build, and `retrieved`, the day the build obtained the title's EPUB.
   `superseded` and the currency behind `resolved` come from `version_is_current`,
   which a separate stage set from its own Register query, so `retrieved` does not
-  date them and a later amendment can outdate them. It makes no request. A citation naming no title takes the title
-  `--title` gives. It exits 1 if any outcome is other than `resolved` or
-  `container_level`.
+  date them and a later amendment can outdate them. It makes no request. A citation naming no Act is checked
+  against the title `--title` gives. It exits 1 if any outcome is other than
+  `resolved`, `assumed` or `container_level`.
 
   | Outcome | Meaning |
   | --- | --- |
-  | `resolved` | One row of a current title has that section |
-  | `container_level` | A Division or Subdivision of a current title, which is not a pinpoint |
-  | `ambiguous` | No title is named and `--title` was not given, 2 titles share the cited name, several rows share the number, or `--title` was given and the citation's sentence goes on to name a possible source |
+  | `resolved` | The citation's own text names the title in full, and one row of that current title has that section |
+  | `assumed` | No Act is named, and the title `--title` gives holds the provision. It never means the author meant that title |
+  | `container_level` | A Division or Subdivision of a named current title, which is not a pinpoint |
+  | `ambiguous` | No title is named and `--title` was not given, 2 titles share the cited name, several rows share the number, or `--title` was given and the citation's sentence may name another source |
   | `multi_section` | A range such as `sections 8-1 to 8-10`, of which only the first item is read |
   | `not_held` | The name is not a title or listed abbreviation in the index, or the title has no such row |
   | `superseded` | The rows exist, but `sources.json` marks the title's captured compilation as not current |
 
-  `resolved` means the build holds a provision with that number. It does not
+  `resolved` means the draft names the title and the build holds a provision with that number. It does not
   show that the provision says what the draft claims or applied at any date.
   Forms `refs` does not read, such as `s 8-1`, are not counted, so a clean
-  result covers only the citations in the report. With `--title`, a citation keeps
-  the title only if the rest of its sentence has no capitalised word and no
-  instrument word such as `regulations` or `rule`, apart from `this Act`, a `this`
-  provision or a numbered provision. So `as the Commissioner allows` and `in order
-  to deduct` also give `ambiguous`, which costs a reader one look. A name before the citation,
-  as in `In the regulations, section 8-1`, is not read, so `--title` still claims it.
+  result covers only the citations in the report.
+
+  A sentence that never names the Act cannot prove which Act it means, so a bare
+  citation is never `resolved`, even `of this Act`. With `--title` it is `assumed`:
+  the provision exists in the title you chose, which says nothing about what the
+  author meant. A caller who needs certainty must name the Act in the text. Before
+  giving `assumed`, one check reads the whole sentence, head and tail, and gives
+  `ambiguous` for any capitalised word after the first, an `of the` or `of this`
+  phrase or an instrument word such as `regulations`, apart from `this Act`, a `this`
+  provision or a numbered provision. That check is a net, not a proof. It also
+  catches harmless phrases such as `as the Commissioner allows`, and whatever it
+  misses, such as `of Éire`, is what the `assumed` label is for.
 - A row's Division and Subdivision come from the headings in the title's
   `<register_id>.md`, because a row's `container` names only its innermost
   heading. A row with no matching heading, such as `Introductory material`,
@@ -547,8 +554,9 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   (`ITAA 1997-2`) or a second name that runs on
   (`ITAA 1997 and ITAA 1936 Amendment Act 2025`). The cost is that an
   abbreviation ending a paragraph or table row before text that opens with a
-  capital or a number also stays unresolved. An exact title is not checked
-  this way.
+  capital or a number also stays unresolved. `refs` does not check an exact title
+  this way; `cite-check` does, so `Sample Levy Act 2099 Rules` is `not_held`. A
+  word such as `regulations` or `rules` after a name carries it on.
 
   Measured on 4 November 2026 with `fadden search build` over a corpus that
   holds every title in `fadden/manifest_md.json`, with the EPUB text of 5 Acts

@@ -70,21 +70,20 @@ fn cited() -> String {
     )
 }
 
-/// A lower-case word other than `and` or `or`, or a provision word: either may follow
-/// an abbreviation without carrying on its name.
-const NAME_ENDING_WORD: &str =
-    r"(?!(?:and|or)\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b";
+/// A lower-case word other than `and`, `or` or a regulations or rules word, or a provision
+/// word: either may follow a name without carrying it on.
+const NAME_ENDING_WORD: &str = r"(?!(?:and|or|regs?|regulations?|rules?)\b)[a-z]|(?:Division|Subdivision|Part|Schedule|Chapter)\b";
 
 /// Whether an abbreviation ending at `end` ends its name there, rather than begin a
 /// longer one such as `ITAA 1997 Amendment Act 2025`. After any whitespace, line breaks
-/// included, only these may follow: the end of the text; `,` `.` `;` `:` `)` or `]`; a
+/// included, only these may follow: the end of the text; `,` `.` `;` `:` `)` `]` or `*`; a
 /// `NAME_ENDING_WORD`; a parenthesised part, then any of these; or `and` or `or`
 /// (optionally `the`) before a `NAME_ENDING_WORD` or before a listed abbreviation or
 /// held title that itself ends its name. Anything else, such as a capitalised word, a
 /// digit or the `-2` of `ITAA 1997-2`, does not.
 fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
     let ending = pyre::re(
-        &format!(r"\s*(?:\Z|[,.;:)\]])|\s+(?:{NAME_ENDING_WORD})"),
+        &format!(r"\s*(?:\Z|[,.;:)\]*])|\s+(?:{NAME_ENDING_WORD})"),
         0,
     );
     let part = pyre::re(r"\s*\((?:[^()\n]|\([^()\n]*\))*\)", 0);
@@ -1181,29 +1180,64 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
 }
 
 /// What `cite-check` calls a citation, in the order its summary lists them.
-const OUTCOMES: [&str; 6] = [
+const OUTCOMES: [&str; 7] = [
     "resolved",
+    "assumed",
     "container_level",
     "ambiguous",
     "multi_section",
     "not_held",
     "superseded",
 ];
-/// The two that let `cite-check` exit 0.
-const CLEAN_OUTCOMES: [&str; 2] = ["resolved", "container_level"];
+/// The 3 that let `cite-check` exit 0.
+const CLEAN_OUTCOMES: [&str; 3] = ["resolved", "assumed", "container_level"];
 /// Stands in for the register ID of a name two titles share, so the name still counts
 /// as held.
 const SHARED_NAME: &str = "";
 
-/// Scans what follows a citation to the end of its sentence for a source the citation
-/// pattern did not read, so `--title` must not claim the citation. Any capitalised word
-/// counts unless `this Act`, a `this` provision or a numbered provision covers it, and so
-/// do the listed instrument words in any case form they are written. This fails closed:
-/// `as the Commissioner allows` or `in order to deduct` stops `--title` as well.
-/// shortcut: the lower-case words are a fixed list; add a word when a draft shows one.
-const SOURCE_TAIL: &str = r"(?P<stop>[.!?](?=\s+[A-Z(]|\s*\Z)|\n\s*\n)|\bthis\s+(?:Act|Division|Subdivision|Part|Schedule|Chapter|division|subdivision|part|schedule|chapter|section|subsection)\b|\b(?:Division|Subdivision|Part|Schedule|Chapter)\s+[0-9IVX][0-9A-Z-]*\b|(?P<source>\b[A-Z]|\b(?:regulations?|rules?|ordinances?|determinations?|instruments?|orders?|codes?|schedules?|acts?|laws?|legislation|statutes?|by-?laws?|rulings?|enactments?|treaty|treaties)\b)";
+/// A full stop, or the like, that ends a sentence, or a blank line. A stop after a listed
+/// lower-case abbreviation does not, and anything unsure runs on: the wider scan is safer.
+const SENTENCE_END: &str = r"(?<!\bcf)(?<!\bviz)(?<!\betc)(?<!\be\.g)(?<!\bi\.e)(?<!\breg)(?<!\bregs)[.!?](?=\s+[A-Z(]|\s*\Z)|\n\s*\n";
 
-const CITE_CHECK_NOTICE: &str = "A resolved citation names a provision this build holds. It does \
+/// What may follow `this` and stay in the title.
+const THIS_PROVISION: &str = "Act|Division|Subdivision|Part|Schedule|Chapter|division|subdivision|part|schedule|chapter|section|subsection";
+
+/// Anything in a sentence that may name a source. `this` provisions and numbered
+/// provisions are skipped first; then any capitalised word counts, as do `of the` and
+/// `of this` phrases and the listed instrument words.
+/// shortcut: the instrument words are a fixed list. What it misses stays `assumed`.
+fn source_pattern() -> String {
+    format!(
+        r"\bthis\s+(?:{THIS_PROVISION})\b|\b(?:Sections?|Subsections?|Paragraphs?|Subparagraphs?|Divisions?|Subdivisions?|Parts?|Schedules?|Chapters?)\s+[0-9IVX][0-9A-Z-]*\b|(?P<source>(?<![A-Za-z0-9])[A-Z]|\bof\s+(?:the\s+[a-z]|that\b)|\b(?:of|in|under)\s+this\s+(?!(?:{THIS_PROVISION})\b)|(?<![A-Za-z0-9])(?:regs?|regulations?|rules?|ordinances?|determinations?|instruments?|orders?|codes?|schedules?|acts?|laws?|legislation|statutes?|by-?laws?|rulings?|enactments?|treaty|treaties)(?![A-Za-z0-9]))"
+    )
+}
+
+/// Whether the sentence around a citation ending at `end` may name a source, so that
+/// `--title` cannot stand in for the Act. A sentence's own capitalised first word does
+/// not count, but `ITAA 1936 section 8-1` opens with a name and does.
+fn sentence_names_a_source(draft: &str, end: usize) -> bool {
+    let (mut start, mut stop) = (0, draft.len());
+    for found in pyre::re(SENTENCE_END, 0).captures_iter(draft) {
+        let boundary = found.get(0).expect("group 0");
+        if boundary.end() <= end {
+            start = boundary.end();
+        } else {
+            stop = boundary.start();
+            break;
+        }
+    }
+    let sentence = &draft[start..stop];
+    let opening = pyre::re(r"\W*[A-Z]?[a-z]*\b", 0)
+        .match_at(sentence, 0)
+        .map_or(0, |found| found.get(0).expect("group 0").end());
+    pyre::re(&source_pattern(), 0)
+        .captures_iter(&sentence[opening..])
+        .any(|found| found.name("source").is_some())
+}
+
+const CITE_CHECK_NOTICE: &str = "A resolved citation names its Act and a provision this build holds. An \
+assumed citation names no Act in its sentence, so it shows only that --title holds the \
+provision, not that the author meant that title. Neither does \
 not show that the provision says what the draft claims or applied at any date. Current and \
 superseded are this build's record from the Register, not a check today; a later amendment can \
 outdate them. Forms refs does \
@@ -1236,14 +1270,30 @@ fn title_names(connection: &Connection) -> Result<BTreeMap<String, String>, Exc>
     Ok(names)
 }
 
-/// Whether the sentence after a citation names a possible source. The citation pattern
-/// reads any `of this` phrase, so the scan starts there.
-fn source_follows(citation: &str, after: &str) -> bool {
-    let read_this = citation.rfind(" this ").map_or("", |at| &citation[at..]);
-    pyre::re(SOURCE_TAIL, 0)
-        .captures_iter(&format!("{read_this}{after}"))
-        .find(|found| found.name("stop").is_some() || found.name("source").is_some())
-        .is_some_and(|found| found.name("source").is_some())
+/// The title a citation reaches and, when it cannot reach one, why that is `ambiguous`.
+/// A bare citation reaches `own` only if nothing in its sentence may name a source. A
+/// named title must end where the name does. A name that is not held has no reason.
+fn citation_target(
+    draft: &str,
+    end: usize,
+    act: Option<&str>,
+    own: Option<&str>,
+    names: &BTreeMap<String, String>,
+) -> (Option<String>, Option<&'static str>) {
+    let lookup = |name: &str| names.get(name).cloned();
+    if act.is_some() {
+        if !ends_name(draft, end, lookup) {
+            return (None, None);
+        }
+    } else if own.is_none() {
+        return (None, Some("no title is named"));
+    } else if sentence_names_a_source(draft, end) {
+        return (None, Some("its sentence may name another source"));
+    }
+    match cited_title(draft, end, act, own, lookup) {
+        Some(rid) if rid == SHARED_NAME => (None, Some("2 titles share this name")),
+        target => (target, None),
+    }
 }
 
 /// A row of `rows_of`.
@@ -1273,6 +1323,7 @@ fn citation_outcome(
     rows: usize,
     current: bool,
     section: bool,
+    bare: bool,
 ) -> &'static str {
     if in_range {
         // `citations` reads only the first item of a range.
@@ -1283,10 +1334,12 @@ fn citation_outcome(
         "not_held"
     } else if !current {
         "superseded"
-    } else if !section {
+    } else if !section && !bare {
         "container_level"
-    } else if rows > 1 {
+    } else if section && rows > 1 {
         "ambiguous"
+    } else if bare {
+        "assumed"
     } else {
         "resolved"
     }
@@ -1309,14 +1362,7 @@ fn citation_report(
     names: &BTreeMap<String, String>,
     digest: &Json,
 ) -> Result<Json, Exc> {
-    let lookup = |name: &str| names.get(name).cloned();
-    let named = if act.is_none() && source_follows(&citation, &draft[end..]) {
-        None
-    } else {
-        cited_title(draft, end, act.as_deref(), own, lookup)
-    };
-    let shared = named.as_deref() == Some(SHARED_NAME);
-    let target = named.filter(|_| !shared);
+    let (target, reason) = citation_target(draft, end, act.as_deref(), own, names);
     let (rows, held) = match &target {
         Some(rid) => cited_rows(connection, rid, &kind, &key)?,
         None => (Vec::new(), None),
@@ -1325,10 +1371,11 @@ fn citation_report(
     let range = pyre::re(&format!(r"\s+to\s+(?:{LABEL})"), 0);
     let outcome = citation_outcome(
         range.match_at(draft, end).is_some(),
-        shared || (target.is_none() && act.is_none()),
+        reason.is_some(),
         rows.len(),
         from_title("version_is_current").truthy(),
         kind == "section",
+        act.is_none(),
     );
     let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
     let row_ids = rows.iter().map(|r| field(r, "row_id").clone()).collect();
@@ -1339,6 +1386,7 @@ fn citation_report(
         ("key".into(), Json::str(&key)),
         ("cited_act".into(), text_or_null(act)),
         ("outcome".into(), Json::str(outcome)),
+        ("reason".into(), text_or_null(reason.map(str::to_string))),
         ("register_id".into(), text_or_null(target)),
         ("rows".into(), Json::Array(row_ids)),
     ];
@@ -1460,7 +1508,7 @@ fn cite_check_parser() -> Parser {
         .description("Report how each citation in a UTF-8 draft resolves against an index.")
         .arg(Action::positional("index"))
         .arg(Action::positional("draft"))
-        .arg(Action::option("--title").help("register id a citation naming no title means"))
+        .arg(Action::option("--title").help("register id to check a citation naming no Act against; it is reported as assumed, never resolved"))
         .arg(Action::flag("--json").help("print one object per citation"))
 }
 
@@ -1514,6 +1562,7 @@ fn read_draft(path: &str) -> Result<String, Exc> {
 fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> Result<(), Exc> {
     for item in report {
         let s = |k: &str| pyvalue::py_str(item.at(k));
+        let why = item.at("reason").as_str().unwrap_or_default();
         let rows = match item.at("rows") {
             Json::Array(ids) => ids
                 .iter()
@@ -1522,7 +1571,7 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             _ => Vec::new(),
         };
         run.print(&format!(
-            "line {}: {}: {}: {}",
+            "line {}: {}: {}: {}{why}",
             s("line"),
             s("outcome"),
             s("citation"),
