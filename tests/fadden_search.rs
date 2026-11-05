@@ -1439,7 +1439,7 @@ fn cite_check_exits_1_on_anything_unresolved_and_refuses_bad_input() {
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("line 1: resolved: "));
     assert!(out.contains("2 citations: 1 resolved, 1 container_level."));
-    assert!(out.contains("does not show") || out.contains("not show that"));
+    assert!(out.contains("Neither shows"), "{out}");
     assert!(out.contains("not a check today"));
     assert!(out.contains(search::NOTICE));
     let (code, out, _) = check(&["empty.md"]);
@@ -1747,6 +1747,8 @@ fn cite_check_never_resolves_a_citation_that_names_no_act() {
         "See section 2-1 of the ITAA 1997 and section 3-1.",
         "See section 2-1 of the _ITAA 1936_.",
         "See section 2-1 of the _Regulations_.",
+        "See section 2-1 of the _Income Tax Assessment Act 1997_ regulations.",
+        "See section 2-1 of the _ITAA 1997_ bill.",
         "Section 2-1 allows a deduction for GST.",
     ];
     let assumed = [
@@ -1764,6 +1766,9 @@ fn cite_check_never_resolves_a_citation_that_names_no_act() {
         "See section 2-1 of the Sample Levy Act 2099 Rules.",
         "See section 2-1 of the ITAA 1997 regulations.",
         "See section 2-1 of the ITAA 1997 bill.",
+        "See section 2-1 of the *Income Tax Assessment Act 1997* regulations.",
+        "See section 2-1 of the *ITAA 1997* bill.",
+        "See section 2-1 of the *Income Tax Assessment Act 1997* Regulations.",
         "See section 2-1 of the Income Tax Assessment Act 1997 bill.",
         "See section 2-1 of the Sample Levy Act 2099 ruling.",
     ];
@@ -1792,6 +1797,10 @@ fn cite_check_never_resolves_a_citation_that_names_no_act() {
     let report = values(search::cite_check(&connection, "See section 2-1.", None).unwrap());
     assert_eq!(report[0]["outcome"], "ambiguous");
     assert_eq!(report[0]["reason"], "no title is named");
+    let draft = "See section 1 of the Sample Levy Act 2099.";
+    let report = values(search::cite_check(&connection, draft, None).unwrap());
+    assert_eq!(report[0]["outcome"], "ambiguous");
+    assert_eq!(report[0]["reason"], "several rows share this number");
 }
 
 #[test]

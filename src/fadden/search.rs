@@ -83,19 +83,21 @@ fn name_ending_word() -> String {
 
 /// Whether an abbreviation ending at `end` ends its name there, rather than begin a
 /// longer one such as `ITAA 1997 Amendment Act 2025`. After any whitespace, line breaks
-/// included, only these may follow: the end of the text; `,` `.` `;` `:` `)` `]` or `*`; a
+/// included, only these may follow, past any closing `*`: the end of the text; `,` `.` `;`
+/// `:` `)` or `]`; a
 /// `name_ending_word`; a parenthesised part, then any of these; or `and` or `or`
 /// (optionally `the`) before a `name_ending_word` or before a listed abbreviation or
 /// held title that itself ends its name. Anything else, such as a capitalised word, a
 /// digit or the `-2` of `ITAA 1997-2`, does not.
 fn ends_name(text: &str, mut end: usize, lookup: impl Fn(&str) -> Option<String>) -> bool {
     let word_pattern = name_ending_word();
-    let ending = pyre::re(&format!(r"\s*(?:\Z|[,.;:)\]*])|\s+(?:{word_pattern})"), 0);
+    let ending = pyre::re(&format!(r"\s*(?:\Z|[,.;:)\]])|\s+(?:{word_pattern})"), 0);
     let part = pyre::re(r"\s*\((?:[^()\n]|\([^()\n]*\))*\)", 0);
     let join = pyre::re(r"\s+(?:and|or)(?:\s+the)?\s+", 0);
     let word = pyre::re(&word_pattern, 0);
     let name = pyre::re(&cited(), 0);
     loop {
+        end += text[end..].len() - text[end..].trim_start_matches('*').len();
         if ending.match_at(text, end).is_some() {
             return true;
         }
@@ -1242,8 +1244,8 @@ fn sentence_names_a_source(draft: &str, end: usize) -> bool {
 
 const CITE_CHECK_NOTICE: &str = "A resolved citation names its Act and a provision this build holds. An \
 assumed citation names no Act in its sentence, so it shows only that --title holds the \
-provision, not that the author meant that title. Neither does \
-not show that the provision says what the draft claims or applied at any date. Current and \
+provision, not that the author meant that title. Neither shows \
+that the provision says what the draft claims or applied at any date. Current and \
 superseded are this build's record from the Register, not a check today; a later amendment can \
 outdate them. Forms refs does \
 not read, such as s 8-1, are not counted.";
@@ -1383,6 +1385,7 @@ fn citation_report(
         act.is_none(),
     );
     let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
+    let reason = reason.or((outcome == "ambiguous").then_some("several rows share this number"));
     let row_ids = rows.iter().map(|r| field(r, "row_id").clone()).collect();
     let mut fields = vec![
         ("line".into(), Json::Int((newlines.count() + 1).into())),
@@ -1576,11 +1579,11 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             _ => Vec::new(),
         };
         run.print(&format!(
-            "line {}: {}: {}: {}{why}",
+            "line {}: {}: {}: {}",
             s("line"),
             s("outcome"),
             s("citation"),
-            shown_rows(&rows)
+            format!("{} {why}", shown_rows(&rows)).trim()
         ));
     }
     let counted: Vec<String> = OUTCOMES
