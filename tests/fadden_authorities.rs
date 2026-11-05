@@ -285,6 +285,39 @@ fn a_withdrawal_under_another_docid_leaves_the_id_out() {
 }
 
 #[test]
+fn every_id_a_withdrawn_document_ever_named_is_left_out() {
+    let other = ruling("TXR/2", "TR 2099/1 - Fabricated", "UNKNOWN");
+    let untitled = ruling("TXR/1", "", "UNKNOWN");
+    let named = ruling("TXR/1", "TR 2099/1 - Fabricated", "NOTICE_PRESENT");
+    let renamed = ruling("TXR/1", "TD 2099/5 - Fabricated", "UNKNOWN");
+    let notice = ruling("TXR/1", "", "NOTICE_PRESENT");
+    let keep = ruling("TXR/3", "TR 2099/2 - Fabricated", "UNKNOWN");
+    let run = |first: &[&String], second: &[&String]| {
+        let lines = |rows: &[&String]| {
+            rows.iter()
+                .map(|r| r.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        rulings(&[
+            ("first.jsonl".to_string(), lines(first)),
+            ("second.jsonl".to_string(), lines(second)),
+        ])
+    };
+    // The readable title and the notice each arrive in a later capture than the first.
+    let export = run(&[&untitled, &other, &keep], &[&named]);
+    assert_eq!(listed(&export), ["TR 2099/2"]);
+    let export = run(&[&notice, &other, &keep], &[&renamed, &named]);
+    assert_eq!(listed(&export), ["TR 2099/2"]);
+    let export = run(&[&named, &other, &keep], &[&renamed]);
+    assert_eq!(listed(&export), ["TR 2099/2"]);
+    // With no notice, each id a document's titles name is listed.
+    let plain = ruling("TXR/1", "TR 2099/1 - Fabricated", "UNKNOWN");
+    let export = run(&[&untitled, &plain], &[&renamed]);
+    assert_eq!(listed(&export), ["TD 2099/5", "TR 2099/1"]);
+}
+
+#[test]
 fn a_withdrawal_status_the_stage_never_writes_stops_the_export() {
     for line in [
         json!({"docid": "TXR/1", "title": "TR 2099/1"}).to_string(),

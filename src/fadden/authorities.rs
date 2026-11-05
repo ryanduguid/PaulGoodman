@@ -129,10 +129,12 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
 
 /// Each ruling id named at the start of a captured document's title. `files` holds
 /// each `rulings.jsonl` with the path to report; a file with no rows, or a row the
-/// stage could not have written, stops the export. An id with a withdrawal notice in
-/// any capture of any document is left out.
+/// stage could not have written, stops the export. A document's ids are all those its
+/// captures' titles name, and a withdrawal notice in any capture leaves them all out,
+/// even where another document lists one.
 pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<(), Exc> {
-    let mut documents: BTreeMap<String, (String, bool)> = BTreeMap::new();
+    let id = pattern(&format!(r"^({SERIES})\s+({RULING_ID})(?:\s|$)"));
+    let mut documents: BTreeMap<String, (BTreeSet<String>, bool)> = BTreeMap::new();
     for (path, text) in files {
         let lines = py::splitlines(text);
         if lines.iter().all(|line| py::strip(line).is_empty()) {
@@ -149,9 +151,11 @@ pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<()
             let (Some(docid), Some(title)) = (field("docid"), field("title")) else {
                 return Err(Exc::value(format!("{place} is not a rulings row")));
             };
-            let document = documents
-                .entry(docid.to_string())
-                .or_insert_with(|| (title.to_string(), false));
+            let document = documents.entry(docid.to_string()).or_default();
+            document.0.extend(id.captures(title).map(|found| {
+                let series = py::split_whitespace(&found[1]).join(" ");
+                format!("{series} {}", &found[2])
+            }));
             let status = field("withdrawal_status");
             if !matches!(status, Some("UNKNOWN" | "NOTICE_PRESENT")) {
                 return Err(Exc::value(format!(
@@ -161,26 +165,18 @@ pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<()
             document.1 |= status == Some("NOTICE_PRESENT");
         }
     }
-    let id = pattern(&format!(r"^({SERIES})\s+({RULING_ID})(?:\s|$)"));
     let mut withdrawn_ids = BTreeSet::new();
-    for (docid, (title, withdrawn)) in documents {
-        let read = id.captures(&title).map(|found| {
-            let series = py::split_whitespace(&found[1]).join(" ");
-            format!("{series} {}", &found[2])
-        });
+    for (docid, (ids, withdrawn)) in documents {
         if withdrawn {
-            withdrawn_ids.extend(read);
+            withdrawn_ids.extend(ids);
             let reason = format!("ruling {docid}: it carries a withdrawal notice");
             export.skipped.push(reason);
-            continue;
-        }
-        match read {
-            Some(ruling) => {
-                export.rulings.insert(ruling);
-            }
-            None => export.skipped.push(format!(
+        } else if ids.is_empty() {
+            export.skipped.push(format!(
                 "ruling {docid}: its title does not start with an id the gate reads"
-            )),
+            ));
+        } else {
+            export.rulings.extend(ids);
         }
     }
     for ruling in withdrawn_ids {

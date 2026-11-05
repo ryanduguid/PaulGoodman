@@ -1383,11 +1383,13 @@ const TITLE_FIELDS: [&str; 4] = [
 type FoundCitation = (String, String, Option<String>, String, usize);
 
 /// How many rows other than `row_id` hold all of `quote`. FTS finds the rows with its
-/// words in order, and `quotes::grade` then applies the same test as the row reached.
+/// words in order, reading the NFKC quotation with the tokeniser that read each row, so a
+/// row that holds it is never missed. `quotes::grade` then applies the same test as the
+/// row reached.
 fn other_rows(connection: &Connection, quote: &str, row_id: &str) -> Result<usize, Exc> {
     let sql = "SELECT r.row_id, r.text FROM rows_fts JOIN rows r ON r.id = rows_fts.rowid \
                WHERE rows_fts MATCH ?";
-    let phrase = format!("text : {}", match_expression(&[quote.to_string()])?);
+    let phrase = format!("text : \"{}\"", normalise(quote).replace('"', "\"\""));
     let found = rows_of(connection, sql, &[Sql::Text(phrase)])?;
     let other = |row: &&Row| {
         field(row, "row_id").as_str() != Some(row_id)

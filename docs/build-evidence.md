@@ -155,6 +155,7 @@ quotation by length alone. `other_rows` is the direct count for each quotation, 
 floor only stops a short passage being called `distinct` because this build lacks the
 titles that repeat it.
 
-This describes these 6 titles, not the corpus. A wider build has more rows to repeat a
-run, so its shares can only fall. Rerun with
+This describes these 6 titles, not the corpus. Adding rows cannot make an existing run
+more unique, but they add runs of their own, so the share on a wider build can rise or
+fall. Rerun with
 `FADDEN_REFERENCE_INDEX=<index> cargo test --locked --test fadden_search distinct_floor_on_a_real_index -- --ignored --nocapture`.

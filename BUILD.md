@@ -523,7 +523,7 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   A quotation with `grade` `null` was not compared, and `reason` says why: the
   citation reached no one section, as with `not_held`, `superseded`, a Division or
   a range; the quotation has no closing mark before a blank line, when the first
-  200 characters are shown; or the citation is inside the quotation and no citation
+  200 characters are shown, which includes a straight mark closing after a space; or the citation is inside the quotation and no citation
   outside it is beside it. It is never reported as `none`, which is a comparison
   that failed. `start` is the quotation's byte offset in the draft, and the summary
   counts each quotation once and each comparison with a citation.
@@ -693,9 +693,9 @@ Know these limits before relying on a result:
 
 - A listed authority exists in this build. That is all it shows: not that the section
   was the law on the draft's date or says what the draft claims. A ruling with no
-  notice (`UNKNOWN`) is not thereby current. A withdrawn document's id comes from its
-  title, so a withdrawn capture with an empty title cannot take another document's
-  listing of that id out.
+  notice (`UNKNOWN`) is not thereby current. A withdrawn document's ids come from its
+  captures' titles, so a document with no readable title in any capture cannot take
+  another document's listing of its id out.
 - The gate compares citations exactly, and the list holds whole sections, so `s 8-1(1)`
   is not `s 8-1` and goes to review. So does `s 8-1 ITAA 1997`: the gate reads an Act
   named in full only.
