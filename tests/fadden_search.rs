@@ -1890,3 +1890,284 @@ fn reference_questions_on_a_real_index() {
         );
     }
 }
+
+/// Fabricated text for the quotation tests, in section 7-1 of the sample Act, shaped
+/// like a Register row: a defined-term asterisk, list marks and a non-breaking hyphen.
+const QUOTED: &str = "(1) You may claim the *sample offset for a year\u{2019}s widget levy if:\n\n- (a) the widget costs less than $1.50; or\n\n- (b) the taxpayers\u{2019} widgets are nondeductible.\n\nThe \u{fb01}nal amount is worked out under non\u{2011}widget rules.";
+const AT: &str = "Section 7-1 of the Sample Levy Act 2099";
+
+fn quoted_case() -> (Case, rusqlite::Connection) {
+    let c = case();
+    let mut titles = sample_titles();
+    let quoted = row(ACT, 6, Some("7-1"), QUOTED, "7-1 Offset", None);
+    titles.get_mut(ACT).unwrap().1.push(quoted);
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    (c, connection)
+}
+
+/// (citation key, outcome, quotation, grade) for each quotation beside a citation.
+fn graded(
+    connection: &rusqlite::Connection,
+    draft: &str,
+    title: Option<&str>,
+) -> Vec<(String, String, String, Value)> {
+    let mut out = Vec::new();
+    for item in values(search::cite_check(connection, draft, title).unwrap()) {
+        for q in item["quotations"].as_array().unwrap() {
+            out.push((
+                item["key"].as_str().unwrap().to_string(),
+                item["outcome"].as_str().unwrap().to_string(),
+                q["quote"].as_str().unwrap().to_string(),
+                q["grade"].clone(),
+            ));
+        }
+    }
+    out
+}
+
+fn grade_of(connection: &rusqlite::Connection, draft: &str) -> Value {
+    let found = graded(connection, draft, None);
+    assert_eq!(found.len(), 1, "{draft}: {found:?}");
+    found[0].3.clone()
+}
+
+#[test]
+fn cite_check_json_grades_quotations_exact_normalised_partial_and_none() {
+    let (c, _connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let draft = [
+        format!("{AT} says \"the widget costs less than\"."),
+        format!("{AT} says \"The final amount is worked out\"."),
+        format!("{AT} says \"amount is worked out under some other rules\"."),
+        format!("{AT} says \"no offset applies to a gadget\"."),
+    ]
+    .join("\n");
+    std::fs::write(dir.join("draft.md"), draft).unwrap();
+    let (code, out, _) = cli(&["cite-check", "index.sqlite", "draft.md", "--json"], dir);
+    let items: Vec<Value> = out
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let grades: Vec<&Value> = items.iter().map(|i| &i["quotations"][0]["grade"]).collect();
+    assert_eq!(grades, ["exact", "normalised", "partial", "none"]);
+    assert_eq!(items[2]["quotations"][0]["matched_words"], 5);
+    assert_eq!(items[2]["quotations"][0]["quote_words"], 8);
+    assert!(items[0]["quotations"][0]["matched_words"].is_null());
+    assert!(items.iter().all(|i| i["outcome"] == "resolved"));
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn a_quotation_is_normalised_only_over_forms_that_do_not_change_its_words() {
+    let (_c, connection) = quoted_case();
+    for quote in [
+        "\"the sample offset for a year's widget levy\"",
+        "\u{201c}the sample offset\u{201d}",
+        "\u{2018}a year's widget levy\u{2019}",
+        "'the widget costs\n   less than'",
+        "\"levy if: (a) the widget costs less than $1.50; or (b) the\"",
+        "\"worked out under non-widget rules\"",
+    ] {
+        let draft = format!("{AT} says {quote}.");
+        assert_eq!(grade_of(&connection, &draft), "normalised", "{quote}");
+    }
+}
+
+#[test]
+fn a_quotation_that_differs_in_case_or_stops_inside_a_word_or_number_is_not_matched() {
+    let (_c, connection) = quoted_case();
+    for (quote, grade) in [
+        ("the widget costs less than", "exact"),
+        ("The widget costs", "none"),
+        ("deductible", "none"),
+        ("costs less than $1", "none"),
+        ("50; or", "none"),
+        ("a year", "none"),
+        ("widget rules", "none"),
+        ("the widget costs more", "none"),
+        ("the widget costs less than $1.05", "partial"),
+    ] {
+        let draft = format!("{AT} says \"{quote}\".");
+        assert_eq!(grade_of(&connection, &draft), grade, "{quote}");
+    }
+}
+
+#[test]
+fn an_apostrophe_never_cuts_a_single_quotation_down_to_a_fragment_that_matches() {
+    let (_c, connection) = quoted_case();
+    // `the taxpayers` is in the row, and would be `exact` if the apostrophe closed it.
+    for (draft, mark) in [
+        (
+            format!("{AT} says 'the taxpayers' widgets are always exempt'."),
+            '\'',
+        ),
+        (
+            format!("{AT} says \u{2018}the taxpayers\u{2019} widgets are always exempt\u{2019}."),
+            '\u{2019}',
+        ),
+    ] {
+        let found = graded(&connection, &draft, None);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(
+            found[0].2,
+            format!("the taxpayers{mark} widgets are always exempt")
+        );
+        assert_eq!(found[0].3, "partial");
+    }
+    let two = format!("{AT} says 'the widget costs' and 'an invented phrase'.");
+    let quotes: Vec<_> = graded(&connection, &two, None)
+        .into_iter()
+        .map(|(_, _, quote, grade)| (quote, grade))
+        .collect();
+    assert_eq!(
+        quotes,
+        [
+            ("the widget costs".to_string(), json!("exact")),
+            ("an invented phrase".to_string(), json!("none")),
+        ]
+    );
+    // An apostrophe is no opening mark, and a nested straight mark no closing one.
+    let plain = format!("{AT} applies to the taxpayers' widgets.");
+    assert!(graded(&connection, &plain, None).is_empty());
+    let nested = format!("{AT} says \"the widget \"costs less\" than a gadget\".");
+    let found = graded(&connection, &nested, None);
+    assert!(found.iter().all(|f| f.3 != "exact"), "{found:?}");
+}
+
+#[test]
+fn a_quotation_is_compared_only_with_one_section_the_citation_reached() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let widget = "\"widget attracts the sample levy\"";
+    for (citation, verb, outcome) in [
+        ("Section 9 of the Sample Levy Act 2099", "says", "not_held"),
+        (
+            "Section 9 of the Fabricated Missing Act 2099",
+            "says",
+            "not_held",
+        ),
+        ("Section 1 of the Sample Levy Act 2099", "says", "ambiguous"),
+        (
+            "Section 5 of the Other Sample Act 2099",
+            "says",
+            "superseded",
+        ),
+        (
+            "Sections 2-1 to 3-1 of the Sample Levy Act 2099",
+            "say",
+            "multi_section",
+        ),
+        (
+            "Division 2 of the Sample Levy Act 2099",
+            "says",
+            "container_level",
+        ),
+    ] {
+        let draft = format!("{citation} {verb} {widget}.");
+        let found = graded(&connection, &draft, None);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].1, outcome, "{draft}");
+        assert!(found[0].3.is_null(), "{draft}: {found:?}");
+        std::fs::write(dir.join("draft.md"), &draft).unwrap();
+        let (code, out, _) = cli(&["cite-check", "index.sqlite", "draft.md"], dir);
+        assert_eq!(code, 1, "{draft}");
+        let line = "quotation not compared, the citation reached no one section: ";
+        assert!(out.contains(line), "{out}");
+    }
+    // A Division of the --title title is `assumed` and spans rows: no one section.
+    let draft = format!("See Division 2, which says {widget}.");
+    let found = graded(&connection, &draft, Some(ACT));
+    assert_eq!(found[0].1, "assumed");
+    assert!(found[0].3.is_null());
+    // A bare section under --title has one row, so it is compared.
+    let draft = format!("See section 2-1, which says {widget}.");
+    let found = graded(&connection, &draft, Some(ACT));
+    assert_eq!(found[0].1, "assumed");
+    assert_eq!(found[0].3, "exact");
+}
+
+#[test]
+fn a_quotation_with_no_closing_mark_is_reported_and_not_compared() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let draft = format!("{AT} says \"the widget costs less than.\n\nNext paragraph.\"");
+    let found = graded(&connection, &draft, None);
+    assert_eq!(found[0].2, "the widget costs less than.");
+    assert!(found[0].3.is_null());
+    std::fs::write(dir.join("draft.md"), &draft).unwrap();
+    let (code, out, _) = cli(&["cite-check", "index.sqlite", "draft.md"], dir);
+    assert_eq!(code, 1);
+    let line = "quotation not compared, it has no closing mark: ";
+    assert!(out.contains(line), "{out}");
+}
+
+#[test]
+fn a_quotation_is_read_only_beside_its_citation() {
+    let (_c, connection) = quoted_case();
+    let quote = "\"the widget costs less than\"";
+    let elsewhere = format!("{AT} applies. It says {quote}.");
+    assert!(graded(&connection, &elsewhere, None).is_empty());
+    let other_paragraph = format!("{AT} applies:\n\n{quote}");
+    assert!(graded(&connection, &other_paragraph, None).is_empty());
+    // Before the citation in its sentence, and a quotation running over 2 sentences.
+    let before = format!("{quote} is what section 7-1 of the Sample Levy Act 2099 says.");
+    assert_eq!(grade_of(&connection, &before), "exact");
+    let long = "Section 2-1 of the Sample Levy Act 2099 says \"A widget attracts the sample levy. The rest is invented text.\"";
+    assert_eq!(grade_of(&connection, long), "partial");
+    // A citation inside a quotation is quoted, not the quotation's source.
+    let inner = format!("Section 2-1 of the Sample Levy Act 2099 is cited in \"{AT} applies\".");
+    let found = graded(&connection, &inner, None);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "2-1");
+    assert_eq!(found[0].3, "none");
+}
+
+#[test]
+fn every_citation_in_a_sentence_answers_for_its_quotation() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let draft =
+        "Sections 2-1 and 7-1 of the Sample Levy Act 2099 say \"widget attracts the sample levy\".";
+    let found = graded(&connection, draft, None);
+    let grades: Vec<_> = found.iter().map(|f| (f.0.as_str(), f.3.clone())).collect();
+    assert_eq!(grades, [("2-1", json!("exact")), ("7-1", json!("none"))]);
+    std::fs::write(dir.join("draft.md"), draft).unwrap();
+    assert_eq!(cli(&["cite-check", "index.sqlite", "draft.md"], dir).0, 1);
+}
+
+#[test]
+fn cite_check_exits_0_only_on_exact_and_normalised_quotations_and_prints_each() {
+    let (c, _connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let check = |draft: String| {
+        std::fs::write(dir.join("draft.md"), draft).unwrap();
+        cli(&["cite-check", "index.sqlite", "draft.md"], dir)
+    };
+    let (code, out, _) = check(format!(
+        "{AT} says \"the widget costs\" and \"the sample offset\"."
+    ));
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("  quotation exact: the widget costs\n"),
+        "{out}"
+    );
+    let line = "  quotation normalised: the sample offset\n";
+    assert!(out.contains(line), "{out}");
+    let line = "2 quotations beside citations: 1 exact, 1 normalised.\n";
+    assert!(out.contains(line), "{out}");
+    assert!(out.contains("not that they are fairly quoted"), "{out}");
+    let (code, out, _) = check(format!("{AT} says \"an invented phrase\"."));
+    assert_eq!(code, 1);
+    let line = "  quotation none: an invented phrase\n";
+    assert!(out.contains(line), "{out}");
+    let (code, out, _) = check(format!(
+        "{AT} says \"amount is worked out under some other rules\"."
+    ));
+    assert_eq!(code, 1);
+    let line = "  quotation partial, longest run 5 of 8 words: amount";
+    assert!(out.contains(line), "{out}");
+    let line = "1 quotations beside citations: 1 partial.\n";
+    assert!(out.contains(line), "{out}");
+}

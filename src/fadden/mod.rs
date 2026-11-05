@@ -29,6 +29,7 @@ pub mod pii;
 pub mod pii_scan;
 pub mod probe13;
 pub mod publication_bundles;
+pub mod quotes;
 pub mod rates;
 pub mod rulings;
 pub mod search;

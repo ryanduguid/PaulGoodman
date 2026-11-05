@@ -488,7 +488,8 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   which a separate stage set from its own Register query, so `retrieved` does not
   date them and a later amendment can outdate them. It makes no request. A citation naming no Act is checked
   against the title `--title` gives. It exits 1 if any outcome is other than
-  `resolved`, `assumed` or `container_level`.
+  `resolved`, `assumed` or `container_level`, or if any quotation is not graded
+  `exact` or `normalised`.
 
   | Outcome | Meaning |
   | --- | --- |
@@ -504,6 +505,46 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   show that the provision says what the draft claims or applied at any date.
   Forms `refs` does not read, such as `s 8-1`, are not counted, so a clean
   result covers only the citations in the report.
+
+  A quotation is text in quotation marks (straight or curly, double or single) in
+  a citation's sentence. Each citation lists its own under `quotations`, and each
+  is graded against the one row a `resolved` or `assumed` section reached,
+  case-sensitively and by whole words, so `deductible` is not found in
+  `nondeductible`, nor `$1` in `$1.50`.
+
+  | Grade | Meaning |
+  | --- | --- |
+  | `exact` | The quotation's characters appear unchanged in the row |
+  | `normalised` | They appear once both are folded: Unicode compatibility forms (NFKC), the Register's non-breaking hyphen, curly quotation marks and apostrophes, white space, the asterisk before a defined term and the Markdown mark opening a line |
+  | `partial` | Neither, but at least 4 consecutive quotation words match. `matched_words` and `quote_words` give the longest run |
+  | `none` | None of these |
+
+  A quotation with `grade` `null` was not compared, and `reason` says why: the
+  citation reached no one section, as with `not_held`, `superseded`, a Division or
+  a range, or the quotation has no closing mark before a blank line. It is never
+  reported as `none`, which is a comparison that failed.
+
+  Know these limits before relying on a grade:
+
+  - `exact` and `normalised` show the words are in that row of this build. They do
+    not show the quotation is fair to its context, that the row is authorised text
+    or that it was the law at any date. A citation of a subsection is compared with
+    the whole section.
+  - `partial` is not a match. The run can leave out a word such as `not`, and an
+    elided or altered quotation (`...`, `[the]`) can reach only `partial`.
+  - An empty `quotations` does not show the sentence quotes nothing that matters.
+    A block quotation, unmarked wording and a quotation in another sentence are not
+    read, and a quotation beside a form `refs` does not read has no citation to
+    answer to.
+  - With `--title`, a capitalised word in a quotation may name another source, so
+    the citation is `ambiguous` and its quotation is not compared.
+  - Each quotation in a sentence is compared with each citation in it, so
+    `sections 8-1 and 8-5 say "..."` must hold in both to exit 0. A sentence ending
+    inside its closing mark, as in `"...income." Section 8-5`, runs on into the next,
+    with the same effect.
+  - A single closing mark looks like an apostrophe, so a single quotation closes at
+    the last candidate before the next opening mark. That can only read too much and
+    lower a grade: `the taxpayers' income` never stops at `taxpayers`.
 
   A sentence that never names the Act cannot prove which Act it means, so a bare
   citation is never `resolved`, even `of this Act`. With `--title` it is `assumed`:

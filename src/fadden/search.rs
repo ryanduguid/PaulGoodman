@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
 use super::corpus_paths::{child, register_id, register_id_str};
+use super::quotes::{self, Quotation};
 use super::{Exc, Run};
 use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyjson::{self, Json, PyStr};
@@ -1198,6 +1199,11 @@ const OUTCOMES: [&str; 7] = [
 ];
 /// The 3 that let `cite-check` exit 0.
 const CLEAN_OUTCOMES: [&str; 3] = ["resolved", "assumed", "container_level"];
+/// What a quotation is graded, in the order the summary lists them. A quotation not
+/// compared has no grade.
+const GRADES: [&str; 4] = ["exact", "normalised", "partial", "none"];
+/// The 2 that let `cite-check` exit 0.
+const CLEAN_GRADES: [&str; 2] = ["exact", "normalised"];
 /// Stands in for the register ID of a name two titles share, so the name still counts
 /// as held.
 const SHARED_NAME: &str = "";
@@ -1219,10 +1225,8 @@ fn source_pattern() -> String {
     )
 }
 
-/// Whether the sentence around a citation ending at `end` may name a source, so that
-/// `--title` cannot stand in for the Act. A sentence's own capitalised first word does
-/// not count, but `ITAA 1936 section 8-1` opens with a name and does.
-fn sentence_names_a_source(draft: &str, end: usize) -> bool {
+/// The byte range of the sentence around a citation ending at `end`.
+fn sentence_around(draft: &str, end: usize) -> (usize, usize) {
     let (mut start, mut stop) = (0, draft.len());
     for found in pyre::re(SENTENCE_END, 0).captures_iter(draft) {
         let boundary = found.get(0).expect("group 0");
@@ -1233,6 +1237,14 @@ fn sentence_names_a_source(draft: &str, end: usize) -> bool {
             break;
         }
     }
+    (start, stop)
+}
+
+/// Whether the sentence around a citation ending at `end` may name a source, so that
+/// `--title` cannot stand in for the Act. A sentence's own capitalised first word does
+/// not count, but `ITAA 1936 section 8-1` opens with a name and does.
+fn sentence_names_a_source(draft: &str, end: usize) -> bool {
+    let (start, stop) = sentence_around(draft, end);
     let sentence = &draft[start..stop];
     let opening = pyre::re(r"\W*[A-Z]?[a-z]*\b", 0)
         .match_at(sentence, 0)
@@ -1245,7 +1257,10 @@ fn sentence_names_a_source(draft: &str, end: usize) -> bool {
 const CITE_CHECK_NOTICE: &str = "A resolved citation names its Act and a provision this build holds. An \
 assumed citation names no Act in its sentence, so it shows only that --title holds the \
 provision, not that the author meant that title. Neither shows \
-that the provision says what the draft claims or applied at any date. Current and \
+that the provision says what the draft claims or applied at any date. A quotation is read \
+only in quotation marks in the citation's sentence, and only against a resolved or assumed \
+section. Exact and normalised show those words are in that row of this build, not that they \
+are fairly quoted, authorised text or the law at any date. Current and \
 superseded are this build's record from the Register, not a check today; a later amendment can \
 outdate them. Forms refs does \
 not read, such as s 8-1, are not counted.";
@@ -1363,6 +1378,56 @@ const TITLE_FIELDS: [&str; 4] = [
 /// One citation found in a draft: kind, key, the Act it names, its text and where it ends.
 type FoundCitation = (String, String, Option<String>, String, usize);
 
+/// The report object for one quotation. `text` is the row to grade it against; without
+/// one, or without a closing mark, it has no grade, because nothing was compared.
+fn quotation_report(quotation: &Quotation, text: Option<&str>) -> Json {
+    let (grade, words, reason) = match text {
+        _ if !quotation.closed => (None, None, Some("it has no closing mark")),
+        None => (None, None, Some("the citation reached no one section")),
+        Some(text) => {
+            let (grade, words) = quotes::grade(&quotation.text, text);
+            (Some(grade), words, None)
+        }
+    };
+    let count = |n: Option<usize>| n.map_or(Json::Null, |n| Json::Int(n.into()));
+    object(vec![
+        ("quote".into(), Json::str(&quotation.text)),
+        ("grade".into(), text_or_null(grade.map(str::to_string))),
+        ("reason".into(), text_or_null(reason.map(str::to_string))),
+        ("matched_words".into(), count(words.map(|w| w.0))),
+        ("quote_words".into(), count(words.map(|w| w.1))),
+    ])
+}
+
+/// Each quotation in the sentence around a citation ending at `end`, compared with `row`
+/// if there is one. A citation inside a quotation is what is quoted, not its source, so
+/// that quotation is left out.
+fn sentence_quotations(
+    connection: &Connection,
+    draft: &str,
+    end: usize,
+    all: &[Quotation],
+    row: Option<&Json>,
+) -> Result<Json, Exc> {
+    let (start, stop) = sentence_around(draft, end);
+    let beside = |q: &&Quotation| {
+        q.start < stop && start < q.end && !(q.closed && q.start < end && end <= q.end)
+    };
+    let near: Vec<&Quotation> = all.iter().filter(beside).collect();
+    let mut text = None;
+    if let Some(row_id) = row.filter(|_| !near.is_empty()) {
+        let sql = "SELECT text FROM rows WHERE row_id = ?";
+        let id = Sql::Text(row_id.as_str().unwrap_or_default().to_string());
+        let held = rows_of(connection, sql, &[id])?;
+        text = held
+            .first()
+            .and_then(|r| field(r, "text").as_str())
+            .map(str::to_string);
+    }
+    let reports = near.iter().map(|q| quotation_report(q, text.as_deref()));
+    Ok(Json::Array(reports.collect()))
+}
+
 /// The report object for one citation: the outcome, then the rows and build behind it.
 fn citation_report(
     connection: &Connection,
@@ -1371,6 +1436,7 @@ fn citation_report(
     own: Option<&str>,
     names: &BTreeMap<String, String>,
     digest: &Json,
+    all_quotes: &[Quotation],
 ) -> Result<Json, Exc> {
     let (kind, key, act, citation, end) = item;
     let (target, reason) = citation_target(draft, end, act.as_deref(), own, names);
@@ -1390,7 +1456,10 @@ fn citation_report(
     );
     let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
     let reason = reason.or((outcome == "ambiguous").then_some("several rows share this number"));
-    let row_ids = rows.iter().map(|r| field(r, "row_id").clone()).collect();
+    let row_ids: Vec<Json> = rows.iter().map(|r| field(r, "row_id").clone()).collect();
+    let graded = matches!(outcome, "resolved" | "assumed") && kind == "section";
+    let row = row_ids.first().filter(|_| graded && row_ids.len() == 1);
+    let quotations = sentence_quotations(connection, draft, end, all_quotes, row)?;
     let mut fields = vec![
         ("line".into(), Json::Int((newlines.count() + 1).into())),
         ("citation".into(), Json::str(&citation)),
@@ -1401,6 +1470,7 @@ fn citation_report(
         ("reason".into(), text_or_null(reason.map(str::to_string))),
         ("register_id".into(), text_or_null(target)),
         ("rows".into(), Json::Array(row_ids)),
+        ("quotations".into(), quotations),
     ];
     for name in TITLE_FIELDS {
         fields.push((name.into(), from_title(name)));
@@ -1423,9 +1493,13 @@ pub fn cite_check(
     let digest = rows_of(connection, sql, &[])?
         .first()
         .map_or(Json::Null, |row| field(row, "value").clone());
+    let all_quotes = quotes::quotations(draft);
     citations(draft)
         .into_iter()
-        .map(|item| citation_report(connection, draft, item, own.as_deref(), &names, &digest))
+        .map(|item| {
+            let own = own.as_deref();
+            citation_report(connection, draft, item, own, &names, &digest, &all_quotes)
+        })
         .collect()
 }
 
@@ -1517,7 +1591,7 @@ fn parser() -> Parser {
 /// Apart from `parser`, whose usage line is frozen by the Python parity fixtures.
 fn cite_check_parser() -> Parser {
     Parser::new("python -m fadden search cite-check")
-        .description("Report how each citation in a UTF-8 draft resolves against an index.")
+        .description("Report how each citation in a UTF-8 draft resolves against an index, and how any quotation in its sentence compares with the row reached.")
         .arg(Action::positional("index"))
         .arg(Action::positional("draft"))
         .arg(Action::option("--title").help("register id to check a citation naming no Act against; it is reported as assumed, never resolved"))
@@ -1565,6 +1639,29 @@ fn outcome_of(item: &Json) -> String {
     pyvalue::py_str(item.at("outcome"))
 }
 
+/// A citation's quotations.
+fn quotations_of(item: &Json) -> &[Json] {
+    match item.at("quotations") {
+        Json::Array(found) => found,
+        _ => &[],
+    }
+}
+
+fn print_quotation(quotation: &Json, run: &mut Run) {
+    let s = |key: &str| pyvalue::py_str(quotation.at(key));
+    let quote = s("quote");
+    let line = match quotation.at("grade").as_str() {
+        Some("partial") => format!(
+            "  quotation partial, longest run {} of {} words: {quote}",
+            s("matched_words"),
+            s("quote_words")
+        ),
+        Some(grade) => format!("  quotation {grade}: {quote}"),
+        None => format!("  quotation not compared, {}: {quote}", s("reason")),
+    };
+    run.print(&line);
+}
+
 fn read_draft(path: &str) -> Result<String, Exc> {
     let unreadable = |e: OsError| refused(format!("cannot read the draft ({})", strerror(&e)));
     let bytes = read_all(crate::pyio::open(path).map_err(unreadable)?, path).map_err(unreadable)?;
@@ -1588,6 +1685,29 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             s("outcome"),
             s("citation"),
             format!("{} {why}", shown_rows(&rows)).trim()
+        ));
+        for quotation in quotations_of(item) {
+            print_quotation(quotation, run);
+        }
+    }
+    let all_quotes: Vec<&Json> = report.iter().flat_map(quotations_of).collect();
+    if !all_quotes.is_empty() {
+        let count = |grade: Option<&str>| {
+            all_quotes
+                .iter()
+                .filter(|q| q.at("grade").as_str() == grade)
+                .count()
+        };
+        let mut parts: Vec<String> = GRADES
+            .iter()
+            .map(|grade| format!("{} {grade}", count(Some(grade))))
+            .collect();
+        parts.push(format!("{} not compared", count(None)));
+        parts.retain(|part| !part.starts_with("0 "));
+        run.print(&format!(
+            "{} quotations beside citations: {}.",
+            all_quotes.len(),
+            parts.join(", ")
         ));
     }
     let counted: Vec<String> = OUTCOMES
@@ -1618,9 +1738,13 @@ fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Resul
     } else {
         print_citations(&report, &connection, run)?;
     }
-    let clean = report
-        .iter()
-        .all(|item| CLEAN_OUTCOMES.contains(&outcome_of(item).as_str()));
+    let clean = report.iter().all(|item| {
+        CLEAN_OUTCOMES.contains(&outcome_of(item).as_str())
+            && quotations_of(item).iter().all(|quotation| {
+                let grade = quotation.at("grade").as_str();
+                grade.is_some_and(|grade| CLEAN_GRADES.contains(&grade))
+            })
+    });
     Ok(i32::from(!clean))
 }
 

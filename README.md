@@ -71,7 +71,7 @@ The au-tax-legislation-corpus guides are grouped as how-to, reference and backgr
 
 How-to:
 
-- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`. A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty
+- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`, which checks a draft's citations against your build and grades a quotation in each citation's sentence as `exact`, `normalised`, `partial` or `none`, and `authorities`, which exports that build as the closed list for `gate --authorities` in [llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails). A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty. A resolved citation or a graded quotation shows what this build holds, not that the provision applies or was the law at any date
 - [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md): checksum and SLSA provenance
 
 Reference:
