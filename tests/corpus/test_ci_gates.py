@@ -20,6 +20,29 @@ GATES = (
     (".github/workflows/ci.yml", "tests-gates", ("--exempt", "codecov"), "lint"),
     (".github/workflows/codeql.yml", "codeql-gates", (), "analyze"),
 )
+# tests-gates under a new file and job id. It reports the same check name, so
+# branch protection stays satisfied, but needs only a job of its own.
+RELOCATED_GATE = (
+    ".github/workflows/required-checks.yml",
+    """name: required checks
+
+on:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build
+  required-checks:
+    needs: [build]
+    name: tests-gates
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo gate
+""",
+)
 
 
 def needs(text: str, gate: str) -> list[str]:
@@ -36,8 +59,13 @@ def without_job(text: str, job: str) -> str:
 
 
 class ReleasePolicyGateTests(unittest.TestCase):
-    def pull_request(self, workflow: str, gate: str, exempt: tuple[str, ...], edit) -> subprocess.CompletedProcess[str]:
-        """Run the checker on a commit whose parent holds this repository's workflows."""
+    def pull_request(
+        self, workflow: str, gate: str, exempt: tuple[str, ...], edit, moved_gate: tuple[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """Run the checker on a commit whose parent holds this repository's workflows.
+
+        With moved_gate (path, text), the commit also adds that file and the checker reads it.
+        """
         with tempfile.TemporaryDirectory(prefix="gates-") as directory:
             shutil.copytree(ROOT / ".github" / "workflows", Path(directory) / ".github" / "workflows")
             env = {key: os.environ[key] for key in ("PATH", "SystemRoot", "TEMP", "TMP") if key in os.environ}
@@ -55,6 +83,9 @@ class ReleasePolicyGateTests(unittest.TestCase):
             path = Path(directory) / workflow
             text = edit(path.read_bytes().decode("utf-8").replace("\r\n", "\n"))
             path.write_bytes(text.encode("utf-8"))
+            if moved_gate is not None:
+                workflow, text = moved_gate
+                (Path(directory) / workflow).write_bytes(text.encode("utf-8"))
             git("add", "--all")
             git("commit", "--quiet", "--allow-empty", "--message", "change")
             env.update(GITHUB_EVENT_NAME="pull_request", RESULTS=json.dumps({job: {"result": "success"} for job in needs(text, gate)}))
@@ -80,6 +111,16 @@ class ReleasePolicyGateTests(unittest.TestCase):
                 result = self.pull_request(workflow, gate, exempt, lambda text, job=job: without_job(text, job))
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("These jobs were removed", result.stderr)
+
+    def test_a_gate_moved_to_a_second_workflow_keeps_its_jobs(self) -> None:
+        workflow, gate, _, job = GATES[0]
+        result = self.pull_request(
+            workflow, "required-checks", (),
+            lambda text: without_job(text, job).split(f"  {gate}:\n")[0], RELOCATED_GATE,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("These jobs were removed", result.stderr)
+        self.assertRegex(result.stderr, rf"\b{job}\b")
 
 
 if __name__ == "__main__":
