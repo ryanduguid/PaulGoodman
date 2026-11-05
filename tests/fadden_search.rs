@@ -2490,7 +2490,7 @@ fn other_rows_reads_a_quotation_holding_a_double_mark() {
     let c = case();
     let mut titles = sample_titles();
     let rows = &mut titles.get_mut(ACT).unwrap().1;
-    let text = "The form \"Widget Return\" is the approved fabricated form for each entity.";
+    let text = "The 5\" widget is the approved fabricated form for each reporting entity.";
     for (ordinal, section) in [(6, "8-1"), (7, "8-2")] {
         rows.push(row(ACT, ordinal, Some(section), text, section, None));
     }
