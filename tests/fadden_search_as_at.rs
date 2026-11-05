@@ -34,6 +34,19 @@ fn write_title(root: &Path, rid: &str, rows: &[Value]) {
     std::fs::write(directory.join(format!("{rid}.md")), "# Fabricated\n").unwrap();
 }
 
+/// A title's `sources.json` entry, current unless a successor has started or `rid` is
+/// the second title.
+fn title_entry(rid: &str, name: &str, rows: u32, next: Option<&str>) -> Value {
+    json!({
+        "register_id": rid, "name": name, "collection": "Act",
+        "compilation_number": "1", "compilation_date": START,
+        "version_is_current": rid == CURRENT, "current_version_start": next,
+        "retrieved": RETRIEVED, "jsonl_rows": rows,
+        "register_page": format!("https://example.invalid/{rid}"),
+        "source_url": format!("https://example.invalid/{rid}.epub"),
+    })
+}
+
 /// A build of one current title and one whose successor started on `NEXT_VERSION`.
 fn build(dir: &Path, superseded_from: Option<&str>) -> String {
     let root = dir.join("corpus");
@@ -68,19 +81,9 @@ fn build(dir: &Path, superseded_from: Option<&str>) -> String {
             "widget means a large device.",
         )],
     );
-    let title = |rid: &str, name: &str, rows: u32, current: bool, next: Option<&str>| {
-        json!({
-            "register_id": rid, "name": name, "collection": "Act",
-            "compilation_number": "1", "compilation_date": START,
-            "version_is_current": current, "current_version_start": next,
-            "retrieved": RETRIEVED, "jsonl_rows": rows,
-            "register_page": format!("https://example.invalid/{rid}"),
-            "source_url": format!("https://example.invalid/{rid}.epub"),
-        })
-    };
     let titles = json!({"retrieved": RETRIEVED, "titles": [
-        title(CURRENT, "Sample Levy Act 2099", 2, true, None),
-        title(SUPERSEDED, "Other Sample Act 2099", 1, false, superseded_from),
+        title_entry(CURRENT, "Sample Levy Act 2099", 2, None),
+        title_entry(SUPERSEDED, "Other Sample Act 2099", 1, superseded_from),
     ]});
     std::fs::write(root.join("sources.json"), titles.to_string()).unwrap();
     let out = dir.join("index.sqlite");
@@ -148,7 +151,7 @@ fn each_status_gives_rows_only_when_captured_and_otherwise_names_the_next_step()
             SUPERSEDED,
             NEXT_VERSION,
             "superseded",
-            "a later version applies; read the Register",
+            "a later version started; check the Register and application provisions",
         ),
         (
             CURRENT,
@@ -461,29 +464,198 @@ fn cite_check_without_a_date_is_unchanged() {
     );
 }
 
+/// (arguments after `search`, stdout, exit code) for each `$` line of the README's
+/// transcript, in order.
+fn readme_transcript(readme: &str) -> Vec<(Vec<String>, String, i32)> {
+    let (_, example) = readme.split_once("**Input:** the fabricated").unwrap();
+    let (_, block) = example.split_once("```console\n").unwrap();
+    let (block, _) = block.split_once("```").unwrap();
+    let mut steps = Vec::new();
+    for line in block.lines() {
+        if let Some(command) = line.strip_prefix("$ ") {
+            let command = command.strip_prefix("python -m fadden search ");
+            let words = command.expect("a README step runs `search`").split(' ');
+            steps.push((words.map(str::to_string).collect(), String::new(), -1));
+        } else {
+            let step: &mut (Vec<String>, String, i32) = steps.last_mut().unwrap();
+            match line.strip_prefix("[exit ") {
+                Some(code) => step.2 = code.trim_end_matches(']').parse().unwrap(),
+                None => step.1.push_str(&format!("{line}\n")),
+            }
+        }
+    }
+    steps
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        let target = to.join(path.file_name().unwrap());
+        if path.is_dir() {
+            copy_tree(&path, &target);
+        } else {
+            std::fs::copy(&path, &target).unwrap();
+        }
+    }
+}
+
 #[test]
-fn the_readme_example_prints_what_the_readme_shows() {
+fn the_readme_transcript_is_what_its_commands_print() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
     let readme = std::fs::read_to_string(repository.join("README.md")).unwrap();
-    let (_, shown) = readme.split_once("```text\n").unwrap();
-    let (shown, _) = shown.split_once("```").unwrap();
+    let steps = readme_transcript(&readme);
+    assert_eq!(steps.len(), 3);
+    // The commands' relative paths need the samples below a folder they may write beside.
     let dir = tempfile::tempdir().unwrap();
-    let index = dir.path().join("demo.sqlite");
-    let index = index.to_str().unwrap();
-    let demo = repository.join("samples").join("search-demo");
-    let (code, _, _) = cli(
-        repository,
-        &["build", demo.to_str().unwrap(), "--out", index],
+    let checkout = dir.path().join("checkout");
+    let demo = Path::new("samples").join("search-demo");
+    copy_tree(&repository.join(&demo), &checkout.join(&demo));
+    for (args, shown, shown_code) in steps {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, out, _) = cli(&checkout, &args);
+        assert_eq!(
+            (code, out.as_str()),
+            (shown_code, shown.as_str()),
+            "{args:?}"
+        );
+    }
+}
+
+/// `search` in `command`, with no word or term matching, for each dated command below.
+fn no_match(command: &str, index: &str, date: &str, json: bool) -> Vec<String> {
+    let mut args = [command, index, "gizmo", "--as-at", date]
+        .map(str::to_string)
+        .to_vec();
+    if json {
+        args.push("--json".to_string());
+    }
+    args
+}
+
+#[test]
+fn no_rows_and_exit_0_mean_every_title_in_scope_was_captured() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    for command in ["query", "define"] {
+        let args = no_match(command, &index, START, false);
+        let (code, out, _) = cli(
+            dir.path(),
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        assert_eq!(code, 0, "{out}");
+        assert!(!out.contains("refused"), "{out}");
+    }
+}
+
+#[test]
+fn no_rows_with_no_title_captured_refuses_each_title_and_exits_1() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    for command in ["query", "define"] {
+        let args = no_match(command, &index, "2099-01-01", false);
+        let (code, out, _) = cli(
+            dir.path(),
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        assert_eq!(code, 1, "{out}");
+        for title in [CURRENT, SUPERSEDED] {
+            assert!(out.contains(&format!("refused {title}")), "{out}");
+        }
+        assert!(out.contains("before_compilation on 2099-01-01"), "{out}");
+    }
+}
+
+#[test]
+fn no_rows_with_some_titles_captured_refuses_the_others_and_exits_1() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    for command in ["query", "define"] {
+        let args = no_match(command, &index, NEXT_VERSION, true);
+        let (code, out, _) = cli(
+            dir.path(),
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        assert_eq!(code, 1, "{out}");
+        let lines = json_lines(&out);
+        assert_eq!(lines.len(), 2, "{out}");
+        assert_eq!(lines[0]["register_id"], SUPERSEDED);
+        assert_eq!(lines[0]["matching_rows"], 0);
+        assert_eq!(lines[0]["as_at"]["status"], "superseded");
+        assert_eq!(lines[1]["as_at_summary"]["rows"], 0);
+    }
+}
+
+#[test]
+fn a_title_in_scope_decides_an_empty_answer_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    let mut args = no_match("query", &index, NEXT_VERSION, false);
+    args.extend(["--title".to_string(), CURRENT.to_string()]);
+    let (code, out, _) = cli(
+        dir.path(),
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
     );
-    assert_eq!(code, 0);
-    let (code, found, _) = cli(repository, &["query", index, "taxable", "sale"]);
-    assert_eq!(code, 0);
-    assert!(found.contains("2 rows."));
-    let draft = demo.join("draft.md");
-    let (code, checked, _) = cli(repository, &["cite-check", index, draft.to_str().unwrap()]);
-    assert_eq!(code, 1);
-    for line in shown.lines() {
-        let held = found.contains(line) || checked.contains(line);
-        assert!(held, "the README shows a line no command printed: {line}");
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("refused"), "{out}");
+}
+
+#[test]
+fn cite_check_refuses_a_named_title_even_with_no_citation() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    let draft = dir.path().join("empty.md");
+    std::fs::write(&draft, "This draft cites nothing.\n").unwrap();
+    let draft = draft.to_str().unwrap();
+    let dated = |title: Option<&str>, json: bool| {
+        let mut args = vec!["cite-check", &index, draft, "--as-at", NEXT_VERSION];
+        args.extend(title.iter().flat_map(|title| ["--title", title]));
+        args.extend(json.then_some("--json"));
+        cli(dir.path(), &args)
+    };
+    let (code, out, _) = dated(Some(SUPERSEDED), false);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains(&format!("refused {SUPERSEDED}")), "{out}");
+    assert!(out.contains("superseded on 2099-07-20"), "{out}");
+    let (code, out, _) = dated(Some(SUPERSEDED), true);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(json_lines(&out)[0]["refused"], true);
+    assert_eq!(dated(Some(CURRENT), false).0, 0);
+    assert_eq!(dated(None, false).0, 0);
+}
+
+#[test]
+fn a_schema_2_index_is_refused_by_every_read_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), None);
+    // Schema 3 added this column and nothing else.
+    rusqlite::Connection::open(&index)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE titles DROP COLUMN superseded_from; \
+             UPDATE meta SET value = '2' WHERE key = 'schema';",
+        )
+        .unwrap();
+    let draft = dir.path().join("draft.md");
+    std::fs::write(&draft, "See section 1 of the Sample Levy Act 2099.\n").unwrap();
+    let draft = draft.to_str().unwrap();
+    let row = format!("{CURRENT}:0001:1");
+    let dated: [&[&str]; 2] = [&[], &["--as-at", START]];
+    let mut commands: Vec<Vec<&str>> = vec![vec!["refs", &index, &row]];
+    for date in dated {
+        for command in [
+            ["query", &index, "widget"],
+            ["define", &index, "widget"],
+            ["cite-check", &index, draft],
+        ] {
+            commands.push([&command[..], date].concat());
+        }
+    }
+    assert_eq!(commands.len(), 7);
+    for args in commands {
+        let (code, out, err) = cli(dir.path(), &args);
+        assert_eq!(code, 1, "{args:?}");
+        assert_eq!(out, "", "{args:?}");
+        assert!(err.contains("different schema version"), "{args:?}: {err}");
     }
 }

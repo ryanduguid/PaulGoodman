@@ -38,27 +38,38 @@ The example below is fabricated and offline: it searches a fictional Act, then c
 
 **Input:** the fabricated [Sample Consumption Tax Act 2099](samples/search-demo/sources.json) and a [draft](samples/search-demo/draft.md) that cites it.
 
-```bash
-python -m fadden search build samples/search-demo --out ../search-demo.sqlite
-python -m fadden search query ../search-demo.sqlite taxable sale
-python -m fadden search cite-check ../search-demo.sqlite samples/search-demo/draft.md
-```
+**Commands and output:** `search query` prints each row with its `row_id`, compilation and Register page. `cite-check` finds the quotation in the section cited, reports section 9 as not held and exits 1.
 
-**Output:** `search query` prints 2 rows, each with its `row_id`, compilation and Register page. `cite-check` finds the quotation in the section cited, reports section 9 as not held and exits 1:
-
-```text
+```console
+$ python -m fadden search build samples/search-demo --out ../search-demo.sqlite
+indexed 1 titles, 3 rows, 1 definitions and 0 section references
+[exit 0]
+$ python -m fadden search query ../search-demo.sqlite taxable sale
 1. Sample Consumption Tax Act 2099: 2 Definitions
    C2099A00001:0002:2, compilation 1 (2099-07-01), current, retrieved 2099-08-01
+   https://example.invalid/C2099A00001
+   [taxable] [sale] means a [sale] a seller makes in the course of an enterprise.
+2. Sample Consumption Tax Act 2099: 3 Liability for sample consumption tax
+   C2099A00001:0003:3, compilation 1 (2099-07-01), current, retrieved 2099-08-01
+   https://example.invalid/C2099A00001
+   A seller is liable for sample consumption tax on each [taxable] [sale].
+2 rows. Index of the corpus retrieved 2099-08-01, sources.json sha256 73d95db611177211. Finding aid derived from the Register's EPUB reading view, not authorised legislation or tax advice. Read the authorised compilation on the Register before relying on a row.
+[exit 0]
+$ python -m fadden search cite-check ../search-demo.sqlite samples/search-demo/draft.md
 line 1: resolved: Section 3 of the Sample Consumption Tax Act 2099: C2099A00001:0003:3
   quotation exact, not distinct, 0 other rows hold it: A seller is liable for sample consumption tax
-line 3: not_held: Section 9 of the Sample Consumption Tax Act 2099:
+line 3: not_held: Section 9 of the Sample Consumption Tax Act 2099: 
+1 quotations, 1 comparisons with citations: 1 exact.
+2 citations: 1 resolved, 1 not_held. A resolved citation names its Act and a provision this build holds. An assumed citation names no Act in its sentence, so it shows only that --title holds the provision, not that the author meant that title. Neither shows that the provision says what the draft claims or applied at any date. A quotation is read only in quotation marks in the citation's sentence, and only against a resolved or assumed section. Exact and normalised show those words are in that row of this build, not that they are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source. Current and superseded are this build's record from the Register, not a check today; a later amendment can outdate them. Forms refs does not read, such as s 8-1, are not counted.
+Index of the corpus retrieved 2099-08-01, sources.json sha256 73d95db611177211. Finding aid derived from the Register's EPUB reading view, not authorised legislation or tax advice. Read the authorised compilation on the Register before relying on a row.
+[exit 1]
 ```
 
 The title, dates and rows are fictional. They describe no real legislation and establish no legal effect.
 
 ### Search real law from an empty folder
 
-`python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts on your machine and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server, which then answers `search_tax_legislation` from that folder. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay ([evidence](docs/build-evidence.md#one-command-preset-build)). It fetches each Act from the Register, keeps the result in that folder and publishes nothing. The command needs `curl` and network access; [BUILD.md](BUILD.md#one-command-preset-build) lists the Acts.
+`python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts on your machine and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server, which then answers `search_tax_legislation` from that folder. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay ([evidence](docs/build-evidence.md#one-command-preset-build)). It fetches each Act from the Register, builds beside that folder, moves the result in only once all 9 Acts are indexed and publishes nothing. The command needs `curl` and network access; [BUILD.md](BUILD.md#one-command-preset-build) lists the Acts.
 
 ## Two related systems
 

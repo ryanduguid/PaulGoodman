@@ -22,7 +22,7 @@
 - **Authorities export (`authorities`)**: writes that build's sections of current Acts and captured ruling ids as the closed list for `gate --authorities` in llm-tax-guardrails. A listed authority exists in the build; it is not thereby current or correctly applied.
 - **Evidence contracts**: live Register capture, synthetic observations and publication candidates are distinct. A successful capture or export authorises nothing for publication.
 
-- **Preset build (`quick`)**: `python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts locally, queries the index and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server's `search_tax_legislation`. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay. Nothing is downloaded from this project and nothing is published.
+- **Preset build (`quick`)**: `python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts locally, checks that each holds indexed rows, moves the build into that folder and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server's `search_tax_legislation`. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay. Nothing is downloaded from this project and nothing is published.
 
 ## Review queue (`tax-radar-au`)
 - **Domain**: a synthetic, provenance-first review-queue demonstration over supplied Commonwealth tax-source metadata. It does not read or store source text.

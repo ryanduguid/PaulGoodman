@@ -172,7 +172,9 @@ fn the_summary_counts_every_status() {
     let (code, out, _) = run(&["2026-07-10"], &[current(), superseded()]);
     assert_eq!(code, 0);
     assert!(out.contains("captured: 1"));
-    assert!(out.contains("superseded: 1 (a later version applies; read the Register)"));
+    assert!(out.contains(
+        "superseded: 1 (a later version started; check the Register and application provisions)"
+    ));
     assert!(out.contains("not a finding that the text was the law then"));
 }
 

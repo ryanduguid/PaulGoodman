@@ -863,7 +863,7 @@ pub fn run(
 
 /// A line for each captured document's withdrawal notice, then what a notice leaves
 /// open. The rows stay in the output whatever the notice says.
-pub fn withdrawal_lines(documents: &[Json]) -> Vec<String> {
+fn withdrawal_lines(documents: &[Json]) -> Vec<String> {
     let noticed = documents
         .iter()
         .filter(|document| document.at("withdrawal_status").as_str() == Some("NOTICE_PRESENT"));

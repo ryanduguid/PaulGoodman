@@ -12,7 +12,7 @@ use tax_radar_au::fadden::Run;
 use tax_radar_au::fadden::http::{Failure, Http, RETRY_DELAY, Request, Response};
 use tax_radar_au::fadden::rulings::{
     self, BASE_URL, MAX_BYTES, MAX_TARGETS, NOTICE, Parsed, RulingsError, TargetsError,
-    WITHDRAWAL_WARNING, withdrawal_lines,
+    WITHDRAWAL_WARNING,
 };
 use tax_radar_au::pyjson::loads_standard;
 use tax_radar_au::pypath::PyPath;
@@ -913,28 +913,33 @@ fn main_reports_an_invalid_target_list() {
 }
 
 #[test]
-fn a_captured_notice_is_reported_with_what_it_leaves_open() {
-    let record = |docid: &str, status: &str, notice: &str| {
-        loads_standard(
-            &json!({"docid": docid, "withdrawal_status": status, "withdrawal_notice": notice})
-                .to_string(),
-        )
-        .unwrap()
-    };
-    let documents = [
-        record(
-            "TXR/1",
-            "NOTICE_PRESENT",
-            "This fabricated ruling is withdrawn.",
-        ),
-        record("TXR/2", "UNKNOWN", ""),
-    ];
+fn a_run_reports_each_captured_notice_with_what_it_leaves_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("run");
+    let raw = page().replace(r#"<div id="LawBody">"#, WITHDRAWN);
+    let (code, state, _) = run_pages(vec![served(DOCID, &raw)], &[DOCID], &out);
+    assert_eq!(code, 0);
+    let stdout = String::from_utf8(state.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
-        withdrawal_lines(&documents),
+        lines[lines.len() - 2..],
         [
-            "  withdrawal notice in TXR/1: This fabricated ruling is withdrawn.",
-            WITHDRAWAL_WARNING,
+            format!(
+                "  withdrawal notice in {DOCID}: This fabricated ruling is withdrawn from 1 July 2099."
+            ),
+            WITHDRAWAL_WARNING.to_string(),
         ]
     );
-    assert!(withdrawal_lines(&documents[1..]).is_empty());
+    assert!(lines[lines.len() - 3].starts_with("rulings: 1 documents"));
+}
+
+#[test]
+fn a_run_with_no_notice_says_nothing_of_withdrawal() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("run");
+    let (code, state, _) = run_pages(vec![served(DOCID, &page())], &[DOCID], &out);
+    assert_eq!(code, 0);
+    let stdout = String::from_utf8(state.stdout).unwrap();
+    assert!(!stdout.contains("withdrawal notice"), "{stdout}");
+    assert!(!stdout.contains(WITHDRAWAL_WARNING), "{stdout}");
 }

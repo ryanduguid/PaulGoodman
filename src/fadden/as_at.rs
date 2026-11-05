@@ -32,7 +32,9 @@ it is not a finding that the text was the law then.";
 pub fn next_step(status: &str) -> Option<&'static str> {
     match status {
         BEFORE_COMPILATION => Some("read the Register's earlier compilations"),
-        SUPERSEDED => Some("a later version applies; read the Register"),
+        SUPERSEDED => {
+            Some("a later version started; check the Register and application provisions")
+        }
         AFTER_RETRIEVAL => Some("run check_current and read the Register"),
         _ => None,
     }
