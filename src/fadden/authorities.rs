@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use regex::Regex;
-use rusqlite::Connection;
+use rusqlite::{Connection, Statement};
 use sha2::{Digest, Sha256};
 
 use super::{Exc, Run, search};
@@ -49,10 +49,8 @@ fn sqlite(error: &rusqlite::Error) -> Exc {
     Exc::Sqlite(error.to_string())
 }
 
-/// Each section of each title the gate can read and only that title can answer to.
-pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), Exc> {
-    let act = pattern(&format!("^{ACT}$"));
-    let section = pattern(SECTION);
+/// Each title's register id, name and currency, and how many titles share its name.
+fn titles(connection: &Connection) -> Result<Vec<(String, String, bool, i64)>, Exc> {
     let mut titles = connection
         .prepare(
             "SELECT register_id, name, version_is_current, \
@@ -60,7 +58,7 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
              FROM titles ORDER BY register_id",
         )
         .map_err(|e| sqlite(&e))?;
-    let titles = titles
+    titles
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -70,7 +68,58 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
             ))
         })
         .and_then(Iterator::collect::<Result<Vec<_>, _>>)
-        .map_err(|e| sqlite(&e))?;
+        .map_err(|e| sqlite(&e))
+}
+
+/// One title's numbered rows: row id, section key and container.
+fn section_rows(
+    rows: &mut Statement,
+    rid: &str,
+) -> Result<Vec<(String, String, Option<String>)>, Exc> {
+    rows.query_map([rid], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })
+    .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+    .map_err(|e| sqlite(&e))
+}
+
+/// List one title's sections, reporting the rows left out.
+fn add_title_rows(
+    found: Vec<(String, String, Option<String>)>,
+    (rid, name): (&str, &str),
+    section: &Regex,
+    export: &mut Export,
+) {
+    let mut in_schedule = 0;
+    for (row_id, key, container) in found {
+        // A numbered row directly under a Schedule is a clause or item, so
+        // `s 1 of the Act` would name a section the Act may not have.
+        if container.is_some_and(|c| c.starts_with("Schedule")) {
+            in_schedule += 1;
+        } else if section.is_match(&key) {
+            export.sections.insert(format!("s {key} of the {name}"));
+        } else {
+            export
+                .skipped
+                .push(format!("row {row_id}: the gate does not read this label"));
+        }
+    }
+    if in_schedule > 0 {
+        export.skipped.push(format!(
+            "title {rid} ({name}): {in_schedule} rows directly under a Schedule"
+        ));
+    }
+}
+
+/// Each section of each title the gate can read and only that title can answer to.
+pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), Exc> {
+    let act = pattern(&format!("^{ACT}$"));
+    let section = pattern(SECTION);
+    let titles = titles(connection)?;
     let mut rows = connection
         .prepare(
             "SELECT row_id, section_key, container FROM rows \
@@ -94,45 +143,18 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
             continue;
         }
         let name = py::split_whitespace(&name).join(" ");
-        let found = rows
-            .query_map([&rid], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            })
-            .and_then(Iterator::collect::<Result<Vec<_>, _>>)
-            .map_err(|e| sqlite(&e))?;
-        let mut in_schedule = 0;
-        for (row_id, key, container) in found {
-            // A numbered row directly under a Schedule is a clause or item, so
-            // `s 1 of the Act` would name a section the Act may not have.
-            if container.is_some_and(|c| c.starts_with("Schedule")) {
-                in_schedule += 1;
-            } else if section.is_match(&key) {
-                export.sections.insert(format!("s {key} of the {name}"));
-            } else {
-                export
-                    .skipped
-                    .push(format!("row {row_id}: the gate does not read this label"));
-            }
-        }
-        if in_schedule > 0 {
-            export.skipped.push(format!(
-                "title {rid} ({name}): {in_schedule} rows directly under a Schedule"
-            ));
-        }
+        let found = section_rows(&mut rows, &rid)?;
+        add_title_rows(found, (&rid, &name), &section, export);
     }
     Ok(())
 }
 
-/// Each ruling id named at the start of a captured document's title. `files` holds
-/// each `rulings.jsonl` with the path to report; a file with no rows, or a row the
-/// stage could not have written, stops the export. A document's ids are all those its
-/// captures' titles name, and a withdrawal notice in any capture leaves them all out,
-/// even where another document lists one.
-pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<(), Exc> {
+/// Each document in `files`, with the ids its captures' titles name and whether any
+/// capture carries a withdrawal notice. A file with no rows, or a row the stage could
+/// not have written, is an error.
+fn read_documents(
+    files: &[(String, String)],
+) -> Result<BTreeMap<String, (BTreeSet<String>, bool)>, Exc> {
     let id = pattern(&format!(r"^({SERIES})\s+({RULING_ID})(?:\s|$)"));
     let mut documents: BTreeMap<String, (BTreeSet<String>, bool)> = BTreeMap::new();
     for (path, text) in files {
@@ -165,8 +187,17 @@ pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<()
             document.1 |= status == Some("NOTICE_PRESENT");
         }
     }
+    Ok(documents)
+}
+
+/// Each ruling id named at the start of a captured document's title. `files` holds
+/// each `rulings.jsonl` with the path to report; a file with no rows, or a row the
+/// stage could not have written, stops the export. A document's ids are all those its
+/// captures' titles name, and a withdrawal notice in any capture leaves them all out,
+/// even where another document lists one.
+pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<(), Exc> {
     let mut withdrawn_ids = BTreeSet::new();
-    for (docid, (ids, withdrawn)) in documents {
+    for (docid, (ids, withdrawn)) in read_documents(files)? {
         if withdrawn {
             withdrawn_ids.extend(ids);
             let reason = format!("ruling {docid}: it carries a withdrawal notice");
