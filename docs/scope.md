@@ -64,7 +64,7 @@ The limits above apply to every status. `--as-at` reads the window `compilation_
 
 With `--json`, `query` and `define` print one object per line: each hit with an `as_at` object, then one `{"refused": true, ...}` per refused title with `register_id`, `act`, `matching_rows` and `as_at`, then `{"as_at_summary": ...}` with `date`, `rows`, `withheld_rows`, `titles` (a count per status) and `covers`. The `as_at` object holds `date`, `status`, `compilation_date`, `superseded_from`, `retrieved`, `covers` and `next_step`, which is null for `captured`. `cite-check --json` adds the same object to each citation, or null if the citation reached no title.
 
-The index stores `superseded_from` from schema 3, so an index built earlier is refused until `search build` runs again. A consumer that reads `sections.jsonl` instead of the index, as the MCP server does, can apply the same 4 statuses from each row's own `compilation_date`, `superseded_from`, `retrieved` and `version_is_current` fields, and should report the same field names.
+The index stores `superseded_from` from schema 3, so an index built earlier is refused until `search build` runs again. A consumer that reads `sections.jsonl` instead of the index, as the MCP server does, can apply the same 4 statuses from each row's own `compilation_date`, `superseded_from`, `retrieved` and `version_is_current` fields, and should report the same field names. `version_is_current` is false for a title with no published compilation for the version in force.
 
 ### Amendments a build cannot see
 
