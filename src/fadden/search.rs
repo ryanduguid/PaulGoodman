@@ -1289,6 +1289,14 @@ fn citation_outcome(
     }
 }
 
+/// The columns of the cited title that pin a result to the build.
+const TITLE_FIELDS: [&str; 4] = [
+    "compilation_number",
+    "compilation_date",
+    "retrieved",
+    "sections_sha256",
+];
+
 /// The report object for one citation: the outcome, then the rows and build behind it.
 fn citation_report(
     connection: &Connection,
@@ -1331,12 +1339,7 @@ fn citation_report(
         ("register_id".into(), text_or_null(target)),
         ("rows".into(), Json::Array(row_ids)),
     ];
-    for name in [
-        "compilation_number",
-        "compilation_date",
-        "retrieved",
-        "sections_sha256",
-    ] {
+    for name in TITLE_FIELDS {
         fields.push((name.into(), from_title(name)));
     }
     fields.push(("sources_sha256".into(), digest.clone()));
