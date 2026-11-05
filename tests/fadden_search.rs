@@ -1901,12 +1901,14 @@ fn quoted_case() -> (Case, rusqlite::Connection) {
     let mut titles = sample_titles();
     let quoted = row(ACT, 6, Some("7-1"), QUOTED, "7-1 Offset", None);
     titles.get_mut(ACT).unwrap().1.push(quoted);
-    let stock = format!("A gizmo counts for the purposes of this Act and is non{NBH}widget stock.");
+    let stock = format!(
+        "A gizmo counts for the purposes of this Act and is non{NBH}widget stock. The cap is $18,200 a year. The rate is 10% for the 2019\u{2013}20 year."
+    );
     let stock = row(ACT, 7, Some("7-2"), &stock, "7-2 Gizmos", None);
     titles.get_mut(ACT).unwrap().1.push(stock);
-    let plural = "Widgets count for the purposes of this Acts register only.";
-    let plural = row(ACT, 8, Some("7-3"), plural, "7-3 Registers", None);
-    titles.get_mut(ACT).unwrap().1.push(plural);
+    let other_case = "For the purposes of this act, widgets count.";
+    let other_case = row(ACT, 8, Some("7-3"), other_case, "7-3 Registers", None);
+    titles.get_mut(ACT).unwrap().1.push(other_case);
     write_corpus(&c.root, &titles, &[]);
     build(&c);
     let connection = search::open_index(&s(&c.out)).unwrap();
@@ -2297,7 +2299,8 @@ fn a_flood_of_opening_marks_reports_a_bounded_text_for_each() {
 fn a_held_quotation_reports_how_many_other_rows_hold_it() {
     let (c, connection) = quoted_case();
     let dir = c.out.parent().unwrap();
-    // A stock phrase: rows 7-1 and 7-2 hold it, and row 7-3's `Acts` is another word.
+    // A stock phrase: rows 7-1 and 7-2 hold it. Row 7-3 has its words in another case,
+    // which the full-text index matches and the grade does not.
     let stock = quotations_at(
         &connection,
         &format!("{AT} says \"for the purposes of this Act\"."),
@@ -2309,6 +2312,12 @@ fn a_held_quotation_reports_how_many_other_rows_hold_it() {
     let folded = quotations_at(&connection, &format!("{AT} says \"non-widget\"."));
     assert_eq!(folded[0]["grade"], "normalised");
     assert_eq!(folded[0]["other_rows"], 1);
+    // At the floor, but another row holds it.
+    let repeated = "The cap is $18,200 a year. The rate is 10% for the";
+    let found = quotations_at(&connection, &format!("{AT} says \"{repeated}\"."));
+    assert_eq!(found[0]["quote_words"], 12);
+    assert_eq!(found[0]["other_rows"], 1);
+    assert_eq!(found[0]["distinct"], false);
     // No other row, but under the floor.
     let short = quotations_at(&connection, &format!("{AT} says \"the widget costs\"."));
     assert_eq!(short[0]["other_rows"], 0);
