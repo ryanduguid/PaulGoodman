@@ -2386,3 +2386,101 @@ fn distinct_floor_on_a_real_index() {
         println!("{length} words: {total} runs, {alone} in one row only, {share:.2}%");
     }
 }
+
+#[test]
+fn a_space_after_an_opening_mark_does_not_hide_a_quotation() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    let draft = |quote: &str| format!("{AT} says {quote}.");
+    for quote in [
+        "\" invented words\"",
+        "\"\ninvented words\"",
+        "\u{201c} invented words\u{201d}",
+        "\u{2018} invented words\u{2019}",
+        "' invented words'",
+    ] {
+        std::fs::write(dir.join("draft.md"), draft(quote)).unwrap();
+        let (code, out, _) = cli(&["cite-check", "index.sqlite", "draft.md"], dir);
+        assert_eq!(code, 1, "{quote}: {out}");
+        assert!(out.contains("  quotation none: invented words\n"), "{out}");
+    }
+    // The comparison ignores the space, and the offset is still the mark's.
+    let found = quotations_at(&connection, &draft("\" the widget costs\""));
+    assert_eq!(found[0]["grade"], "exact");
+    assert_eq!(found[0]["quote"], "the widget costs");
+    assert_eq!(found[0]["start"], AT.len() + 6);
+    // A mark closing before a space, or standing alone, is not lost either.
+    for quote in [
+        "\"invented words \"",
+        "\" invented words \"",
+        "\"\n\ninvented words\"",
+    ] {
+        std::fs::write(dir.join("draft.md"), draft(quote)).unwrap();
+        let (code, out, _) = cli(&["cite-check", "index.sqlite", "draft.md"], dir);
+        assert_eq!(code, 1, "{quote}: {out}");
+        assert!(out.contains("it has no closing mark"), "{quote}: {out}");
+    }
+}
+
+#[test]
+fn a_closing_or_possessive_mark_does_not_open_a_quotation() {
+    let (c, connection) = quoted_case();
+    let dir = c.out.parent().unwrap();
+    for draft in [
+        format!("{AT} applies to the taxpayers' widgets."),
+        format!("{AT} applies to the taxpayers\u{2019} widgets."),
+        format!("{AT} applies to the widgets of the taxpayers'."),
+    ] {
+        assert!(graded(&connection, &draft, None).is_empty(), "{draft}");
+        std::fs::write(dir.join("draft.md"), &draft).unwrap();
+        assert_eq!(cli(&["cite-check", "index.sqlite", "draft.md"], dir).0, 0);
+    }
+    // Punctuation before a closing mark and a space after it leaves it a closing mark.
+    let draft = format!("{AT} says 'the widget costs,' and 'less than'.");
+    let quotes: Vec<String> = graded(&connection, &draft, None)
+        .into_iter()
+        .map(|found| found.2)
+        .collect();
+    assert_eq!(quotes, ["the widget costs,", "less than"]);
+}
+
+#[test]
+fn other_rows_finds_a_row_whatever_form_it_holds_the_words_in() {
+    let c = case();
+    let mut titles = sample_titles();
+    let rows = &mut titles.get_mut(ACT).unwrap().1;
+    let plain = "The final widget amount for this year is worked out by the fabricated method.";
+    let bullet = "Pay the levy \u{f0b7} then lodge the return by the fabricated due date now.";
+    for (ordinal, section, text) in [
+        (6, "8-1", plain.to_string()),
+        (7, "8-2", plain.replace("final", "\u{fb01}nal")),
+        (8, "8-3", bullet.to_string()),
+        (9, "8-4", bullet.to_string()),
+    ] {
+        rows.push(row(ACT, ordinal, Some(section), &text, section, None));
+    }
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let cited = |section: &str, quote: &str| {
+        let draft = format!("Section {section} of the Sample Levy Act 2099 says \"{quote}\".");
+        quotations_at(&connection, &draft).remove(0)
+    };
+    for (section, quote) in [
+        ("8-1", plain.trim_end_matches('.').to_string()),
+        (
+            "8-2",
+            plain
+                .replace("final", "\u{fb01}nal")
+                .trim_end_matches('.')
+                .to_string(),
+        ),
+        ("8-3", bullet.trim_end_matches('.').to_string()),
+    ] {
+        let found = cited(section, &quote);
+        assert_eq!(found["grade"], "exact", "{quote}");
+        assert!(found["quote_words"].as_u64().unwrap() >= 10);
+        assert_eq!(found["other_rows"], 1, "{quote}");
+        assert_eq!(found["distinct"], false, "{quote}");
+    }
+}

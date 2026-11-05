@@ -69,9 +69,14 @@ fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
     let chars: Vec<(usize, char)> = paragraph.char_indices().collect();
     let at = |i: usize| chars.get(i).map(|&(_, c)| c);
     let before = |i: usize| i.checked_sub(1).and_then(at);
+    // A mark before white space opens too, so a stray space cannot hide a quotation. A
+    // straight single mark must then also stand clear of the text before it, because
+    // after punctuation it is the closing mark in `'costs.' and`.
     let opens = |i: usize| {
-        !before(i).is_some_and(char::is_alphanumeric)
-            && at(i + 1).is_some_and(|c| !c.is_whitespace())
+        let tight = at(i + 1).is_some_and(|c| !c.is_whitespace());
+        let clear = chars[i].1 != '\''
+            || before(i).is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '['));
+        !before(i).is_some_and(char::is_alphanumeric) && (tight || clear)
     };
     let closes = |i: usize| {
         before(i).is_some_and(|c| !c.is_whitespace())
@@ -110,17 +115,17 @@ fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
             Some(&j) => {
                 let close = MARKS[kind].1.len_utf8();
                 (
-                    paragraph[inside..chars[j].0].to_string(),
+                    paragraph[inside..chars[j].0].trim().to_string(),
                     chars[j].0 + close,
                     j + 1,
                 )
             }
             None => {
-                let shown = paragraph[inside..].chars().take(UNCLOSED_SHOWN);
-                (shown.collect(), inside, i + 1)
+                let shown = paragraph[inside..].trim_start().chars();
+                (shown.take(UNCLOSED_SHOWN).collect(), inside, i + 1)
             }
         };
-        if text.chars().any(char::is_alphanumeric) {
+        if closing.is_none() || text.chars().any(char::is_alphanumeric) {
             found.push(Quotation {
                 text,
                 start: base + place,
