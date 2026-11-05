@@ -5,6 +5,7 @@ type: software
 authors:
   - family-names: Duguid
     given-names: Ryan
+    website: "https://duguid.com.au/"
 abstract: "Code for building a corpus of in-force Commonwealth tax legislation, with source and provenance records."
 repository-code: "https://github.com/ryanduguid/au-tax-legislation-corpus"
 license-url: "https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/LICENSE"
@@ -13,7 +14,6 @@ keywords:
   - australia
   - australian-law
   - australian-tax
-  - australian-taxation
   - commonwealth-tax
   - corpus
   - legal-data
