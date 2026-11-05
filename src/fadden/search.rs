@@ -928,11 +928,7 @@ fn rows_of(
     params: &[Sql],
 ) -> Result<Vec<Vec<(String, Json)>>, Exc> {
     let mut statement = connection.prepare(sql).map_err(|e| sqlite_error(&e))?;
-    let columns: Vec<String> = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let columns: Vec<String> = statement.column_names().map(str::to_string).collect();
     let mut rows = statement
         .query(params_from_iter(params.iter()))
         .map_err(|e| sqlite_error(&e))?;
