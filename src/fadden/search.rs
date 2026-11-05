@@ -20,6 +20,7 @@ use rusqlite::{Connection, OpenFlags, params_from_iter};
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
+use super::as_at;
 use super::corpus_paths::{child, register_id, register_id_str};
 use super::quotes::{self, Quotation};
 use super::{Exc, Run};
@@ -30,7 +31,7 @@ use crate::pypath::PyPath;
 use crate::pyre::{self, S as DOTALL};
 use crate::pyvalue::{self, dumps_line, py_eq, repr, str_for_stderr, type_name};
 
-const SCHEMA: &str = "2";
+const SCHEMA: &str = "3";
 pub const NOTICE: &str = "Finding aid derived from the Register's EPUB reading view, not authorised \
 legislation or tax advice. Read the authorised compilation on the Register before relying on a row.";
 
@@ -551,7 +552,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE titles (
   register_id TEXT PRIMARY KEY, name TEXT NOT NULL, collection TEXT,
   compilation_number TEXT, compilation_date TEXT, version_is_current INTEGER NOT NULL,
-  retrieved TEXT, register_page TEXT, source_url TEXT, rows INTEGER NOT NULL,
+  retrieved TEXT, superseded_from TEXT, register_page TEXT, source_url TEXT, rows INTEGER NOT NULL,
   sections_sha256 TEXT NOT NULL, markdown_sha256 TEXT NOT NULL);
 CREATE TABLE rows (
   id INTEGER PRIMARY KEY, row_id TEXT NOT NULL UNIQUE,
@@ -725,6 +726,7 @@ fn write_index(
                 get(title, "compilation_date").clone(),
                 current,
                 get(title, "retrieved").clone(),
+                get(title, "current_version_start").clone(),
                 get(title, "register_page").clone(),
                 get(title, "source_url").clone(),
                 Json::Int(entry.rows.len().into()),
@@ -733,7 +735,7 @@ fn write_index(
             ];
             run(
                 &connection,
-                "INSERT INTO titles VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO titles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 params_from_iter(bind_all(&values)?),
             )
             .map_err(|e| sqlite_error(&e))?;
@@ -993,6 +995,7 @@ snippet(rows_fts, 1, '[', ']', '...', 16) AS snippet \
 FROM rows_fts JOIN rows r ON r.id = rows_fts.rowid \
 JOIN titles t ON t.register_id = r.register_id \
 WHERE rows_fts MATCH ? AND (? IS NULL OR r.register_id = ?) \
+AND (? IS NULL OR r.register_id IN (SELECT value FROM json_each(?))) \
 ORDER BY r.section_key IN (SELECT value FROM json_each(?)) DESC, \
 t.version_is_current DESC, bm25(rows_fts, 4.0, 1.0), r.id LIMIT ?";
 const DEFINE_SQL: &str = "SELECT d.term, d.text AS definition, r.row_id, r.register_id, r.section, r.heading, \
@@ -1028,6 +1031,17 @@ pub fn query(
     title: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Json>, Exc> {
+    ranked(connection, words, title, limit, Sql::Null)
+}
+
+/// `query`, among only the register ids `only` lists as JSON, if it is not null.
+fn ranked(
+    connection: &Connection,
+    words: &[String],
+    title: Option<&str>,
+    limit: i64,
+    only: Sql,
+) -> Result<Vec<Json>, Exc> {
     let rid = optional_rid(title)?;
     let mut sections: Vec<String> = words
         .iter()
@@ -1043,6 +1057,8 @@ pub fn query(
         Sql::Text(match_expression(words)?),
         rid.clone(),
         rid,
+        only.clone(),
+        only,
         Sql::Text(sections_json),
         Sql::Integer(limit),
     ];
@@ -1050,6 +1066,236 @@ pub fn query(
         .into_iter()
         .map(hit)
         .collect())
+}
+
+/// Each title's standing against one date, classified as the `as_at` stage does.
+pub struct Dated {
+    date: String,
+    titles: Vec<Json>,
+}
+
+/// What `query` and `define` return for a date: rows from `captured` titles, one
+/// refusal for each other title that matched or that `--title` named, and a summary.
+pub struct DatedReport {
+    pub hits: Vec<Json>,
+    pub refusals: Vec<Json>,
+    pub summary: Json,
+}
+
+impl Dated {
+    pub fn read(connection: &Connection, date: &str) -> Result<Dated, Exc> {
+        if !as_at::is_date(date) {
+            return Err(refused(format!("--as-at must be YYYY-MM-DD, not {date}")));
+        }
+        let sql = "SELECT register_id, name, compilation_date, superseded_from, retrieved, \
+                   version_is_current FROM titles ORDER BY register_id";
+        let mut titles = Vec::new();
+        for row in rows_of(connection, sql, &[])? {
+            let start = field(&row, "compilation_date");
+            let (superseded, retrieved) =
+                (field(&row, "superseded_from"), field(&row, "retrieved"));
+            // The manifest's names for these fields, so `as_at` applies its own checks.
+            let entry = Json::obj([
+                ("id", field(&row, "register_id").clone()),
+                ("versionStart", start.clone()),
+                ("retrieved", retrieved.clone()),
+                (
+                    "version_is_current",
+                    Json::Bool(field(&row, "version_is_current").truthy()),
+                ),
+                ("current_version_start", superseded.clone()),
+            ]);
+            titles.push(Json::obj([
+                ("register_id", field(&row, "register_id").clone()),
+                ("name", field(&row, "name").clone()),
+                ("status", Json::str(as_at::classify(&entry, date)?)),
+                ("compilation_date", start.clone()),
+                ("superseded_from", superseded.clone()),
+                ("retrieved", retrieved.clone()),
+            ]));
+        }
+        Ok(Dated {
+            date: date.to_string(),
+            titles,
+        })
+    }
+
+    fn title(&self, rid: &str) -> Option<&Json> {
+        self.titles
+            .iter()
+            .find(|title| title.at("register_id").as_str() == Some(rid))
+    }
+
+    /// The title's status, window and what the status covers, or the next step.
+    fn standing(&self, rid: &str) -> Json {
+        let Some(title) = self.title(rid) else {
+            return Json::Null;
+        };
+        let status = title.at("status").as_str().unwrap_or_default();
+        Json::obj([
+            ("date", Json::str(&self.date)),
+            ("status", title.at("status").clone()),
+            ("compilation_date", title.at("compilation_date").clone()),
+            ("superseded_from", title.at("superseded_from").clone()),
+            ("retrieved", title.at("retrieved").clone()),
+            ("covers", Json::str(as_at::CAPTURED_MEANS)),
+            (
+                "next_step",
+                text_or_null(as_at::next_step(status).map(str::to_string)),
+            ),
+        ])
+    }
+
+    fn captured(&self, rid: &str) -> bool {
+        self.title(rid)
+            .is_some_and(|title| title.at("status").as_str() == Some(as_at::CAPTURED))
+    }
+
+    /// `hits` from captured titles, and a refusal for each other title that
+    /// `matched` rows or that `named`, so a date outside a title is never just no rows.
+    fn report(
+        &self,
+        hits: Vec<Json>,
+        matched: &BTreeMap<String, usize>,
+        named: Option<&str>,
+    ) -> DatedReport {
+        let hits: Vec<Json> = hits
+            .into_iter()
+            .filter(|hit| self.captured(hit.at("register_id").as_str().unwrap_or_default()))
+            .map(|hit| {
+                let standing = self.standing(hit.at("register_id").as_str().unwrap_or_default());
+                with_field(hit, "as_at", standing)
+            })
+            .collect();
+        let mut refusals = Vec::new();
+        for title in &self.titles {
+            let rid = title.at("register_id").as_str().unwrap_or_default();
+            let rows = matched.get(rid).copied().unwrap_or_default();
+            let held = title.at("status").as_str() == Some(as_at::CAPTURED);
+            if !held && (rows > 0 || named == Some(rid)) {
+                refusals.push(Json::obj([
+                    ("refused", Json::Bool(true)),
+                    ("register_id", title.at("register_id").clone()),
+                    ("act", title.at("name").clone()),
+                    ("matching_rows", Json::Int(rows.into())),
+                    ("as_at", self.standing(rid)),
+                ]));
+            }
+        }
+        let count = |status: &'static str| {
+            let of = |title: &&Json| title.at("status").as_str() == Some(status);
+            (
+                status,
+                Json::Int(self.titles.iter().filter(of).count().into()),
+            )
+        };
+        let withheld: usize = refusals
+            .iter()
+            .map(|refusal| match refusal.at("matching_rows") {
+                Json::Int(rows) => usize::try_from(rows).unwrap_or_default(),
+                _ => 0,
+            })
+            .sum();
+        let summary = Json::obj([(
+            "as_at_summary",
+            Json::obj([
+                ("date", Json::str(&self.date)),
+                ("rows", Json::Int(hits.len().into())),
+                ("withheld_rows", Json::Int(withheld.into())),
+                ("titles", Json::obj(as_at::STATUSES.map(count))),
+                ("covers", Json::str(as_at::CAPTURED_MEANS)),
+            ]),
+        )]);
+        DatedReport {
+            hits,
+            refusals,
+            summary,
+        }
+    }
+}
+
+/// `value` with one more member, if it is an object.
+fn with_field(mut value: Json, key: &str, member: Json) -> Json {
+    if let Json::Object(pairs) = &mut value {
+        pairs.push((PyStr::Text(key.into()), member));
+    }
+    value
+}
+
+/// `query` for a date: rows only from titles the build holds for it.
+pub fn query_as_at(
+    connection: &Connection,
+    words: &[String],
+    title: Option<&str>,
+    limit: i64,
+    date: &str,
+) -> Result<DatedReport, Exc> {
+    let dated = Dated::read(connection, date)?;
+    let named = given_title(connection, title)?;
+    let rid = named.clone().map_or(Sql::Null, Sql::Text);
+    let sql = "SELECT r.register_id, count(*) AS matched FROM rows_fts \
+               JOIN rows r ON r.id = rows_fts.rowid \
+               WHERE rows_fts MATCH ? AND (? IS NULL OR r.register_id = ?) GROUP BY r.register_id";
+    let params = [Sql::Text(match_expression(words)?), rid.clone(), rid];
+    let mut matched = BTreeMap::new();
+    for row in rows_of(connection, sql, &params)? {
+        let rows = match field(&row, "matched") {
+            Json::Int(rows) => usize::try_from(rows).unwrap_or_default(),
+            _ => 0,
+        };
+        let title = field(&row, "register_id").as_str().unwrap_or_default();
+        matched.insert(title.to_string(), rows);
+    }
+    let captured = dated
+        .titles
+        .iter()
+        .filter(|title| dated.captured(title.at("register_id").as_str().unwrap_or_default()));
+    let ids = Json::Array(
+        captured
+            .map(|title| title.at("register_id").clone())
+            .collect(),
+    );
+    let only = Sql::Text(pyvalue::points_lossy(&dumps_line(&ids, true)));
+    let hits = ranked(connection, words, title, limit, only)?;
+    Ok(dated.report(hits, &matched, named.as_deref()))
+}
+
+/// `define` for a date: definitions only from titles the build holds for it.
+pub fn define_as_at(
+    connection: &Connection,
+    term: &str,
+    title: Option<&str>,
+    date: &str,
+) -> Result<DatedReport, Exc> {
+    let dated = Dated::read(connection, date)?;
+    let named = given_title(connection, title)?;
+    let hits = define(connection, term, title)?;
+    let mut matched = BTreeMap::new();
+    for hit in &hits {
+        let rid = hit.at("register_id").as_str().unwrap_or_default();
+        *matched.entry(rid.to_string()).or_default() += 1;
+    }
+    Ok(dated.report(hits, &matched, named.as_deref()))
+}
+
+/// `cite_check`, with each citation reporting its title's standing on a date. A
+/// citation that reached no title has none.
+pub fn cite_check_as_at(
+    connection: &Connection,
+    draft: &str,
+    title: Option<&str>,
+    date: &str,
+) -> Result<Vec<Json>, Exc> {
+    let dated = Dated::read(connection, date)?;
+    let report = cite_check(connection, draft, title)?;
+    let dated_item = |item: Json| {
+        let standing = item
+            .at("register_id")
+            .as_str()
+            .map(|rid| dated.standing(rid));
+        with_field(item, "as_at", standing.unwrap_or(Json::Null))
+    };
+    Ok(report.into_iter().map(dated_item).collect())
 }
 
 pub fn define(connection: &Connection, term: &str, title: Option<&str>) -> Result<Vec<Json>, Exc> {
@@ -1599,6 +1845,9 @@ fn describe(hit: &Json) -> String {
     )
 }
 
+const AS_AT_HELP: &str =
+    "answer only from titles the build holds for this YYYY-MM-DD; refuse the others";
+
 fn parser() -> Parser {
     Parser::new("python -m fadden search")
         .description(
@@ -1617,6 +1866,7 @@ fn parser() -> Parser {
             p.arg(Action::positional("index"))
                 .arg(Action::positional("words").one_or_more())
                 .arg(Action::option("--title").help("search only this register id"))
+                .arg(Action::option("--as-at").metavar("DATE").help(AS_AT_HELP))
                 .arg(
                     Action::option("--limit")
                         .int()
@@ -1637,6 +1887,7 @@ fn parser() -> Parser {
             p.arg(Action::positional("index"))
                 .arg(Action::positional("term").one_or_more())
                 .arg(Action::option("--title").help("look only in this register id"))
+                .arg(Action::option("--as-at").metavar("DATE").help(AS_AT_HELP))
                 .arg(Action::flag("--json"))
         })
         .sub(
@@ -1657,6 +1908,11 @@ fn cite_check_parser() -> Parser {
         .arg(Action::positional("index"))
         .arg(Action::positional("draft"))
         .arg(Action::option("--title").help("register id to check a citation naming no Act against; it is reported as assumed, never resolved"))
+        .arg(
+            Action::option("--as-at")
+                .metavar("DATE")
+                .help("report each cited title's status on this YYYY-MM-DD; any status but captured exits 1"),
+        )
         .arg(Action::flag("--json").help("print one object per citation"))
 }
 
@@ -1671,7 +1927,7 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     let outcome = if argv.first().is_some_and(|word| word == "cite-check") {
         execute_cite_check(&cite_check_parser().parse(&argv[1..])?, run)
     } else {
-        execute(&parser().parse(argv)?, run).map(|()| 0)
+        execute(&parser().parse(argv)?, run)
     };
     Ok(match outcome {
         Ok(code) => code,
@@ -1741,6 +1997,19 @@ fn read_draft(path: &str) -> Result<String, Exc> {
     String::from_utf8(bytes).map_err(|_| refused("the draft is not UTF-8 text"))
 }
 
+/// A citation's standing on the date, when it has one.
+fn standing_line(standing: &Json) -> Option<String> {
+    let s = |key: &str| pyvalue::py_str(standing.at(key));
+    if matches!(standing, Json::Null) {
+        return None;
+    }
+    let next = match standing.at("next_step") {
+        Json::Null => String::new(),
+        step => format!(": {}", pyvalue::py_str(step)),
+    };
+    Some(format!("  as at {}: {}{next}", s("date"), s("status")))
+}
+
 fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> Result<(), Exc> {
     for item in report {
         let s = |k: &str| pyvalue::py_str(item.at(k));
@@ -1759,6 +2028,9 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             s("citation"),
             format!("{} {why}", shown_rows(&rows)).trim()
         ));
+        if let Some(line) = standing_line(item.at("as_at")) {
+            run.print(&line);
+        }
         for quotation in quotations_of(item) {
             print_quotation(quotation, run);
         }
@@ -1801,6 +2073,9 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
         report.len(),
         counted.join(", ")
     ));
+    if report.iter().any(|item| item.get("as_at").is_some()) {
+        run.print(as_at::CAPTURED_MEANS);
+    }
     run.print(&source_line(connection)?);
     Ok(())
 }
@@ -1808,7 +2083,11 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
 fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let connection = open_index(&args.str("index").unwrap_or_default())?;
     let draft = read_draft(&args.str("draft").unwrap_or_default())?;
-    let report = cite_check(&connection, &draft, args.str("title").as_deref())?;
+    let title = args.str("title");
+    let report = match args.str("as_at") {
+        Some(date) => cite_check_as_at(&connection, &draft, title.as_deref(), &date)?,
+        None => cite_check(&connection, &draft, title.as_deref())?,
+    };
     if args.flag("json") {
         for item in &report {
             run.print_points(&dumps_line(item, false))?;
@@ -1817,7 +2096,11 @@ fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Resul
         print_citations(&report, &connection, run)?;
     }
     let clean = report.iter().all(|item| {
-        CLEAN_OUTCOMES.contains(&outcome_of(item).as_str())
+        let standing = item.at("as_at");
+        let unheld = !matches!(standing, Json::Null)
+            && standing.at("status").as_str() != Some(as_at::CAPTURED);
+        !unheld
+            && CLEAN_OUTCOMES.contains(&outcome_of(item).as_str())
             && quotations_of(item).iter().all(|quotation| {
                 let grade = quotation.at("grade").as_str();
                 grade.is_some_and(|grade| CLEAN_GRADES.contains(&grade))
@@ -1826,7 +2109,44 @@ fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Resul
     Ok(i32::from(!clean))
 }
 
-fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> {
+/// Prints a dated report's refusals and summary, and says whether a title was refused.
+fn print_dated(report: &DatedReport, json: bool, run: &mut Run) -> Result<bool, Exc> {
+    if json {
+        for line in report.refusals.iter().chain([&report.summary]) {
+            run.print_points(&dumps_line(line, false))?;
+        }
+        return Ok(!report.refusals.is_empty());
+    }
+    for refusal in &report.refusals {
+        let s = |key: &str| pyvalue::py_str(refusal.at(key));
+        let standing = refusal.at("as_at");
+        run.print(&format!(
+            "refused {} ({}): {} on {}, {} matching rows withheld: {}",
+            s("register_id"),
+            s("act"),
+            pyvalue::py_str(standing.at("status")),
+            pyvalue::py_str(standing.at("date")),
+            s("matching_rows"),
+            pyvalue::py_str(standing.at("next_step"))
+        ));
+    }
+    let summary = report.summary.at("as_at_summary");
+    let titles = as_at::STATUSES.map(|status| {
+        format!(
+            "{} {status}",
+            pyvalue::py_str(summary.at("titles").at(status))
+        )
+    });
+    run.print(&format!(
+        "Titles against {}: {}. {}",
+        pyvalue::py_str(summary.at("date")),
+        titles.join(", "),
+        as_at::CAPTURED_MEANS
+    ));
+    Ok(!report.refusals.is_empty())
+}
+
+fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let command = args.str("command").unwrap_or_default();
     if command == "build" {
         let [titles, rows, definitions, refs] = build(
@@ -1836,22 +2156,35 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
         run.print(&format!(
             "indexed {titles} titles, {rows} rows, {definitions} definitions and {refs} section references"
         ));
-        return Ok(());
+        return Ok(0);
     }
     let connection = open_index(&args.str("index").unwrap_or_default())?;
     let title = args.str("title");
+    let date = args.str("as_at");
+    let mut refused_title = false;
     match command.as_str() {
         "query" => {
             let limit = match args.get("limit") {
                 Some(crate::argparse::Value::Int(n)) => *n,
                 _ => 10,
             };
-            let hits = query(&connection, &list(args, "words"), title.as_deref(), limit)?;
+            let words = list(args, "words");
+            let dated = date
+                .map(|date| query_as_at(&connection, &words, title.as_deref(), limit, &date))
+                .transpose()?;
+            let hits = match &dated {
+                Some(report) => report.hits.clone(),
+                None => query(&connection, &words, title.as_deref(), limit)?,
+            };
             if args.flag("json") {
                 for hit in &hits {
                     run.print_points(&dumps_line(hit, false))?;
                 }
-                return Ok(());
+                let refused_any = match &dated {
+                    Some(report) => print_dated(report, true, run)?,
+                    None => false,
+                };
+                return Ok(i32::from(refused_any));
             }
             for (number, hit) in hits.iter().enumerate() {
                 let s = |k: &str| pyvalue::py_str(hit.get(k).unwrap_or(&Json::Null));
@@ -1862,6 +2195,9 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
                     crate::py::split_whitespace(&s("snippet")).join(" ")
                 ));
             }
+            if let Some(report) = &dated {
+                refused_title = print_dated(report, false, run)?;
+            }
             run.print(&format!(
                 "{} rows. {}",
                 hits.len(),
@@ -1869,12 +2205,23 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
             ));
         }
         "define" => {
-            let found = define(&connection, &list(args, "term").join(" "), title.as_deref())?;
+            let term = list(args, "term").join(" ");
+            let dated = date
+                .map(|date| define_as_at(&connection, &term, title.as_deref(), &date))
+                .transpose()?;
+            let found = match &dated {
+                Some(report) => report.hits.clone(),
+                None => define(&connection, &term, title.as_deref())?,
+            };
             if args.flag("json") {
                 for item in &found {
                     run.print_points(&dumps_line(item, false))?;
                 }
-                return Ok(());
+                let refused_any = match &dated {
+                    Some(report) => print_dated(report, true, run)?,
+                    None => false,
+                };
+                return Ok(i32::from(refused_any));
             }
             for item in &found {
                 let s = |k: &str| pyvalue::py_str(item.get(k).unwrap_or(&Json::Null));
@@ -1882,11 +2229,17 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
                 run.print(&format!("   {}", describe(item)));
                 run.print(&format!("   {}", s("definition").replace("\n\n", "\n   ")));
             }
-            if found.is_empty() {
+            let withheld = dated
+                .as_ref()
+                .is_some_and(|report| !report.refusals.is_empty());
+            if found.is_empty() && !withheld {
                 run.print(
                     "No definition paragraph found. The term may be defined another way or in a row this \
                      index does not read as definitions; this is not a finding that it has its ordinary meaning.",
                 );
+            }
+            if let Some(report) = &dated {
+                refused_title = print_dated(report, false, run)?;
             }
             run.print(&source_line(&connection)?);
         }
@@ -1895,7 +2248,7 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
             let report = refs(&connection, &row_id)?;
             if args.flag("json") {
                 run.print_points(&dumps_line(&report, false))?;
-                return Ok(());
+                return Ok(0);
             }
             let s = |v: &Json| pyvalue::py_str(v);
             run.print(&format!(
@@ -1938,5 +2291,5 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<(), Exc> 
             run.print(&source_line(&connection)?);
         }
     }
-    Ok(())
+    Ok(i32::from(refused_title))
 }

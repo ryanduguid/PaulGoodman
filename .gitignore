@@ -46,3 +46,7 @@ dist/
 *.tokens
 *.pem
 /target/
+
+# The fabricated corpus the README's example runs on.
+!samples/search-demo/markdown/
+!samples/search-demo/sources.json

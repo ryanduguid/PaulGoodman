@@ -40,9 +40,20 @@ was installed or run for this comparison.
 The AsAt row was checked against its source at
 [`34bfd63`](https://github.com/Aldiharley/asat/tree/34bfd63a220c3ba55ba82d27188870fb8c586543)
 on 5 October 2026. Its legislation fixtures use the parent Act's commencement
-for `coverage_from` because they lack provision commencement dates; the separate
-application interval is not modelled. Retrieval for an income year therefore
-does not establish that a provision's text applied in that year.
+for `coverage_from` because they lack provision commencement dates, except for
+72 sections with their own date (24 in Division 7A and 48 in Division 355); the
+separate application interval is not modelled. Retrieval for an income year
+therefore does not establish that a provision's text applied in that year.
+
+The same commit, still the default branch's head on 6 November 2026, was reread
+that day through the GitHub REST API. Its README calls it a working research
+prototype. Its `LEGISLATION-MANIFEST.tsv` lists 16 volumes of 6 Acts: 7 of the
+ITAA 1997, 3 of the ITAA 1936, 2 of the GST Act, 2 of the SIS Act, 1 of the TAA 1953
+and 1 of the *Income Tax (Transitional Provisions) Act 1997*. Each volume's URL
+names one compilation, dated 1 January or 1 July 2026. So a past income year may
+be served 2026 text unless something outside that manifest holds earlier text;
+this comparison ran nothing to test that. No retrieval recall result was identified
+in that README or in `eval_runner.py`.
 
 The australian-law-mcp, australia-law and australia-instruments rows are from
 each project's README, LICENSE file, releases and default-branch commit list,
@@ -52,7 +63,7 @@ installed or run.
 | Project | What it is | Where it differs from this builder |
 | --- | --- | --- |
 | [gunba/ato-mcp](https://github.com/gunba/ato-mcp) (MIT, v0.16.2) | A local MCP server over a pre-built download of about 158,000 ATO legal database documents (about 467,000 chunks), with hybrid lexical and vector search, statutory definition lookup and live fetch for documents it does not carry | It serves the ATO's own publication of legislation, cases, rulings and guidance as a ready-made search index. This builder produces Register compilations cut into sections with compilation status, and it tracks change. Use it for ATO guidance retrieval; use this builder when a row must name its compilation |
-| [Aldiharley/asat](https://github.com/Aldiharley/asat) (AGPL-3.0) | Australian tax-law retrieval with temporal filters and quotation checks against retrieved source text. Its legislation coverage can extend back to the parent Act's commencement, which may include years before the quoted provision applied | It answers questions; this builder produces material. Its fixtures do not establish provision commencement or application dates. This builder's [`as_at` stage](scope.md#dates-and-past-income-years) reports compilation windows and their limits. Neither establishes historical provision applicability. `quote_in_text` follows AsAt's quotation-checking approach with NFKC normalisation; a matching quotation alone establishes neither the correct authority nor its relevance |
+| [Aldiharley/asat](https://github.com/Aldiharley/asat) (AGPL-3.0) | Australian tax-law retrieval with temporal filters and quotation checks against retrieved source text. Its legislation coverage can extend back to the parent Act's commencement, or a section's own date for the 72 sections noted above, which may include years before the quoted provision applied | It answers questions; this builder produces material. Its fixtures do not establish provision commencement or application dates. This builder's [`as_at` stage](scope.md#dates-and-past-income-years) reports compilation windows and their limits, and [`search --as-at`](scope.md#dates-in-search) refuses rows from a title outside its window. Neither project establishes historical provision applicability. `quote_in_text` follows AsAt's quotation-checking approach with NFKC normalisation; a matching quotation alone establishes neither the correct authority nor its relevance |
 | [matematicsolutions/au-eli-mcp](https://github.com/matematicsolutions/au-eli-mcp) (Apache-2.0, v0.3.3) | An MCP server that searches Commonwealth Acts on the Register by title and fetches current consolidated text, with a citation and a coverage statement on every response | Acts only and fetched live, so there is no local corpus, no instruments, no sections and no change review. Its `au_coverage` tool, which declares what it does not cover, is a good pattern for any consumer of this corpus |
 | [cchew/lex-au](https://github.com/cchew/lex-au) (MIT, v0.10.2) and [cchew/lex-au-graph](https://github.com/cchew/lex-au-graph) (MIT, v0.13.1) | lex-au converts Register DOCX into Akoma Ntoso XML with section-level identifiers and publishes 3,076 Acts and 2 regulations as a CC BY 4.0 dataset; lex-au-graph builds a cross-reference graph over it for definition resolution | Every Commonwealth Act rather than a tax selection, in a legal XML standard, and the graph follows defined terms across Acts, which flat section rows cannot do. It does not carry this builder's tax instruments, ATO rulings or change-review queue |
 | [Danielkgr/legislation-monitor](https://github.com/Danielkgr/legislation-monitor) (MIT) | A local web app that stores Commonwealth and Victorian Acts, re-fetches them on request and shows a side-by-side diff when the text changes, mapped to the Parts and sections it touches | It adds Victorian legislation. It works on text hashes, where `check_current` and `tax-radar-au` work on Register compilation identity and keep review evidence; `compare_builds` lists the changed sections between two builds of this corpus |

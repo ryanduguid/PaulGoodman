@@ -23,9 +23,13 @@ pub const CAPTURED: &str = "captured";
 pub const BEFORE_COMPILATION: &str = "before_compilation";
 pub const SUPERSEDED: &str = "superseded";
 pub const AFTER_RETRIEVAL: &str = "after_retrieval";
-const STATUSES: [&str; 4] = [CAPTURED, BEFORE_COMPILATION, SUPERSEDED, AFTER_RETRIEVAL];
+pub const STATUSES: [&str; 4] = [CAPTURED, BEFORE_COMPILATION, SUPERSEDED, AFTER_RETRIEVAL];
+/// What the status covers, printed wherever one is reported.
+pub const CAPTURED_MEANS: &str = "captured means the build holds the compilation for that date; \
+it is not a finding that the text was the law then.";
 
-fn action(status: &str) -> Option<&'static str> {
+/// What to do about a title the build cannot answer for a date.
+pub fn next_step(status: &str) -> Option<&'static str> {
     match status {
         BEFORE_COMPILATION => Some("read the Register's earlier compilations"),
         SUPERSEDED => Some("a later version applies; read the Register"),
@@ -217,15 +221,12 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     run.print(&format!("{} titles against {on}:", titles.len()));
     for status in STATUSES {
         let count = statuses.iter().filter(|s| **s == status).count();
-        let note = match action(status) {
+        let note = match next_step(status) {
             Some(text) if count > 0 => format!(" ({text})"),
             _ => String::new(),
         };
         run.print(&format!("  {status}: {count}{note}"));
     }
-    run.print(
-        "captured means the build holds the compilation for that date; it is not a \
-         finding that the text was the law then.",
-    );
+    run.print(CAPTURED_MEANS);
     Ok(0)
 }

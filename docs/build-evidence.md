@@ -90,6 +90,12 @@ Every JSONL row carries its own register id, collection, compilation number,
 compilation date, section, source URL, licence and attribution, because rows
 travel independently of the file they came from.
 
+## One-command preset build
+
+One run of `python -m fadden quick` on 6 November 2026 took an empty folder to a `search_tax_legislation` hit in 116 seconds, 90 of them `download`'s 10-second Crawl-delay after each of the 9 Acts. It ran on a Windows 11 desktop PC (Intel Core i7-12700K, 64 GB of memory) whilst other builds were running. Network speed and the Register's load will change the figure, and one run is not a benchmark.
+
+The folder held 9 titles, 9,439 rows, 3,678 definitions and 32,463 references, from 9.1 MB of EPUBs, in 82 MB. All 9 Acts had a published document for their current version, so `probe13` and `retry13` did not run. With `AUS_ACCOUNTING_CORPUS_ROOT` set to that folder, `search_tax_legislation` in the published `aus-accounting-mcp` 0.7.1 returned `C2004A05138:0035:8-1`, section 8-1 of the ITAA 1997, first for 'general deductions', 1.03 seconds after the script started, including the server's import.
+
 ## Retrieval baseline on real law
 
 Measured on 5 November 2026 over `tests/fixtures/retrieval_real_law.tsv`: 46 queries

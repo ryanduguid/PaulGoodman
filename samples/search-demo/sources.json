@@ -1,0 +1,18 @@
+{
+ "retrieved": "2099-08-01",
+ "titles": [
+  {
+   "register_id": "C2099A00001",
+   "name": "Sample Consumption Tax Act 2099",
+   "collection": "Act",
+   "compilation_number": "1",
+   "compilation_date": "2099-07-01",
+   "version_is_current": true,
+   "current_version_start": null,
+   "retrieved": "2099-08-01",
+   "jsonl_rows": 3,
+   "register_page": "https://example.invalid/C2099A00001",
+   "source_url": "https://example.invalid/C2099A00001.epub"
+  }
+ ]
+}
