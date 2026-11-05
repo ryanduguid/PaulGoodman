@@ -2484,3 +2484,22 @@ fn other_rows_finds_a_row_whatever_form_it_holds_the_words_in() {
         assert_eq!(found["distinct"], false, "{quote}");
     }
 }
+
+#[test]
+fn other_rows_reads_a_quotation_holding_a_double_mark() {
+    let c = case();
+    let mut titles = sample_titles();
+    let rows = &mut titles.get_mut(ACT).unwrap().1;
+    let text = "The 5\" widget is the approved fabricated form for each reporting entity.";
+    for (ordinal, section) in [(6, "8-1"), (7, "8-2")] {
+        rows.push(row(ACT, ordinal, Some(section), text, section, None));
+    }
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let quote = text.trim_end_matches('.');
+    let draft = format!("Section 8-1 of the Sample Levy Act 2099 says '{quote}'.");
+    let found = quotations_at(&connection, &draft).remove(0);
+    assert_eq!(found["grade"], "exact");
+    assert_eq!(found["other_rows"], 1);
+}

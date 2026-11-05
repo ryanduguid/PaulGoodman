@@ -550,7 +550,8 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   A quotation with `grade` `null` was not compared, and `reason` says why: the
   citation reached no one section, as with `not_held`, `superseded`, a Division or
   a range; the quotation has no closing mark before a blank line, when the first
-  200 characters are shown, which includes a straight mark closing after a space; or the citation is inside the quotation and no citation
+  200 characters are shown, which includes a straight mark closing after a space; or
+  the citation is inside the quotation and no citation
   outside it is beside it. It is never reported as `none`, which is a comparison
   that failed. `start` is the quotation's byte offset in the draft, and the summary
   counts each quotation once and each comparison with a citation.
