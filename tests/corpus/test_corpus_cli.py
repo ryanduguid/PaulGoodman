@@ -139,6 +139,7 @@ class FaddenCliTests(unittest.TestCase):
                 "search",
                 "authorities",
                 "witness",
+                "quick",
             ),
         )
 

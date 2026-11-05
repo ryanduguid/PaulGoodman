@@ -400,19 +400,21 @@ def fetch(url, dst, tries=3):
         problem, tries, "" if tries == 1 else "s", ctype, size))
 
 
-def main():
+def main(scratch=None, epub_dir=None):
     require_builder_layout(__file__)
-    os.makedirs(EPUB_DIR, exist_ok=True)
-    with open(os.path.join(SCRATCH, "acts_resolved.json"), encoding="utf-8") as f:
+    scratch = scratch or SCRATCH
+    epub_dir = epub_dir or EPUB_DIR
+    os.makedirs(epub_dir, exist_ok=True)
+    with open(os.path.join(scratch, "acts_resolved.json"), encoding="utf-8") as f:
         acts = json.load(f)
 
-    with open(os.path.join(SCRATCH, "download_log.txt"), "a", encoding="utf-8") as log:
+    with open(os.path.join(scratch, "download_log.txt"), "a", encoding="utf-8") as log:
         manifest, ok_n, fail_n, total_bytes = [], 0, 0, 0
         snapshots = []
         try:
             for i, a in enumerate(acts, 1):
                 rid, d = register_id(a["id"]), iso_date(a["versionStart"])
-                dst = child(EPUB_DIR, "%s.epub" % rid)
+                dst = child(epub_dir, "%s.epub" % rid)
                 url = "https://www.legislation.gov.au/%s/%s/%s/text/original/epub" % (rid, d, d)
                 if "compilationRegisterId" not in a:
                     raise ValueError("%s: missing compilationRegisterId" % rid)
@@ -422,7 +424,7 @@ def main():
                 # fetched under. Without this check a re-run stamps the newly resolved
                 # compilation number onto stale bytes. Sidecars written before they
                 # recorded compilationRegisterId keep the resolved id.
-                side = child(EPUB_DIR, "%s.epub.meta.json" % rid)
+                side = child(epub_dir, "%s.epub.meta.json" % rid)
                 if (not no_document and os.path.exists(dst) and valid_zip(dst)
                         and os.path.exists(side)):
                     try:
@@ -497,7 +499,7 @@ def main():
             # compilationRegisterId and isAuthorised value. Replace it only after
             # all downloads and sidecars are ready; retained snapshots restore the
             # entire prior file graph if this final write fails.
-            target = os.path.join(SCRATCH, "manifest_raw.json")
+            target = os.path.join(scratch, "manifest_raw.json")
             write_json_atomic(target, manifest, indent=1)
         except BaseException:
             try:

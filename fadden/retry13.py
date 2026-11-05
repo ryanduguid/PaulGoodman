@@ -46,11 +46,13 @@ ROOT = corpus_root(__file__)
 EPUB_DIR = child(ROOT, "epub")
 
 
-def main():
+def main(scratch=None, epub_dir=None):
     require_builder_layout(__file__)
-    with open(os.path.join(SCRATCH, "probe13.json"), encoding="utf-8") as source:
+    scratch = scratch or SCRATCH
+    epub_dir = epub_dir or EPUB_DIR
+    with open(os.path.join(scratch, "probe13.json"), encoding="utf-8") as source:
         probe = {p["id"]: p for p in json.load(source)}
-    with open(os.path.join(SCRATCH, "manifest_raw.json"), encoding="utf-8") as source:
+    with open(os.path.join(scratch, "manifest_raw.json"), encoding="utf-8") as source:
         manifest = json.load(source)
     todo = [a for a in manifest if not a.get("epub") and probe.get(a["id"], {}).get("latest_doc")]
     print("retrying %d titles" % len(todo), flush=True)
@@ -62,8 +64,8 @@ def main():
             v = probe[rid]["latest_doc"]
             d = version_date(v.get("start"))
             compilation_id(v)
-            dst = child(EPUB_DIR, "%s.epub" % rid)
-            side = child(EPUB_DIR, "%s.epub.meta.json" % rid)
+            dst = child(epub_dir, "%s.epub" % rid)
+            side = child(epub_dir, "%s.epub.meta.json" % rid)
             url = "https://www.legislation.gov.au/%s/%s/%s/text/original/epub" % (rid, d, d)
 
             snapshots.append(dl.snapshot_paths(dst, side))
@@ -100,8 +102,8 @@ def main():
         # Publish the audit record and manifest only after every recovery and
         # sidecar is ready. The shared journal restores the entire prior file
         # graph if either final write fails.
-        patch_target = os.path.join(SCRATCH, "retry13_patch.json")
-        manifest_target = os.path.join(SCRATCH, "manifest_raw.json")
+        patch_target = os.path.join(scratch, "retry13_patch.json")
+        manifest_target = os.path.join(scratch, "manifest_raw.json")
         snapshots.append(dl.snapshot_paths(patch_target, manifest_target))
         dl.write_json_atomic(patch_target, patches, indent=1)
         if recovered:

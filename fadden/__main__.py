@@ -70,7 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     saved = sys.argv
     sys.argv = [args.stage, *forwarded]
     try:
-        if args.stage in {"capture_register", "export_live_evidence_bundles"}:
+        if args.stage in {"capture_register", "export_live_evidence_bundles", "quick"}:
             result = func(forwarded)
         else:
             result = func()
