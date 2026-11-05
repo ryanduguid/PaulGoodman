@@ -1364,11 +1364,12 @@ const TITLE_FIELDS: [&str; 4] = [
 fn citation_report(
     connection: &Connection,
     draft: &str,
-    (kind, key, act, citation, end): (String, String, Option<String>, String, usize),
+    item: (String, String, Option<String>, String, usize),
     own: Option<&str>,
     names: &BTreeMap<String, String>,
     digest: &Json,
 ) -> Result<Json, Exc> {
+    let (kind, key, act, citation, end) = item;
     let (target, reason) = citation_target(draft, end, act.as_deref(), own, names);
     let (rows, held) = match &target {
         Some(rid) => cited_rows(connection, rid, &kind, &key)?,
