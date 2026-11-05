@@ -101,7 +101,8 @@ verify with the digest their release workflow pinned: `v0.1.5` and `v0.1.6`
 with `99a6314ca2cd4ea21b465614b73d108fd8fe2077`, and `v0.1.7` to `v0.2.1` with
 `87767ec809dc7f77bcd45808219adaf67841ae7b`, `v0.3.0` with
 `a601f1d8b143f92b0517f709216993660d21f480`, and `v0.4.0` with
-`0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c`. Releases from `a601f1d` also carry
+`0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c`, and later releases with
+`ca5492bd09693be9e1fd47d980e2740ef8daf023`. Releases from `a601f1d` also carry
 the signed provenance bundle
 `au-tax-legislation-corpus-builder-<version>.intoto.jsonl`, which the loop skips
 because it holds the attestation itself:
