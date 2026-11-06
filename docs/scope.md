@@ -49,6 +49,25 @@ effect registered after the build was retrieved, and the Legislation Act 2003
 does not require a new compilation for one. Read the Register's version
 history and endnotes for any question about a past date.
 
+### Dates in search
+
+`search query`, `search define` and `search cite-check` take `--as-at YYYY-MM-DD` and apply the `as_at` status of each title to what they return. `query` and `define` return rows only from `captured` titles and refuse the others by name, with the status, the rows withheld and the next step. `cite-check` keeps every citation and adds its title's status. No row is dropped without a refusal, and a title's status is about its compilation window, not about the law on that date. With no rows to return, `query` and `define` refuse every title in scope that is not `captured`, so 0 rows with exit 0 means each title in scope was `captured`. `cite-check --title` refuses a named title that is not `captured`, whatever the draft cites.
+
+| Status | Rows | What it covers | Next step |
+| --- | --- | --- | --- |
+| `captured` | Returned | The build holds the compilation for that date. It is not a finding that the text was the law then | Read the Register's version history and endnotes for a past date |
+| `before_compilation` | Refused | The date is before this compilation's start, so the build holds no text for it | Read the Register's earlier compilations |
+| `superseded` | Refused | A later version had started by that date, and the Register had no compilation for it when the build ran | A later version started; check the Register and application provisions |
+| `after_retrieval` | Refused | The date is after the build retrieved this title, so the build cannot say what changed | Run `check_current` and read the Register |
+
+The limits above apply to every status. `--as-at` reads the window `compilation_date`, `superseded_from` and `retrieved`, so a date inside a window can still carry text amended with retrospective effect, and a provision's text can differ from what applied to that date. The build holds one compilation of a title, so a refusal is the answer for any earlier date: no earlier text is held.
+
+With `--json`, `query` and `define` print one object per line: each hit with an `as_at` object, then one `{"refused": true, ...}` per refused title with `register_id`, `act`, `matching_rows` and `as_at`, then `{"as_at_summary": ...}` with `date`, `rows`, `withheld_rows`, `titles` (a count per status) and `covers`. The `as_at` object holds `date`, `status`, `compilation_date`, `superseded_from`, `retrieved`, `covers` and `next_step`, which is null for `captured`. `cite-check --json` adds the same object to each citation, or null if the citation reached no title, then prints a refusal for a `--title` that is not `captured`.
+
+The index stores `superseded_from` from schema 3, so an index built earlier is refused until `search build` runs again. A consumer that reads `sections.jsonl` instead of the index, as the MCP server does, can apply the same 4 statuses from each row's own `compilation_date`, `superseded_from`, `retrieved` and `version_is_current` fields, and should report the same field names. `version_is_current` is false for a title with no published compilation for the version in force.
+
+### Amendments a build cannot see
+
 An amendment that has commenced but is not yet in a compilation shows on the
 Register as a current version with no `registerId`. The Register API also sets
 `hasUnincorporatedAmendments` on that version and

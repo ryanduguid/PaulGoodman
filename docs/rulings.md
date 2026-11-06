@@ -103,6 +103,10 @@ reliance for an earlier period, so check its full effect and the relevant period
 on the live ATO Legal Database before reliance. Older captures without these
 fields carry no withdrawal observation.
 
+A run prints each captured notice beside its docid, with that warning. Rows with a
+notice stay in `rulings.jsonl`; `authorities` leaves them out of the closed list and
+says so. The search index holds no rulings rows, so `search` reports none of this.
+
 ### How paragraphs are found
 
 - Rulings and guidelines: blocks inside `div#LawBody` keyed by `P<n>` anchors,

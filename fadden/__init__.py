@@ -31,4 +31,5 @@ STAGES = (
     "search",
     "authorities",
     "witness",
+    "quick",
 )

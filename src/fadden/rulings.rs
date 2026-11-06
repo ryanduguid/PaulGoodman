@@ -34,6 +34,8 @@ pub const NOTICE: &str = "You are free to copy, adapt, modify, transmit and dist
 services or products).";
 pub const COPYRIGHT_NOTICE_URL: &str =
     "https://www.ato.gov.au/about-ato/using-our-website/copyright-notice";
+/// Printed with any withdrawal notice; docs/rulings.md says the same of the rows.
+pub const WITHDRAWAL_WARNING: &str = "A withdrawn ruling can still bear on earlier years: a notice may preserve reliance for an earlier period. These rows stay in the output; check the notice's full effect and the relevant period on the live ATO Legal Database before reliance.";
 const RIGHTS_HOSTS: [&str; 2] = ["www.ato.gov.au", "ato.gov.au"];
 const RIGHTS_PATH: &str = "/content/corporate/about_this_site.htm";
 const RIGHTS_FRAGMENT: &str = "copyright";
@@ -850,10 +852,32 @@ pub fn run(
         rows.len(),
         excluded.len()
     ));
+    for line in withdrawal_lines(&documents) {
+        run.print(&line);
+    }
     for (docid, reason) in &excluded {
         run.eprint(&format!("  excluded {docid}: {reason}"));
     }
     Ok(Ok(i32::from(!excluded.is_empty())))
+}
+
+/// A line for each captured document's withdrawal notice, then what a notice leaves
+/// open. The rows stay in the output whatever the notice says.
+fn withdrawal_lines(documents: &[Json]) -> Vec<String> {
+    let noticed = documents
+        .iter()
+        .filter(|document| document.at("withdrawal_status").as_str() == Some("NOTICE_PRESENT"));
+    let mut lines: Vec<String> = noticed
+        .map(|document| {
+            let field = |key: &str| document.at(key).as_str().unwrap_or_default();
+            let (docid, notice) = (field("docid"), field("withdrawal_notice"));
+            format!("  withdrawal notice in {docid}: {notice}")
+        })
+        .collect();
+    if !lines.is_empty() {
+        lines.push(WITHDRAWAL_WARNING.to_string());
+    }
+    lines
 }
 
 fn parser() -> Parser {

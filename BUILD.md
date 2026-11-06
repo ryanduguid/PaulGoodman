@@ -28,6 +28,20 @@ python -m fadden capture_register -- fadden/manifest_md.json --out build/registe
 python -m fadden export_live_evidence_bundles -- build/register-capture-20260829 --out build/live-evidence-20260829
 ```
 
+## One-command preset build
+
+`python -m fadden quick --out <folder>` takes an absent or empty folder to a searchable build of 9 principal Acts, on the machine that runs it. It is the shortest route from nothing to a `search_tax_legislation` hit: nothing is downloaded from this project, so `RELEASING.md`'s rule against shipping a corpus stands.
+
+```bash
+python -m fadden quick --out ../tax-law
+```
+
+The preset is the 8 principal Acts the MCP server ranks first, then the *Superannuation Industry (Supervision) Act 1993*: the ITAA 1997, ITAA 1936, GST Act, TAA 1953, FBTAA 1986, *Superannuation Guarantee (Administration) Act 1992*, *Income Tax (Transitional Provisions) Act 1997* and *Income Tax Rates Act 1986*.
+
+The command runs `versions`, `download`, `probe13` and `retry13` when a title has no published document for its current version, `extract`, `pii_scan`, `pii_scan2`, `finalize` and `search build`, with `build/` as their module directory, so the fetches are those stages' own, at the Crawl-delay. The stages run in a sibling `<folder>.building`. The command then checks that each of the 9 Acts holds indexed rows and that a query gets a hit, moves the build to the folder by rename, and prints the hit, the elapsed time and `AUS_ACCOUNTING_CORPUS_ROOT=<folder>`. A step that fails exits 1 and leaves the folder untouched; the partial build stays in `<folder>.building`, and the next run refuses until you remove it. The build covers this preset only: it holds no instruments, and a 'no match' from it says nothing about the other titles.
+
+One run took 116 seconds on 6 November 2026; [build evidence](docs/build-evidence.md#one-command-preset-build) gives the machine and what it built.
+
 ## Exporting monitor inputs
 
 After the `finalize` stage has written a completed `sources.json`, a separately
@@ -451,6 +465,9 @@ python -m fadden search query search.sqlite 8-1 --title C2004A05138
 python -m fadden search define search.sqlite assessable income
 python -m fadden search refs search.sqlite C2004A05138:0035:8-1
 python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
+python -m fadden search query search.sqlite general deductions --as-at 2026-07-15
+python -m fadden search define search.sqlite assessable income --as-at 2026-07-15
+python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
 ```
 
 - `build` checks every row before writing: no `markdown/` title that
@@ -472,6 +489,15 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   or `<term>:`. It returns every title's definition of the term, or terms that
   begin with it when none matches exactly. An empty result is not a finding
   that the term has its ordinary meaning.
+- `query --as-at DATE` and `define --as-at DATE` answer from a title only when its
+  `as_at` status on that date is `captured`. Each other title that matched, or that
+  `--title` named, is refused by name with its status, the rows withheld and the next
+  step; a summary counts all titles by status. A date before the compilation therefore
+  gives 0 rows and `before_compilation`, never a silent empty result. With no rows to
+  return, every title in scope that is not `captured` is refused, so 0 rows with exit 0
+  means each title in scope was `captured`. The command exits
+  1 if any title was refused, and refuses a date that is not `YYYY-MM-DD`. See
+  [dates in search](docs/scope.md#dates-in-search).
 - `refs` lists the sections, Divisions and numbered Subdivisions a row cites,
   and the rows that cite its section, Division or Subdivision. A list such as
   `sections 8-1, 8-5 and 8-10` gives one reference per item and ends at an
@@ -489,7 +515,11 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   date them and a later amendment can outdate them. It makes no request. A citation naming no Act is checked
   against the title `--title` gives. It exits 1 if any outcome is other than
   `resolved`, `assumed` or `container_level`, or if any quotation is not graded
-  `exact` or `normalised`.
+  `exact` or `normalised`. `--as-at DATE` adds each cited title's status on that date
+  and also exits 1 on any status but `captured`, or if `--title` names a title that
+  is not `captured`, whatever the draft cites. It leaves outcomes alone, so a
+  citation of a title marked `superseded` stays `superseded` even on a date inside
+  that compilation.
 
   | Outcome | Meaning |
   | --- | --- |

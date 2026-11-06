@@ -12,6 +12,7 @@ use tax_radar_au::fadden::Run;
 use tax_radar_au::fadden::http::{Failure, Http, RETRY_DELAY, Request, Response};
 use tax_radar_au::fadden::rulings::{
     self, BASE_URL, MAX_BYTES, MAX_TARGETS, NOTICE, Parsed, RulingsError, TargetsError,
+    WITHDRAWAL_WARNING,
 };
 use tax_radar_au::pypath::PyPath;
 
@@ -908,4 +909,36 @@ fn main_reports_an_invalid_target_list() {
         "rulings: targets must be a JSON array of docid strings\n"
     );
     assert!(!dir.path().join("out").exists());
+}
+
+#[test]
+fn a_run_reports_each_captured_notice_with_what_it_leaves_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("run");
+    let raw = page().replace(r#"<div id="LawBody">"#, WITHDRAWN);
+    let (code, state, _) = run_pages(vec![served(DOCID, &raw)], &[DOCID], &out);
+    assert_eq!(code, 0);
+    let stdout = String::from_utf8(state.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines[lines.len() - 2..],
+        [
+            format!(
+                "  withdrawal notice in {DOCID}: This fabricated ruling is withdrawn from 1 July 2099."
+            ),
+            WITHDRAWAL_WARNING.to_string(),
+        ]
+    );
+    assert!(lines[lines.len() - 3].starts_with("rulings: 1 documents"));
+}
+
+#[test]
+fn a_run_with_no_notice_says_nothing_of_withdrawal() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("run");
+    let (code, state, _) = run_pages(vec![served(DOCID, &page())], &[DOCID], &out);
+    assert_eq!(code, 0);
+    let stdout = String::from_utf8(state.stdout).unwrap();
+    assert!(!stdout.contains("withdrawal notice"), "{stdout}");
+    assert!(!stdout.contains(WITHDRAWAL_WARNING), "{stdout}");
 }

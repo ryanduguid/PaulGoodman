@@ -34,34 +34,46 @@ AI agents reach a finished build through the [`aus-accounting-mcp`](https://gith
 
 From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the Rust binaries with `cargo build --locked --release`: `fadden`, which runs the example below and most other stages, and the `tax-radar-au` review queue. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
 
-The example below is synthetic.
+The example below is fabricated and offline: it searches a fictional Act, then checks a draft against it, with no Register request.
 
-**Input:** the fabricated [source index](tests/corpus/fixtures/publication/sample-sources.json) and [reviewed observation facts](tests/corpus/fixtures/publication/sample-observation-facts-v3.json).
+**Input:** the fabricated [Sample Consumption Tax Act 2099](samples/search-demo/sources.json) and a [draft](samples/search-demo/draft.md) that cites it.
 
-```bash
-python -m fadden export_monitor_contract -- tests/corpus/fixtures/publication/sample-sources.json tests/corpus/fixtures/publication/sample-observation-facts-v3.json --out ../synthetic-monitor-example
+**Commands and output:** `search query` prints each row with its `row_id`, compilation and Register page. `cite-check` finds the quotation in the section cited, reports section 9 as not held and exits 1.
+
+```console
+$ python -m fadden search build samples/search-demo --out ../search-demo.sqlite
+indexed 1 titles, 3 rows, 1 definitions and 0 section references
+[exit 0]
+$ python -m fadden search query ../search-demo.sqlite taxable sale
+1. Sample Consumption Tax Act 2099: 2 Definitions
+   C2099A00001:0002:2, compilation 1 (2099-07-01), current, retrieved 2099-08-01
+   https://example.invalid/C2099A00001
+   [taxable] [sale] means a [sale] a seller makes in the course of an enterprise.
+2. Sample Consumption Tax Act 2099: 3 Liability for sample consumption tax
+   C2099A00001:0003:3, compilation 1 (2099-07-01), current, retrieved 2099-08-01
+   https://example.invalid/C2099A00001
+   A seller is liable for sample consumption tax on each [taxable] [sale].
+2 rows. Index of the corpus retrieved 2099-08-01, sources.json sha256 73d95db611177211. Finding aid derived from the Register's EPUB reading view, not authorised legislation or tax advice. Read the authorised compilation on the Register before relying on a row.
+[exit 0]
+$ python -m fadden search cite-check ../search-demo.sqlite samples/search-demo/draft.md
+line 1: resolved: Section 3 of the Sample Consumption Tax Act 2099: C2099A00001:0003:3
+  quotation exact, not distinct, 0 other rows hold it: A seller is liable for sample consumption tax
+line 3: not_held: Section 9 of the Sample Consumption Tax Act 2099: 
+1 quotations, 1 comparisons with citations: 1 exact.
+2 citations: 1 resolved, 1 not_held. A resolved citation names its Act and a provision this build holds. An assumed citation names no Act in its sentence, so it shows only that --title holds the provision, not that the author meant that title. Neither shows that the provision says what the draft claims or applied at any date. A quotation is read only in quotation marks in the citation's sentence, and only against a resolved or assumed section. Exact and normalised show those words are in that row of this build, not that they are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source. Current and superseded are this build's record from the Register, not a check today; a later amendment can outdate them. Forms refs does not read, such as s 8-1, are not counted.
+Index of the corpus retrieved 2099-08-01, sources.json sha256 73d95db611177211. Finding aid derived from the Register's EPUB reading view, not authorised legislation or tax advice. Read the authorised compilation on the Register before relying on a row.
+[exit 1]
 ```
 
-**Output:** `monitor-baseline.json` and `register-observation.json` in the named output directory. The synthetic title `C2099A00001` is recorded as `SUPERSEDED`; the pair carries the evidence and source identity for review.
+The title, dates and rows are fictional. They describe no real legislation and establish no legal effect.
 
-The example can be read without running the command:
+### Search real law from an empty folder
 
-| Review field | Fabricated evidence |
-| --- | --- |
-| Source identity | Sample Consumption Tax Act 2099, `C2099A00001`, collection `Act` |
-| Indexed version | Compilation 1, dated 1 July 2026, retrieved 1 August 2026 |
-| Detected change | The supplied observation records `SUPERSEDED` and compilation 2, dated 5 August 2026 |
-| Observation evidence | Checked 8 August 2026; evidence identifier `ev-c2099a00001-01`, a content digest and a Register URL for the fabricated title |
-| Required review | Read the source, confirm the applicable version and dates, then decide whether any workpaper or workflow needs attention |
-
-The names, dates and change above come from the linked fixtures. They describe
-no real legislation and establish no legal effect.
-
-**Human decision:** Inspect the cited source and decide whether the apparent change affects a workpaper or workflow. This offline example makes no Register request and establishes no real legislative change.
+`python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts on your machine and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server, which then answers `search_tax_legislation` from that folder. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay ([evidence](docs/build-evidence.md#one-command-preset-build)). It fetches each Act from the Register, builds beside that folder, moves the result in only once all 9 Acts are indexed and publishes nothing. The command needs `curl` and network access; [BUILD.md](BUILD.md#one-command-preset-build) lists the Acts.
 
 ## Two related systems
 
-The corpus builder (`python -m fadden`) produces retrieval material from Commonwealth legislation. Its `rulings` stage derives paragraph JSONL from named ATO rulings and related documents under the ATO's reuse notice ([docs/rulings.md](docs/rulings.md)). The change-review queue (`tax-radar-au`) consumes a reviewed observation contract and raises items for a person to assess. Documented network access is 7 builder stages that reach the Federal Register and `rulings`, which reaches the ATO Legal Database; the review queue itself makes no network request.
+The corpus builder (`python -m fadden`) produces retrieval material from Commonwealth legislation. Its `rulings` stage derives paragraph JSONL from named ATO rulings and related documents under the ATO's reuse notice ([docs/rulings.md](docs/rulings.md)). The change-review queue (`tax-radar-au`) consumes a reviewed observation contract and raises items for a person to assess. Documented network access is 7 builder stages that reach the Federal Register, `quick`, which runs some of them, and `rulings`, which reaches the ATO Legal Database; the review queue itself makes no network request.
 
 **Package lifecycle:** source-only. The builder is not published to PyPI; releases carry source archives, not a ready-made corpus or a builder wheel. The queue has its own package identity; this source install does not download legislation.
 
@@ -71,7 +83,7 @@ The au-tax-legislation-corpus guides are grouped as how-to, reference and backgr
 
 How-to:
 
-- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`, which checks a draft's citations against your build and grades a quotation in each citation's sentence as `exact`, `normalised`, `partial` or `none`, and `authorities`, which exports that build as the closed list for `gate --authorities` in [llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails). A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty. A resolved citation or a graded quotation shows what this build holds, not that the provision applies or was the law at any date
+- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`, which checks a draft's citations against your build and grades a quotation in each citation's sentence as `exact`, `normalised`, `partial` or `none`, `--as-at`, which answers only from titles the build holds for a date, and `authorities`, which exports that build as the closed list for `gate --authorities` in [llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails). A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty. A resolved citation or a graded quotation shows what this build holds, not that the provision applies or was the law at any date
 - [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md): checksum and SLSA provenance
 
 Reference:

@@ -41,10 +41,19 @@ def run_rust_stage(stage: str, forwarded: list[str]) -> int:
         print(f"error: the {stage} stage is the Rust fadden binary; build it with "
               "cargo build --locked --release", file=sys.stderr)
         return 1
-    # The stage's defaults, such as as_at's manifest, sit beside this module.
-    env = dict(os.environ, FADDEN_MODULE_DIR=os.path.dirname(os.path.abspath(__file__)))
+    return run_binary(binary, [stage, *forwarded]).returncode
+
+
+def run_binary(
+    binary: str, arguments: Sequence[str], *, module_dir: Path | None = None, capture: bool = False
+) -> subprocess.CompletedProcess[bytes]:
+    """Run the operator's build, with stage defaults in the selected module folder."""
+    directory = str(module_dir) if module_dir is not None else os.path.dirname(os.path.abspath(__file__))
+    env = dict(os.environ, FADDEN_MODULE_DIR=directory)
     # Maintainer CLI; the binary is this checkout's build or the operator's choice.
-    return subprocess.run([binary, stage, *forwarded], env=env, check=False).returncode  # NOSONAR
+    return subprocess.run(  # NOSONAR
+        [binary, *arguments], env=env, check=False, stdout=subprocess.PIPE if capture else None
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -70,7 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     saved = sys.argv
     sys.argv = [args.stage, *forwarded]
     try:
-        if args.stage in {"capture_register", "export_live_evidence_bundles"}:
+        if args.stage in {"capture_register", "export_live_evidence_bundles", "quick"}:
             result = func(forwarded)
         else:
             result = func()
