@@ -931,11 +931,7 @@ fn rows_of(
     params: &[Sql],
 ) -> Result<Vec<Vec<(String, Json)>>, Exc> {
     let mut statement = connection.prepare(sql).map_err(|e| sqlite_error(&e))?;
-    let columns: Vec<String> = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let columns: Vec<String> = statement.column_names().map(str::to_string).collect();
     let mut rows = statement
         .query(params_from_iter(params.iter()))
         .map_err(|e| sqlite_error(&e))?;
@@ -2036,6 +2032,36 @@ fn standing_line(standing: &Json) -> Option<String> {
     Some(format!("  as at {}: {}{next}", s("date"), s("status")))
 }
 
+/// The quotation totals: each quotation once, and each comparison with a citation.
+fn print_quotation_totals(report: &[Json], run: &mut Run) {
+    let pairs: Vec<&Json> = report.iter().flat_map(quotations_of).collect();
+    if pairs.is_empty() {
+        return;
+    }
+    let count = |grade: Option<&str>| {
+        pairs
+            .iter()
+            .filter(|q| q.at("grade").as_str() == grade)
+            .count()
+    };
+    let mut parts: Vec<String> = GRADES
+        .iter()
+        .map(|grade| format!("{} {grade}", count(Some(grade))))
+        .collect();
+    parts.push(format!("{} not compared", count(None)));
+    parts.retain(|part| !part.starts_with("0 "));
+    let quotes: BTreeSet<String> = pairs
+        .iter()
+        .map(|q| pyvalue::py_str(q.at("start")))
+        .collect();
+    run.print(&format!(
+        "{} quotations, {} comparisons with citations: {}.",
+        quotes.len(),
+        pairs.len(),
+        parts.join(", ")
+    ));
+}
+
 fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> Result<(), Exc> {
     for item in report {
         let s = |k: &str| pyvalue::py_str(item.at(k));
@@ -2061,31 +2087,7 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             print_quotation(quotation, run);
         }
     }
-    let pairs: Vec<&Json> = report.iter().flat_map(quotations_of).collect();
-    if !pairs.is_empty() {
-        let count = |grade: Option<&str>| {
-            pairs
-                .iter()
-                .filter(|q| q.at("grade").as_str() == grade)
-                .count()
-        };
-        let mut parts: Vec<String> = GRADES
-            .iter()
-            .map(|grade| format!("{} {grade}", count(Some(grade))))
-            .collect();
-        parts.push(format!("{} not compared", count(None)));
-        parts.retain(|part| !part.starts_with("0 "));
-        let quotes: BTreeSet<String> = pairs
-            .iter()
-            .map(|q| pyvalue::py_str(q.at("start")))
-            .collect();
-        run.print(&format!(
-            "{} quotations, {} comparisons with citations: {}.",
-            quotes.len(),
-            pairs.len(),
-            parts.join(", ")
-        ));
-    }
+    print_quotation_totals(report, run);
     let counted: Vec<String> = OUTCOMES
         .iter()
         .map(|name| {

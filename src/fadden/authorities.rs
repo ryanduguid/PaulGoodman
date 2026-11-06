@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use regex::Regex;
-use rusqlite::{Connection, Statement};
+use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 
 use super::{Exc, Run, search};
@@ -49,8 +49,7 @@ fn sqlite(error: &rusqlite::Error) -> Exc {
     Exc::Sqlite(error.to_string())
 }
 
-/// Each title's register id, name and currency, and how many titles share its name.
-fn titles(connection: &Connection) -> Result<Vec<(String, String, bool, i64)>, Exc> {
+fn load_titles(connection: &Connection) -> Result<Vec<(String, String, bool, i64)>, Exc> {
     let mut titles = connection
         .prepare(
             "SELECT register_id, name, version_is_current, \
@@ -71,9 +70,21 @@ fn titles(connection: &Connection) -> Result<Vec<(String, String, bool, i64)>, E
         .map_err(|e| sqlite(&e))
 }
 
-/// One title's numbered rows: row id, section key and container.
+/// Why the gate cannot be given this title, or `None` when it can.
+fn unread_as_act(act: &Regex, name: &str, sharing: i64, current: bool) -> Option<&'static str> {
+    if !act.is_match(name) {
+        Some("the gate does not read this name as an Act")
+    } else if sharing > 1 {
+        Some("another title has this name")
+    } else if !current {
+        Some("this build's compilation is not the current one")
+    } else {
+        None
+    }
+}
+
 fn section_rows(
-    rows: &mut Statement,
+    rows: &mut rusqlite::Statement<'_>,
     rid: &str,
 ) -> Result<Vec<(String, String, Option<String>)>, Exc> {
     rows.query_map([rid], |row| {
@@ -87,12 +98,12 @@ fn section_rows(
     .map_err(|e| sqlite(&e))
 }
 
-/// List one title's sections, reporting the rows left out.
-fn add_title_rows(
-    found: Vec<(String, String, Option<String>)>,
-    (rid, name): (&str, &str),
-    section: &Regex,
+fn note_section_rows(
     export: &mut Export,
+    section: &Regex,
+    rid: &str,
+    name: &str,
+    found: Vec<(String, String, Option<String>)>,
 ) {
     let mut in_schedule = 0;
     for (row_id, key, container) in found {
@@ -119,7 +130,7 @@ fn add_title_rows(
 pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), Exc> {
     let act = pattern(&format!("^{ACT}$"));
     let section = pattern(SECTION);
-    let titles = titles(connection)?;
+    let titles = load_titles(connection)?;
     let mut rows = connection
         .prepare(
             "SELECT row_id, section_key, container FROM rows \
@@ -127,16 +138,7 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
         )
         .map_err(|e| sqlite(&e))?;
     for (rid, name, current, sharing) in titles {
-        let refusal = if !act.is_match(&name) {
-            Some("the gate does not read this name as an Act")
-        } else if sharing > 1 {
-            Some("another title has this name")
-        } else if !current {
-            Some("this build's compilation is not the current one")
-        } else {
-            None
-        };
-        if let Some(reason) = refusal {
+        if let Some(reason) = unread_as_act(&act, &name, sharing, current) {
             export
                 .skipped
                 .push(format!("title {rid} ({name}): {reason}"));
@@ -144,60 +146,62 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
         }
         let name = py::split_whitespace(&name).join(" ");
         let found = section_rows(&mut rows, &rid)?;
-        add_title_rows(found, (&rid, &name), &section, export);
+        note_section_rows(export, &section, &rid, &name, found);
     }
     Ok(())
 }
 
-/// Each document in `files`, with the ids its captures' titles name and whether any
-/// capture carries a withdrawal notice. A file with no rows, or a row the stage could
-/// not have written, is an error.
-fn read_documents(
-    files: &[(String, String)],
-) -> Result<BTreeMap<String, (BTreeSet<String>, bool)>, Exc> {
-    let id = pattern(&format!(r"^({SERIES})\s+({RULING_ID})(?:\s|$)"));
-    let mut documents: BTreeMap<String, (BTreeSet<String>, bool)> = BTreeMap::new();
-    for (path, text) in files {
-        let lines = py::splitlines(text);
-        if lines.iter().all(|line| py::strip(line).is_empty()) {
-            return Err(Exc::value(format!("{path} has no rulings rows")));
-        }
-        for (index, line) in lines.into_iter().enumerate() {
-            if py::strip(line).is_empty() {
-                continue;
-            }
-            let place = format!("{path}:{}", index + 1);
-            let row = pyjson::loads_standard(line)
-                .map_err(|_| Exc::value(format!("{place} is not JSON")))?;
-            let field = |key| row.get(key).and_then(Json::as_str);
-            let (Some(docid), Some(title)) = (field("docid"), field("title")) else {
-                return Err(Exc::value(format!("{place} is not a rulings row")));
-            };
-            let document = documents.entry(docid.to_string()).or_default();
-            document.0.extend(id.captures(title).map(|found| {
-                let series = py::split_whitespace(&found[1]).join(" ");
-                format!("{series} {}", &found[2])
-            }));
-            let status = field("withdrawal_status");
-            if !matches!(status, Some("UNKNOWN" | "NOTICE_PRESENT")) {
-                return Err(Exc::value(format!(
-                    "{place} has no withdrawal status the rulings stage writes"
-                )));
-            }
-            document.1 |= status == Some("NOTICE_PRESENT");
-        }
+/// One rulings file's rows, keyed by document. A file with no rows, or a row the
+/// stage could not have written, stops the export.
+fn read_ruling_file(
+    path: &str,
+    text: &str,
+    id: &Regex,
+    documents: &mut BTreeMap<String, (BTreeSet<String>, bool)>,
+) -> Result<(), Exc> {
+    let lines = py::splitlines(text);
+    if lines.iter().all(|line| py::strip(line).is_empty()) {
+        return Err(Exc::value(format!("{path} has no rulings rows")));
     }
-    Ok(documents)
+    for (index, line) in lines.into_iter().enumerate() {
+        if py::strip(line).is_empty() {
+            continue;
+        }
+        let place = format!("{path}:{}", index + 1);
+        let row =
+            pyjson::loads_standard(line).map_err(|_| Exc::value(format!("{place} is not JSON")))?;
+        let field = |key| row.get(key).and_then(Json::as_str);
+        let (Some(docid), Some(title)) = (field("docid"), field("title")) else {
+            return Err(Exc::value(format!("{place} is not a rulings row")));
+        };
+        let document = documents.entry(docid.to_string()).or_default();
+        document.0.extend(id.captures(title).map(|found| {
+            let series = py::split_whitespace(&found[1]).join(" ");
+            format!("{series} {}", &found[2])
+        }));
+        let status = field("withdrawal_status");
+        if !matches!(status, Some("UNKNOWN" | "NOTICE_PRESENT")) {
+            return Err(Exc::value(format!(
+                "{place} has no withdrawal status the rulings stage writes"
+            )));
+        }
+        document.1 |= status == Some("NOTICE_PRESENT");
+    }
+    Ok(())
 }
 
 /// Each ruling id named at the start of a captured document's title. `files` holds
-/// each `rulings.jsonl` with the path to report; a file with no rows, or a row the
-/// stage could not have written, stops the export. A document's ids are all those its
+/// each `rulings.jsonl` with the path to report. A document's ids are all those its
 /// captures' titles name, and a withdrawal notice in any capture leaves them all out,
 /// even where another document lists one.
 pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<(), Exc> {
+    let id = pattern(&format!(r"^({SERIES})\s+({RULING_ID})(?:\s|$)"));
+    let mut documents: BTreeMap<String, (BTreeSet<String>, bool)> = BTreeMap::new();
+    for (path, text) in files {
+        read_ruling_file(path, text, &id, &mut documents)?;
+    }
     let mut withdrawn_ids = BTreeSet::new();
-    for (docid, (ids, withdrawn)) in read_documents(files)? {
+    for (docid, (ids, withdrawn)) in documents {
         if withdrawn {
             withdrawn_ids.extend(ids);
             let reason = format!("ruling {docid}: it carries a withdrawal notice");
