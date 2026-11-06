@@ -2280,6 +2280,28 @@ fn execute_define(
     Ok(refused_code(dated.as_ref()))
 }
 
+fn describe_reference(reference: &Json) -> String {
+    let s = |v: &Json| pyvalue::py_str(v);
+    let rows = match reference.at("rows") {
+        Json::Array(rows) => rows.clone(),
+        _ => Vec::new(),
+    };
+    let joined = shown_rows(&rows);
+    let place = if !joined.is_empty() {
+        joined
+    } else if matches!(reference.at("register_id"), Json::Null) {
+        "not in this index".into()
+    } else {
+        format!("no row for that {}", s(reference.at("kind")))
+    };
+    format!(
+        "  cites {} {} ({}): {place}",
+        s(reference.at("kind")),
+        s(reference.at("key")),
+        s(reference.at("citation"))
+    )
+}
+
 fn execute_refs(
     args: &crate::argparse::Namespace,
     connection: &Connection,
@@ -2299,24 +2321,7 @@ fn execute_refs(
     ));
     if let Json::Array(cites) = report.at("cites") {
         for reference in cites {
-            let rows = match reference.at("rows") {
-                Json::Array(rows) => rows.clone(),
-                _ => Vec::new(),
-            };
-            let joined = shown_rows(&rows);
-            let place = if !joined.is_empty() {
-                joined
-            } else if matches!(reference.at("register_id"), Json::Null) {
-                "not in this index".into()
-            } else {
-                format!("no row for that {}", s(reference.at("kind")))
-            };
-            run.print(&format!(
-                "  cites {} {} ({}): {place}",
-                s(reference.at("kind")),
-                s(reference.at("key")),
-                s(reference.at("citation"))
-            ));
+            run.print(&describe_reference(reference));
         }
     }
     if let Json::Array(sources) = report.at("cited_by") {
