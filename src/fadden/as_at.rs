@@ -124,7 +124,7 @@ pub fn classify(title: &Json, on: &str) -> Result<&'static str, Exc> {
 
 /// NFKC, with the Register's non-breaking hyphen (U+2011, which NFKC folds to
 /// U+2010) read as `-`. Case is not folded.
-fn literal(text: &str) -> String {
+pub(super) fn literal(text: &str) -> String {
     text.nfkc()
         .map(|c| if c == '\u{2010}' { '-' } else { c })
         .collect()

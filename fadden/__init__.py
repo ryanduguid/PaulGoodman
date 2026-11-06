@@ -29,5 +29,6 @@ STAGES = (
     "as_at",
     "compare_builds",
     "search",
+    "authorities",
     "witness",
 )

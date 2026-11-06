@@ -488,7 +488,8 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   which a separate stage set from its own Register query, so `retrieved` does not
   date them and a later amendment can outdate them. It makes no request. A citation naming no Act is checked
   against the title `--title` gives. It exits 1 if any outcome is other than
-  `resolved`, `assumed` or `container_level`.
+  `resolved`, `assumed` or `container_level`, or if any quotation is not graded
+  `exact` or `normalised`.
 
   | Outcome | Meaning |
   | --- | --- |
@@ -504,6 +505,69 @@ python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
   show that the provision says what the draft claims or applied at any date.
   Forms `refs` does not read, such as `s 8-1`, are not counted, so a clean
   result covers only the citations in the report.
+
+  A quotation is text in quotation marks (straight or curly, double or single) in
+  a citation's sentence. Each citation lists its own under `quotations`, and each
+  is graded against the one row a `resolved` or `assumed` section reached,
+  case-sensitively and by whole words, so `deductible` is not found in
+  `nondeductible`, nor `$1` or `$1.` in `$1.50`, `10` in `10%`, `2019` in `2019–20`
+  or `1` in `1/2`.
+
+  | Grade | Meaning |
+  | --- | --- |
+  | `exact` | The quotation's characters appear unchanged in the row |
+  | `normalised` | They appear once both are folded: Unicode compatibility forms (NFKC), the Register's non-breaking hyphen, curly quotation marks and apostrophes, white space and the asterisk opening a defined term, and, in the row only, the Markdown mark opening a line |
+  | `partial` | Neither, but at least 4 consecutive quotation words match. `matched_words` and `quote_words` give the longest run |
+  | `none` | None of these |
+
+  A quotation with `grade` `null` was not compared, and `reason` says why: the
+  citation reached no one section, as with `not_held`, `superseded`, a Division or
+  a range; the quotation has no closing mark before a blank line, when the first
+  200 characters are shown; or the citation is inside the quotation and no citation
+  outside it is beside it. It is never reported as `none`, which is a comparison
+  that failed. `start` is the quotation's byte offset in the draft, and the summary
+  counts each quotation once and each comparison with a citation.
+
+  A quotation the section holds, whole, also reports `other_rows`: how many other
+  rows in the index hold it, by the same test, across every title. `distinct` is
+  true when that is 0 and the quotation has at least 10 words, a floor measured on
+  one build ([build evidence](docs/build-evidence.md)). Neither changes the exit
+  status. A stock phrase can be `exact` in the cited section and in many others, so
+  `distinct` is the stronger sign that the words came from this section. It is not
+  proof: a build holding fewer titles has fewer rows to repeat them.
+
+  Know these limits before relying on a grade:
+
+  - `exact` and `normalised` show the words are in that row of this build. They do
+    not show the quotation is fair to its context, that the row is authorised text
+    or that it was the law at any date. A citation of a subsection is compared with
+    the whole section.
+  - `partial` is not a match. The run can leave out a word such as `not`, and an
+    elided or altered quotation (`...`, `[the]`) can reach only `partial`.
+  - An empty `quotations` does not show the sentence quotes nothing that matters.
+    A block quotation, unmarked wording and a quotation in another sentence are not
+    read, and a quotation beside a form `refs` does not read has no citation to
+    answer to. A sentence ends at a stop, `!` or `?` before a capital or `(`, or at a
+    blank line, so a quotation opening the next sentence with its mark is read with
+    the citation before it.
+  - With `--title`, a capitalised word in a quotation may name another source, so
+    the citation is `ambiguous` and its quotation is not compared.
+  - Each quotation in a sentence is compared with each citation in it, so
+    `sections 8-1 and 8-5 say "..."` must hold in both to exit 0. A sentence ending
+    inside its closing mark, as in `"...income." Section 8-5`, runs on into the next,
+    with the same effect.
+  - Finding quotation marks fails closed but is not guaranteed. A stray straight
+    double mark before white space, a straight single mark after punctuation with no
+    quotation open and a straight mark closing after a space all read as an unclosed
+    quotation, so a draft can exit 1 with nothing misquoted. That is deliberate. A
+    mark straight after a letter or digit reads as an apostrophe or a closing mark,
+    so it opens nothing.
+  - A single closing mark looks like an apostrophe, so a single quotation closes at
+    the last candidate before the next opening mark in the paragraph:
+    `the taxpayers' income` never stops at `taxpayers`. That can read past the
+    author's closing mark, even past the citation, which lowers a grade. It never
+    drops the quotation: one with several candidates is compared with any citation it
+    runs over.
 
   A sentence that never names the Act cannot prove which Act it means, so a bare
   citation is never `resolved`, even `of this Act`. With `--title` it is `assumed`:
@@ -587,6 +651,63 @@ Measured on the 4 August 2026 build on 15 October 2026: 946 titles and 21,916
 rows indexed in about 5 seconds into a 77 MB file, with 8,426 definition
 paragraphs and 62,224 section, Division and Subdivision references. Keep the index with the corpus it
 came from and out of git; rebuild it after any corpus rebuild.
+
+## Exporting an authorities list
+
+`python -m fadden authorities` writes the closed list that `gate --authorities` in
+[llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails) reads, so that
+gate can check a draft's citations against your build. Run it on your own build; the
+file describes that build and, like an index, stays out of git. It makes no request.
+
+```bash
+python -m fadden authorities search.sqlite --out authorities.json --rulings rulings-run/rulings.jsonl
+```
+
+`--out` must not exist. `--rulings` is optional; repeat it for each `rulings` run. The
+file holds one key, the only one the gate accepts:
+
+```json
+{
+  "authorities": [
+    "TR 2022/1",
+    "s 8-1 of the Income Tax Assessment Act 1997"
+  ]
+}
+```
+
+So provenance goes to stdout: the `sources.json` digest, each rulings file's digest and
+a `skipped` line for every title, row or document left out, with its reason. An entry
+the gate cannot read would make it refuse the whole file, so these are left out:
+
+- a title whose name the gate does not read as an Act: every legislative and notifiable
+  instrument, and of the 175 Acts in `fadden/titles_principal.json`, 9 such as
+  `Taxation (Deficit Reduction) Act (No. 3) 1993`;
+- a title sharing its name with another, or whose compilation is not the current one in
+  this build;
+- a numbered row directly under a Schedule, which is a clause or item and not a section,
+  such as the items in Schedules 1 and 2 of the GST Act;
+- a section label the gate does not read;
+- a ruling whose title does not start with an id in the gate's series, such as a
+  decision impact statement or edited private advice, and any ruling carrying a
+  withdrawal notice in any capture.
+
+It stops with exit 1 and writes no file if no section remains, because a list of rulings
+alone would send every section a draft cites to review, if a `--rulings` file has no rows,
+or if a row carries a `withdrawal_status` the `rulings` stage does not write.
+
+Know these limits before relying on a result:
+
+- A listed authority exists in this build. That is all it shows: not that the section
+  was the law on the draft's date or says what the draft claims. A ruling with no
+  notice (`UNKNOWN`) is not thereby current. A withdrawn document's ids come from its
+  captures' titles, so a document with no readable title in any capture cannot take
+  another document's listing of its id out.
+- The gate compares citations exactly, and the list holds whole sections, so `s 8-1(1)`
+  is not `s 8-1` and goes to review. So does `s 8-1 ITAA 1997`: the gate reads an Act
+  named in full only.
+- A section is listed by its label in the title. A provision in a Schedule with its own
+  Divisions, such as Schedule 1 to the *Taxation Administration Act 1953*, is listed as
+  a section of the Act, and `container` cannot show which Schedule it sits in.
 
 ## Witnessing section structure
 
@@ -719,7 +840,7 @@ From an empty checkout, run the stages in order. Stage names are unchanged;
 the dispatcher lives at `python -m fadden <stage>`. Intermediate JSON files
 are written beside the stage modules under `fadden/`.
 
-The `as_at`, `compare_builds`, `discover`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles`, `extract`, `finalize`, `pii_scan`, `pii_scan2`, `probe13`, `rates`, `rulings`, `search` and `versions` stages are the Rust `fadden` binary, built
+The `as_at`, `authorities`, `compare_builds`, `discover`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles`, `extract`, `finalize`, `pii_scan`, `pii_scan2`, `probe13`, `rates`, `rulings`, `search` and `versions` stages are the Rust `fadden` binary, built
 with `cargo build --locked --release`; the dispatcher runs it with the same
 arguments and the binary keeps their command lines, messages and exit
 statuses. `FADDEN_BIN` names another build of it. An exception those Python

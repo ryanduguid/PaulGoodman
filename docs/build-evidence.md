@@ -125,3 +125,37 @@ build` from `sources.json` SHA-256 `43823bbd8b9ab8ab7128e2a4fcfd8b3b628ef4e11985
 | C2004A00446 | *A New Tax System (Goods and Services Tax) Act 1999* | 96 | 1 January 2026 | `a7e144d6139becf287ec49b86dbc9f7d07eb2de69a72b1e7ab3ad07deca52cb5` |
 | C2004A03280 | *Fringe Benefits Tax Assessment Act 1986* | 97 | 1 July 2026 | `21ee9133acc6dbc48393dfb4ea334324d348c1b6f886d84e347c984dd899f57c` |
 | F2025L01097 | *Income Tax Assessment (Effective Life of Depreciating Assets) Determination 2025* | 0 | 15 September 2025 | `aecb8c2f898f20a1556929c231564ebc18f53ebbc317395c5880fadab2c357ba` |
+
+## How often a run of words identifies one row
+
+`cite-check` calls a quotation `distinct` when no other row holds it and it has at least
+10 words. Measured on 6 November 2026 over the index above (6 titles, 8,096 rows,
+2,172,677 words after `normalised` folding): every run of each length, at every position
+in every row, counted as in one row if no other row holds those words.
+
+| Words | Runs | In one row only | Share |
+|---:|---:|---:|---:|
+| 3 | 2,156,485 | 591,720 | 27.44% |
+| 4 | 2,148,390 | 943,943 | 43.94% |
+| 5 | 2,140,295 | 1,205,742 | 56.34% |
+| 6 | 2,132,201 | 1,386,995 | 65.05% |
+| 8 | 2,116,029 | 1,586,805 | 74.99% |
+| 9 | 2,107,945 | 1,642,628 | 77.93% |
+| 10 | 2,099,864 | 1,682,371 | 80.12% |
+| 12 | 2,083,730 | 1,734,997 | 83.26% |
+| 16 | 2,051,616 | 1,788,740 | 87.19% |
+| 20 | 2,019,835 | 1,810,667 | 89.64% |
+| 30 | 1,942,508 | 1,809,023 | 93.13% |
+| 40 | 1,868,763 | 1,774,463 | 94.95% |
+
+The floor is 10 because that is the first length at which at least 4 in 5 runs were in one
+row. That threshold is a judgement. The curve has no sharp step, and no length measured
+reached 95%, because these Acts repeat long passages, so a floor cannot certify a
+quotation by length alone. `other_rows` is the direct count for each quotation, and the
+floor only stops a short passage being called `distinct` because this build lacks the
+titles that repeat it.
+
+This describes these 6 titles, not the corpus. Adding rows cannot make an existing run
+more unique, but they add runs of their own, so the share on a wider build can rise or
+fall. Rerun with
+`FADDEN_REFERENCE_INDEX=<index> cargo test --locked --test fadden_search distinct_floor_on_a_real_index -- --ignored --nocapture`.

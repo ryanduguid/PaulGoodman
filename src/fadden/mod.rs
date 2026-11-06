@@ -9,6 +9,7 @@
 //! printed a traceback and exited 1; here it prints the traceback's last line,
 //! `<Exception>: <message>`, and exits 1.
 pub mod as_at;
+pub mod authorities;
 pub mod capture_register;
 pub mod cli;
 pub mod compare_builds;
@@ -28,6 +29,7 @@ pub mod pii;
 pub mod pii_scan;
 pub mod probe13;
 pub mod publication_bundles;
+pub mod quotes;
 pub mod rates;
 pub mod rulings;
 pub mod search;
