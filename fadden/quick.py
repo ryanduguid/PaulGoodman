@@ -17,17 +17,15 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import os
 import shutil
 import sqlite3
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Sequence
 
 from . import download, retry13
-from .__main__ import rust_binary
+from .__main__ import run_binary, rust_binary
 
 # The 8 principal Acts the MCP server ranks first, then the SIS Act.
 PRESET = (
@@ -74,11 +72,7 @@ def prepare(out: Path) -> Path:
 
 def stage(binary: str, scratch: Path, *args: str, capture: bool = False) -> str:
     """One Rust stage with its files in `scratch`; a failed stage stops the run."""
-    env = dict(os.environ, FADDEN_MODULE_DIR=str(scratch))
-    # Maintainer CLI; the binary is this checkout's build or the operator's choice.
-    done = subprocess.run(  # NOSONAR
-        [binary, *args], env=env, check=False, stdout=subprocess.PIPE if capture else None
-    )
+    done = run_binary(binary, args, module_dir=scratch, capture=capture)
     if done.returncode:
         raise QuickError(f"the {args[0]} stage exited {done.returncode}")
     return done.stdout.decode("utf-8") if capture else ""

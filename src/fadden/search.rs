@@ -2280,6 +2280,59 @@ fn execute_define(
     Ok(refused_code(dated.as_ref()))
 }
 
+fn execute_refs(
+    args: &crate::argparse::Namespace,
+    connection: &Connection,
+    run: &mut Run,
+) -> Result<i32, Exc> {
+    let row_id = args.str("row_id").unwrap_or_default();
+    let report = refs(connection, &row_id)?;
+    if args.flag("json") {
+        run.print_points(&dumps_line(&report, false))?;
+        return Ok(0);
+    }
+    let s = |v: &Json| pyvalue::py_str(v);
+    run.print(&format!(
+        "{}: {}",
+        s(report.at("row_id")),
+        s(report.at("heading"))
+    ));
+    if let Json::Array(cites) = report.at("cites") {
+        for reference in cites {
+            let rows = match reference.at("rows") {
+                Json::Array(rows) => rows.clone(),
+                _ => Vec::new(),
+            };
+            let joined = shown_rows(&rows);
+            let place = if !joined.is_empty() {
+                joined
+            } else if matches!(reference.at("register_id"), Json::Null) {
+                "not in this index".into()
+            } else {
+                format!("no row for that {}", s(reference.at("kind")))
+            };
+            run.print(&format!(
+                "  cites {} {} ({}): {place}",
+                s(reference.at("kind")),
+                s(reference.at("key")),
+                s(reference.at("citation"))
+            ));
+        }
+    }
+    if let Json::Array(sources) = report.at("cited_by") {
+        for source in sources {
+            run.print(&format!(
+                "  cited by {} ({}): {}",
+                s(source.at("row_id")),
+                s(source.at("heading")),
+                s(source.at("citation"))
+            ));
+        }
+    }
+    run.print(&source_line(connection)?);
+    Ok(0)
+}
+
 fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let command = args.str("command").unwrap_or_default();
     if command == "build" {
@@ -2294,55 +2347,8 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc>
     }
     let connection = open_index(&args.str("index").unwrap_or_default())?;
     match command.as_str() {
-        "query" => return execute_query(args, &connection, run),
-        "define" => return execute_define(args, &connection, run),
-        _ => {
-            let row_id = args.str("row_id").unwrap_or_default();
-            let report = refs(&connection, &row_id)?;
-            if args.flag("json") {
-                run.print_points(&dumps_line(&report, false))?;
-                return Ok(0);
-            }
-            let s = |v: &Json| pyvalue::py_str(v);
-            run.print(&format!(
-                "{}: {}",
-                s(report.at("row_id")),
-                s(report.at("heading"))
-            ));
-            if let Json::Array(cites) = report.at("cites") {
-                for reference in cites {
-                    let rows = match reference.at("rows") {
-                        Json::Array(rows) => rows.clone(),
-                        _ => Vec::new(),
-                    };
-                    let joined = shown_rows(&rows);
-                    let place = if !joined.is_empty() {
-                        joined
-                    } else if matches!(reference.at("register_id"), Json::Null) {
-                        "not in this index".into()
-                    } else {
-                        format!("no row for that {}", s(reference.at("kind")))
-                    };
-                    run.print(&format!(
-                        "  cites {} {} ({}): {place}",
-                        s(reference.at("kind")),
-                        s(reference.at("key")),
-                        s(reference.at("citation"))
-                    ));
-                }
-            }
-            if let Json::Array(sources) = report.at("cited_by") {
-                for source in sources {
-                    run.print(&format!(
-                        "  cited by {} ({}): {}",
-                        s(source.at("row_id")),
-                        s(source.at("heading")),
-                        s(source.at("citation"))
-                    ));
-                }
-            }
-            run.print(&source_line(&connection)?);
-        }
+        "query" => execute_query(args, &connection, run),
+        "define" => execute_define(args, &connection, run),
+        _ => execute_refs(args, &connection, run),
     }
-    Ok(0)
 }
