@@ -49,10 +49,7 @@ fn sqlite(error: &rusqlite::Error) -> Exc {
     Exc::Sqlite(error.to_string())
 }
 
-/// Each section of each title the gate can read and only that title can answer to.
-pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), Exc> {
-    let act = pattern(&format!("^{ACT}$"));
-    let section = pattern(SECTION);
+fn load_titles(connection: &Connection) -> Result<Vec<(String, String, bool, i64)>, Exc> {
     let mut titles = connection
         .prepare(
             "SELECT register_id, name, version_is_current, \
@@ -60,7 +57,7 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
              FROM titles ORDER BY register_id",
         )
         .map_err(|e| sqlite(&e))?;
-    let titles = titles
+    titles
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -70,7 +67,70 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
             ))
         })
         .and_then(Iterator::collect::<Result<Vec<_>, _>>)
-        .map_err(|e| sqlite(&e))?;
+        .map_err(|e| sqlite(&e))
+}
+
+/// Why the gate cannot be given this title, or `None` when it can.
+fn unread_as_act(act: &Regex, name: &str, sharing: i64, current: bool) -> Option<&'static str> {
+    if !act.is_match(name) {
+        Some("the gate does not read this name as an Act")
+    } else if sharing > 1 {
+        Some("another title has this name")
+    } else if !current {
+        Some("this build's compilation is not the current one")
+    } else {
+        None
+    }
+}
+
+fn section_rows(
+    rows: &mut rusqlite::Statement<'_>,
+    rid: &str,
+) -> Result<Vec<(String, String, Option<String>)>, Exc> {
+    rows.query_map([rid], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })
+    .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+    .map_err(|e| sqlite(&e))
+}
+
+fn note_section_rows(
+    export: &mut Export,
+    section: &Regex,
+    rid: &str,
+    name: &str,
+    found: Vec<(String, String, Option<String>)>,
+) {
+    let mut in_schedule = 0;
+    for (row_id, key, container) in found {
+        // A numbered row directly under a Schedule is a clause or item, so
+        // `s 1 of the Act` would name a section the Act may not have.
+        if container.is_some_and(|c| c.starts_with("Schedule")) {
+            in_schedule += 1;
+        } else if section.is_match(&key) {
+            export.sections.insert(format!("s {key} of the {name}"));
+        } else {
+            export
+                .skipped
+                .push(format!("row {row_id}: the gate does not read this label"));
+        }
+    }
+    if in_schedule > 0 {
+        export.skipped.push(format!(
+            "title {rid} ({name}): {in_schedule} rows directly under a Schedule"
+        ));
+    }
+}
+
+/// Each section of each title the gate can read and only that title can answer to.
+pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), Exc> {
+    let act = pattern(&format!("^{ACT}$"));
+    let section = pattern(SECTION);
+    let titles = load_titles(connection)?;
     let mut rows = connection
         .prepare(
             "SELECT row_id, section_key, container FROM rows \
@@ -78,92 +138,67 @@ pub fn add_sections(connection: &Connection, export: &mut Export) -> Result<(), 
         )
         .map_err(|e| sqlite(&e))?;
     for (rid, name, current, sharing) in titles {
-        let refusal = if !act.is_match(&name) {
-            Some("the gate does not read this name as an Act")
-        } else if sharing > 1 {
-            Some("another title has this name")
-        } else if !current {
-            Some("this build's compilation is not the current one")
-        } else {
-            None
-        };
-        if let Some(reason) = refusal {
+        if let Some(reason) = unread_as_act(&act, &name, sharing, current) {
             export
                 .skipped
                 .push(format!("title {rid} ({name}): {reason}"));
             continue;
         }
         let name = py::split_whitespace(&name).join(" ");
-        let found = rows
-            .query_map([&rid], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            })
-            .and_then(Iterator::collect::<Result<Vec<_>, _>>)
-            .map_err(|e| sqlite(&e))?;
-        let mut in_schedule = 0;
-        for (row_id, key, container) in found {
-            // A numbered row directly under a Schedule is a clause or item, so
-            // `s 1 of the Act` would name a section the Act may not have.
-            if container.is_some_and(|c| c.starts_with("Schedule")) {
-                in_schedule += 1;
-            } else if section.is_match(&key) {
-                export.sections.insert(format!("s {key} of the {name}"));
-            } else {
-                export
-                    .skipped
-                    .push(format!("row {row_id}: the gate does not read this label"));
-            }
+        let found = section_rows(&mut rows, &rid)?;
+        note_section_rows(export, &section, &rid, &name, found);
+    }
+    Ok(())
+}
+
+/// One rulings file's rows, keyed by document. A file with no rows, or a row the
+/// stage could not have written, stops the export.
+fn read_ruling_file(
+    path: &str,
+    text: &str,
+    id: &Regex,
+    documents: &mut BTreeMap<String, (BTreeSet<String>, bool)>,
+) -> Result<(), Exc> {
+    let lines = py::splitlines(text);
+    if lines.iter().all(|line| py::strip(line).is_empty()) {
+        return Err(Exc::value(format!("{path} has no rulings rows")));
+    }
+    for (index, line) in lines.into_iter().enumerate() {
+        if py::strip(line).is_empty() {
+            continue;
         }
-        if in_schedule > 0 {
-            export.skipped.push(format!(
-                "title {rid} ({name}): {in_schedule} rows directly under a Schedule"
-            ));
+        let place = format!("{path}:{}", index + 1);
+        let row =
+            pyjson::loads_standard(line).map_err(|_| Exc::value(format!("{place} is not JSON")))?;
+        let field = |key| row.get(key).and_then(Json::as_str);
+        let (Some(docid), Some(title)) = (field("docid"), field("title")) else {
+            return Err(Exc::value(format!("{place} is not a rulings row")));
+        };
+        let document = documents.entry(docid.to_string()).or_default();
+        document.0.extend(id.captures(title).map(|found| {
+            let series = py::split_whitespace(&found[1]).join(" ");
+            format!("{series} {}", &found[2])
+        }));
+        let status = field("withdrawal_status");
+        if !matches!(status, Some("UNKNOWN" | "NOTICE_PRESENT")) {
+            return Err(Exc::value(format!(
+                "{place} has no withdrawal status the rulings stage writes"
+            )));
         }
+        document.1 |= status == Some("NOTICE_PRESENT");
     }
     Ok(())
 }
 
 /// Each ruling id named at the start of a captured document's title. `files` holds
-/// each `rulings.jsonl` with the path to report; a file with no rows, or a row the
-/// stage could not have written, stops the export. A document's ids are all those its
+/// each `rulings.jsonl` with the path to report. A document's ids are all those its
 /// captures' titles name, and a withdrawal notice in any capture leaves them all out,
 /// even where another document lists one.
 pub fn add_rulings(files: &[(String, String)], export: &mut Export) -> Result<(), Exc> {
     let id = pattern(&format!(r"^({SERIES})\s+({RULING_ID})(?:\s|$)"));
     let mut documents: BTreeMap<String, (BTreeSet<String>, bool)> = BTreeMap::new();
     for (path, text) in files {
-        let lines = py::splitlines(text);
-        if lines.iter().all(|line| py::strip(line).is_empty()) {
-            return Err(Exc::value(format!("{path} has no rulings rows")));
-        }
-        for (index, line) in lines.into_iter().enumerate() {
-            if py::strip(line).is_empty() {
-                continue;
-            }
-            let place = format!("{path}:{}", index + 1);
-            let row = pyjson::loads_standard(line)
-                .map_err(|_| Exc::value(format!("{place} is not JSON")))?;
-            let field = |key| row.get(key).and_then(Json::as_str);
-            let (Some(docid), Some(title)) = (field("docid"), field("title")) else {
-                return Err(Exc::value(format!("{place} is not a rulings row")));
-            };
-            let document = documents.entry(docid.to_string()).or_default();
-            document.0.extend(id.captures(title).map(|found| {
-                let series = py::split_whitespace(&found[1]).join(" ");
-                format!("{series} {}", &found[2])
-            }));
-            let status = field("withdrawal_status");
-            if !matches!(status, Some("UNKNOWN" | "NOTICE_PRESENT")) {
-                return Err(Exc::value(format!(
-                    "{place} has no withdrawal status the rulings stage writes"
-                )));
-            }
-            document.1 |= status == Some("NOTICE_PRESENT");
-        }
+        read_ruling_file(path, text, &id, &mut documents)?;
     }
     let mut withdrawn_ids = BTreeSet::new();
     for (docid, (ids, withdrawn)) in documents {

@@ -60,25 +60,24 @@ pub(super) fn quotations(draft: &str) -> Vec<Quotation> {
     found
 }
 
-/// shortcut: a single mark closing a quotation looks like the apostrophe in `taxpayers'
-/// income`, so a single quotation closes at the last candidate before the next opening
-/// mark and is marked `loose` if there were several. Reading on can only join text the
-/// author did not quote, which lowers a grade; stopping early could grade a fragment of
-/// the quotation as `exact`. A loose quotation never excuses a citation it runs over.
-fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
-    let chars: Vec<(usize, char)> = paragraph.char_indices().collect();
+/// With no quotation open, any mark clear of a word starts one, so a stray space or
+/// the colon in `says:' words'` cannot hide it.
+fn may_open(chars: &[(usize, char)], i: usize) -> bool {
+    let before = i.checked_sub(1).and_then(|j| chars.get(j).map(|&(_, c)| c));
+    !before.is_some_and(char::is_alphanumeric)
+}
+
+/// Where each mark kind can open and close. Only an opening mark bounds a single
+/// quotation already open: a straight mark before white space and after punctuation
+/// closes it, as in `'costs.' and`.
+fn mark_sites(chars: &[(usize, char)]) -> Vec<(Vec<usize>, Vec<usize>)> {
     let at = |i: usize| chars.get(i).map(|&(_, c)| c);
     let before = |i: usize| i.checked_sub(1).and_then(at);
-    // With no quotation open, any mark clear of a word starts one, so a stray space or
-    // the colon in `says:' words'` cannot hide it.
-    let may_open = |i: usize| !before(i).is_some_and(char::is_alphanumeric);
-    // Only this bounds an open single quotation: a straight mark before white space and
-    // after punctuation closes it, as in `'costs.' and`.
     let opens = |i: usize| {
         let tight = at(i + 1).is_some_and(|c| !c.is_whitespace());
         let clear = chars[i].1 != '\''
             || before(i).is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '['));
-        may_open(i) && (tight || clear)
+        may_open(chars, i) && (tight || clear)
     };
     let closes = |i: usize| {
         before(i).is_some_and(|c| !c.is_whitespace())
@@ -88,55 +87,97 @@ fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
         let hits = |i: &usize| chars[*i].1 == wanted && test(*i);
         (0..chars.len()).filter(hits).collect()
     };
-    let marks: Vec<(Vec<usize>, Vec<usize>)> = MARKS
+    MARKS
         .iter()
         .map(|&(open, close)| (places(open, &opens), places(close, &closes)))
-        .collect();
+        .collect()
+}
+
+/// A quotation this character opened, when it is worth reporting, and where to read on.
+struct Taken {
+    quotation: Option<Quotation>,
+    next: usize,
+}
+
+/// The text between the marks, the quotation's exclusive end and the next index.
+fn quotation_body(
+    paragraph: &str,
+    chars: &[(usize, char)],
+    kind: usize,
+    inside: usize,
+    closing: Option<&usize>,
+    i: usize,
+) -> (String, usize, usize) {
+    match closing {
+        Some(&j) => {
+            let close = MARKS[kind].1.len_utf8();
+            (
+                paragraph[inside..chars[j].0].trim().to_string(),
+                chars[j].0 + close,
+                j + 1,
+            )
+        }
+        None => {
+            let shown = paragraph[inside..].chars().take(UNCLOSED_SHOWN);
+            (shown.collect(), inside, i + 1)
+        }
+    }
+}
+
+/// The quotation `chars[i]` opens. `None` when that character opens nothing.
+fn take_quotation(
+    paragraph: &str,
+    chars: &[(usize, char)],
+    marks: &[(Vec<usize>, Vec<usize>)],
+    i: usize,
+    base: usize,
+) -> Option<Taken> {
+    let (place, mark) = chars[i];
+    let kind = MARKS.iter().position(|(open, _)| *open == mark);
+    let kind = kind.filter(|_| may_open(chars, i))?;
+    let single = matches!(mark, '‘' | '\'');
+    let (openers, closers) = &marks[kind];
+    let later = openers.partition_point(|&j| j <= i);
+    let limit = openers.get(later).filter(|_| single).copied();
+    let limit = limit.unwrap_or(chars.len());
+    let first = closers.partition_point(|&j| j <= i);
+    let candidates = &closers[first..closers.partition_point(|&j| j < limit)];
+    let closing = if single {
+        candidates.last()
+    } else {
+        candidates.first()
+    };
+    let inside = place + mark.len_utf8();
+    let (text, end, next) = quotation_body(paragraph, chars, kind, inside, closing, i);
+    let worth = closing.is_none() || text.chars().any(char::is_alphanumeric);
+    let quotation = worth.then_some(Quotation {
+        text,
+        start: base + place,
+        end: base + end,
+        closed: closing.is_some(),
+        loose: single && candidates.len() > 1,
+    });
+    Some(Taken { quotation, next })
+}
+
+/// shortcut: a single mark closing a quotation looks like the apostrophe in `taxpayers'
+/// income`, so a single quotation closes at the last candidate before the next opening
+/// mark and is marked `loose` if there were several. Reading on can only join text the
+/// author did not quote, which lowers a grade; stopping early could grade a fragment of
+/// the quotation as `exact`. A loose quotation never excuses a citation it runs over.
+fn scan(paragraph: &str, base: usize, found: &mut Vec<Quotation>) {
+    let chars: Vec<(usize, char)> = paragraph.char_indices().collect();
+    let marks = mark_sites(&chars);
     let mut i = 0;
     while i < chars.len() {
-        let (place, mark) = chars[i];
-        let kind = MARKS.iter().position(|(open, _)| *open == mark);
-        let Some(kind) = kind.filter(|_| may_open(i)) else {
+        let Some(taken) = take_quotation(paragraph, &chars, &marks, i, base) else {
             i += 1;
             continue;
         };
-        let single = matches!(mark, '‘' | '\'');
-        let (openers, closers) = &marks[kind];
-        let later = openers.partition_point(|&j| j <= i);
-        let limit = openers.get(later).filter(|_| single);
-        let limit = limit.copied().unwrap_or(chars.len());
-        let first = closers.partition_point(|&j| j <= i);
-        let candidates = &closers[first..closers.partition_point(|&j| j < limit)];
-        let closing = if single {
-            candidates.last()
-        } else {
-            candidates.first()
-        };
-        let inside = place + mark.len_utf8();
-        let (text, end, next) = match closing {
-            Some(&j) => {
-                let close = MARKS[kind].1.len_utf8();
-                (
-                    paragraph[inside..chars[j].0].trim().to_string(),
-                    chars[j].0 + close,
-                    j + 1,
-                )
-            }
-            None => {
-                let shown = paragraph[inside..].chars().take(UNCLOSED_SHOWN);
-                (shown.collect(), inside, i + 1)
-            }
-        };
-        if closing.is_none() || text.chars().any(char::is_alphanumeric) {
-            found.push(Quotation {
-                text,
-                start: base + place,
-                end: base + end,
-                closed: closing.is_some(),
-                loose: single && candidates.len() > 1,
-            });
+        if let Some(quotation) = taken.quotation {
+            found.push(quotation);
         }
-        i = next;
+        i = taken.next;
     }
 }
 
