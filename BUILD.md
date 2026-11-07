@@ -767,6 +767,36 @@ Know these limits before relying on a result:
   Divisions, such as Schedule 1 to the *Taxation Administration Act 1953*, is listed as
   a section of the Act, and `container` cannot show which Schedule it sits in.
 
+## Checking a draft end to end
+
+These commands check one draft against your own build and the rulings you captured.
+None makes a request, and none of their output belongs in git.
+
+```bash
+python -m fadden search build corpus --out search.sqlite --rulings rulings-run
+python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
+python -m fadden search quote search.sqlite C2004A05138:0035:8-1 'You can deduct from your assessable income'
+python -m fadden search refs search.sqlite C2004A05138:0035:8-1
+python -m fadden authorities search.sqlite --out authorities.json --rulings rulings-run/rulings.jsonl
+```
+
+Then, in a checkout of [llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails),
+give the same draft and the list to its gate:
+
+```bash
+cargo run --manifest-path tools/drdebits_build/Cargo.toml --locked --release -- gate draft.md --authorities authorities.json
+```
+
+The interface between the 2 is the file `authorities` writes: one key, `authorities`,
+listing `s <label> of the <Act>` for each section and each ruling id, as
+[above](#exporting-an-authorities-list). The 2 tools read different citation forms.
+`cite-check` reads `section 8-1 of the Income Tax Assessment Act 1997` and grades the
+quotation beside it; the gate reads `s 8-1 of the Income Tax Assessment Act 1997` and
+ruling ids such as `TR 2022/1`, and compares each with the list exactly. An authority
+written in only one form is checked by only one tool, and `search quote` grades a
+quotation whose citation `cite-check` does not read. `tests/fadden_consumer_case.rs`
+runs the commands above, apart from the gate, on the fabricated search demo.
+
 ## Witnessing section structure
 
 `extract` takes each title's section structure from the EPUB alone, so a section
