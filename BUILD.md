@@ -544,8 +544,12 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   | `container_level` | A Division or Subdivision of a named current title, which is not a pinpoint |
   | `ambiguous` | No title is named and `--title` was not given, 2 titles share the cited name, several rows share the number, or `--title` was given and the citation's sentence may name another source |
   | `multi_section` | A range such as `sections 8-1 to 8-10`, of which only the first item is read |
-  | `not_held` | The name is not a title or listed abbreviation in the index, or the title has no such row |
+  | `not_held` | The name is not a title or listed abbreviation in the index, or the title has no such row. For a section of a held title, `nearest` lists the sections it holds either side of the number |
   | `superseded` | The rows exist, but `sources.json` marks the title's captured compilation as not current |
+
+  `nearest` is `null` for every other citation. It orders labels by each part's number,
+  then its letters, so `8-5` comes before `8-10`, and it shows only what the title
+  holds near a missing number: not that the author meant either section.
 
   `resolved` means the draft names the title and the build holds a provision with that number. It does not
   show that the provision says what the draft claims or applied at any date.

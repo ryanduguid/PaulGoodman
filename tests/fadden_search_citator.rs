@@ -455,3 +455,60 @@ fn quote_refuses_an_unknown_row_or_an_empty_quotation() {
         assert!(err.contains(message), "{args:?}: {err}");
     }
 }
+
+fn cite_check(dir: &Path, draft: &str, extra: &[&str]) -> (i32, String) {
+    std::fs::write(dir.join("draft.md"), draft).unwrap();
+    let mut args = vec!["search", "cite-check", "index.sqlite", "draft.md"];
+    args.extend(extra);
+    let (code, out, err) = fadden(&args, dir);
+    assert!(err.is_empty(), "{err}");
+    (code, out)
+}
+
+#[test]
+fn a_section_the_title_does_not_hold_names_the_held_sections_either_side() {
+    let (dir, _) = indexed(&[]);
+    let draft = [
+        "Section 2-3 of the Sample Levy Act 2099 applies.",
+        "Section 2-10 of the Sample Levy Act 2099 applies.",
+        "Section 9 of the Sample Levy Act 2099 applies.",
+        "Section 2-1 of the Sample Levy Act 2099 applies.",
+        "Section 2-3 of the Missing Act 2099 applies.",
+        "Division 7 of the Sample Levy Act 2099 applies.",
+    ]
+    .join("\n");
+    let (code, out) = cite_check(dir.path(), &draft, &["--json"]);
+    assert_eq!(code, 1);
+    let found: Vec<(String, Value)> = out
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .map(|item| {
+            (
+                item["outcome"].as_str().unwrap().to_string(),
+                item["nearest"].clone(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("not_held", json!(["2-1", "2-5"])),
+        // By number, not as text: 2-10 follows 2-5.
+        ("not_held", json!(["2-5", "3-1"])),
+        ("not_held", json!(["3-1"])),
+        ("resolved", json!(null)),
+        ("not_held", json!(null)),
+        ("not_held", json!(null)),
+    ];
+    let expected: Vec<(String, Value)> = expected
+        .into_iter()
+        .map(|(o, n)| (o.to_string(), n))
+        .collect();
+    assert_eq!(found, expected);
+    let (_, out) = cite_check(dir.path(), &draft, &[]);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines[0],
+        "line 1: not_held: Section 2-3 of the Sample Levy Act 2099: "
+    );
+    assert_eq!(lines[1], "  nearest held sections: 2-1, 2-5");
+    assert_eq!(out.matches("nearest held sections").count(), 3, "{out}");
+}

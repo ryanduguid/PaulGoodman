@@ -1889,6 +1889,42 @@ fn citation_outcome(
     }
 }
 
+/// A section label as it sorts: each hyphen-separated part by its number, then by
+/// the letters after it, so `8-5` comes before `8-10` and `82` before `82A`.
+fn label_order(key: &str) -> Vec<(usize, String, String)> {
+    key.split('-')
+        .map(|part| {
+            let digits = part.len() - part.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            let number = part[..digits].trim_start_matches('0');
+            (number.len(), number.to_string(), part[digits..].to_string())
+        })
+        .collect()
+}
+
+/// The sections `rid` holds either side of `key`, which it does not hold: the nearest
+/// valid range, to show a mistyped number. Neither is a guess at what the author meant.
+fn nearest_sections(connection: &Connection, rid: &str, key: &str) -> Result<Vec<Json>, Exc> {
+    let sql =
+        "SELECT DISTINCT section_key FROM rows WHERE register_id = ? AND section_key IS NOT NULL";
+    let target = label_order(key);
+    let found = rows_of(connection, sql, &[Sql::Text(rid.to_string())])?;
+    let held = found
+        .iter()
+        .map(|row| field(row, "section_key").as_str().unwrap_or_default());
+    let below = held
+        .clone()
+        .filter(|h| label_order(h) < target)
+        .max_by_key(|h| label_order(h));
+    let above = held
+        .filter(|h| label_order(h) > target)
+        .min_by_key(|h| label_order(h));
+    Ok([below, above]
+        .into_iter()
+        .flatten()
+        .map(Json::str)
+        .collect())
+}
+
 /// The columns of the cited title that pin a result to the build.
 const TITLE_FIELDS: [&str; 4] = [
     "compilation_number",
@@ -2095,6 +2131,12 @@ fn citation_report(
     let graded = matches!(outcome, "resolved" | "assumed") && kind == "section";
     let row = row_ids.first().filter(|_| graded);
     let quotations = sentence_quotations(connection, draft, end, quotes, row)?;
+    let nearest = match &target {
+        Some(rid) if outcome == "not_held" && kind == "section" => {
+            Json::Array(nearest_sections(connection, rid, &key)?)
+        }
+        _ => Json::Null,
+    };
     let mut fields = vec![
         ("line".into(), Json::Int((newlines.count() + 1).into())),
         ("citation".into(), Json::str(&citation)),
@@ -2105,6 +2147,7 @@ fn citation_report(
         ("reason".into(), text_or_null(reason.map(str::to_string))),
         ("register_id".into(), text_or_null(target)),
         ("rows".into(), Json::Array(row_ids)),
+        ("nearest".into(), nearest),
         ("quotations".into(), quotations),
     ];
     for name in TITLE_FIELDS {
@@ -2415,6 +2458,12 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             s("citation"),
             format!("{} {why}", shown_rows(&rows)).trim()
         ));
+        if let Json::Array(nearest) = item.at("nearest")
+            && !nearest.is_empty()
+        {
+            let held: Vec<String> = nearest.iter().map(pyvalue::py_str).collect();
+            run.print(&format!("  nearest held sections: {}", held.join(", ")));
+        }
         if let Some(line) = standing_line(item.at("as_at")) {
             run.print(&line);
         }
