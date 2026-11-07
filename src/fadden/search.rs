@@ -575,6 +575,124 @@ CREATE INDEX refs_to ON refs (to_register_id, kind, to_key);
 CREATE INDEX refs_from ON refs (from_row_id);
 ";
 
+/// Written only when `build` is given a rulings run, so an index without rulings is
+/// byte for byte what it was. A reader checks for `ruling_refs` before using it.
+const RULINGS_SQL: &str = "
+CREATE TABLE ruling_runs (run INTEGER PRIMARY KEY, rulings_sha256 TEXT NOT NULL,
+  licence_notice TEXT NOT NULL);
+CREATE TABLE ruling_refs (
+  run INTEGER NOT NULL REFERENCES ruling_runs, docid TEXT NOT NULL, title TEXT NOT NULL,
+  paragraph TEXT NOT NULL, source_url TEXT NOT NULL, fetched_on TEXT NOT NULL,
+  withdrawal_status TEXT NOT NULL, kind TEXT NOT NULL, to_register_id TEXT,
+  to_key TEXT NOT NULL, cited_act TEXT, citation TEXT NOT NULL);
+CREATE INDEX ruling_refs_to ON ruling_refs (to_register_id, kind, to_key);
+";
+
+/// The values of `licence_basis` the `rulings` stage writes.
+const LICENCE_BASES: [&str; 2] = ["document-notice", "site-notice-via-dc-rights"];
+
+/// One paragraph of a `rulings` run, as `build` keeps it.
+struct RulingRow {
+    docid: String,
+    title: String,
+    paragraph: String,
+    text: String,
+    source_url: String,
+    fetched_on: String,
+    withdrawal_status: String,
+}
+
+/// A `rulings` run directory: its rows, the digest of its `rulings.jsonl` and its
+/// `LICENCE-NOTICE.md`, which the index keeps with the rows.
+struct RulingsRun {
+    rows: Vec<RulingRow>,
+    rulings_sha256: String,
+    notice: String,
+}
+
+fn read_run_file(dir: &str, name: &str) -> Result<Vec<u8>, Exc> {
+    let path = child(dir, &[name])?;
+    let unreadable = |e: OsError| refused(format!("{dir}: cannot read {name} ({})", strerror(&e)));
+    read_all(crate::pyio::open(&path).map_err(unreadable)?, &path).map_err(unreadable)
+}
+
+/// Read a `rulings` run directory, refusing anything the stage could not have written.
+/// The licence notice must be present and carry the ATO's reuse sentence.
+fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
+    let notice = String::from_utf8(read_run_file(dir, "LICENCE-NOTICE.md")?)
+        .ok()
+        .filter(|text| text.contains(super::rulings::NOTICE))
+        .ok_or_else(|| {
+            refused(format!(
+                "{dir}: LICENCE-NOTICE.md is not the rulings stage's"
+            ))
+        })?;
+    let data = read_run_file(dir, "rulings.jsonl")?;
+    let text = std::str::from_utf8(&data)
+        .map_err(|_| refused(format!("{dir}: rulings.jsonl is not UTF-8")))?;
+    let mut rows = Vec::new();
+    for (number, line) in crate::py::splitlines(text).into_iter().enumerate() {
+        if crate::py::strip(line).is_empty() {
+            continue;
+        }
+        let place = format!("{dir}/rulings.jsonl:{}", number + 1);
+        let row =
+            pyjson::loads_standard(line).map_err(|_| refused(format!("{place} is not JSON")))?;
+        let field = |key: &str| row.get(key).and_then(Json::as_str).map(str::to_string);
+        let fields = [
+            "docid",
+            "title",
+            "paragraph",
+            "text",
+            "source_url",
+            "fetched_on",
+            "licence_basis",
+            "withdrawal_status",
+        ]
+        .map(field);
+        let [
+            Some(docid),
+            Some(title),
+            Some(paragraph),
+            Some(text),
+            Some(source_url),
+            Some(fetched_on),
+            Some(basis),
+            Some(withdrawal_status),
+        ] = fields
+        else {
+            return Err(refused(format!("{place} is not a rulings row")));
+        };
+        if !LICENCE_BASES.contains(&basis.as_str()) {
+            return Err(refused(format!(
+                "{place} has no licence basis the rulings stage writes"
+            )));
+        }
+        if !matches!(withdrawal_status.as_str(), "UNKNOWN" | "NOTICE_PRESENT") {
+            return Err(refused(format!(
+                "{place} has no withdrawal status the rulings stage writes"
+            )));
+        }
+        rows.push(RulingRow {
+            docid,
+            title,
+            paragraph,
+            text,
+            source_url,
+            fetched_on,
+            withdrawal_status,
+        });
+    }
+    if rows.is_empty() {
+        return Err(refused(format!("{dir}: rulings.jsonl has no rows")));
+    }
+    Ok(RulingsRun {
+        rows,
+        rulings_sha256: hex(&data),
+        notice,
+    })
+}
+
 /// How `sqlite3` binds one parameter (1-based `index`).
 fn bind(value: &Json, index: usize) -> Result<Sql, Exc> {
     Ok(match value {
@@ -640,10 +758,23 @@ struct Counts {
     rows: usize,
     definitions: usize,
     refs: usize,
+    ruling_paragraphs: usize,
+    ruling_refs: usize,
 }
 
 /// Check the corpus at `root` and write a new index file at `out`.
 pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
+    build_with_rulings(root, out, &[]).map(|(counts, _)| counts)
+}
+
+/// `build`, also reading the section references in each `rulings` run directory in
+/// `rulings`. Returns the corpus counts, then the ruling paragraphs read and the
+/// references stored.
+pub fn build_with_rulings(
+    root: &str,
+    out: &str,
+    rulings: &[String],
+) -> Result<([usize; 4], [usize; 2]), Exc> {
     let destination = PyPath::new(out);
     if std::fs::symlink_metadata(destination.fs()).is_ok() {
         return Err(refused("the index destination must not already exist"));
@@ -654,6 +785,10 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
         ));
     }
     let (sources_bytes, sources, read) = read_corpus(root)?;
+    let runs = rulings
+        .iter()
+        .map(|dir| read_rulings_run(dir))
+        .collect::<Result<Vec<_>, _>>()?;
     // Two titles sharing a name leave a citation of that name unresolved.
     let mut names: Vec<(pyvalue::Key, Option<String>)> = Vec::new();
     for entry in &read {
@@ -680,7 +815,7 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
             crate::pyos::random_hex(32)
         ))
         .display();
-    let result = write_index(&temporary, &read, &sources, &sources_bytes, &names);
+    let result = write_index(&temporary, &read, &sources, &sources_bytes, &names, &runs);
     let cleanup = |path: &str| {
         let _ = std::fs::remove_file(path);
     };
@@ -696,7 +831,76 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
         return Err(Exc::Os(error));
     }
     crate::pyos::unlink(&temporary)?;
-    Ok([read.len(), counts.rows, counts.definitions, counts.refs])
+    Ok((
+        [read.len(), counts.rows, counts.definitions, counts.refs],
+        [counts.ruling_paragraphs, counts.ruling_refs],
+    ))
+}
+
+/// The register ID a cited name stands for, if exactly one title has it.
+fn named(names: &[(pyvalue::Key, Option<String>)], name: &str) -> Option<String> {
+    names
+        .iter()
+        .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
+        .and_then(|(_, v)| v.clone())
+}
+
+/// Store each run and the section references in its paragraphs. A paragraph names no
+/// title of its own, so a bare citation stays unresolved. A document with a withdrawal
+/// notice in any run is stored as `NOTICE_PRESENT` in every run.
+fn insert_rulings(
+    connection: &Connection,
+    runs: &[RulingsRun],
+    names: &[(pyvalue::Key, Option<String>)],
+    counts: &mut Counts,
+) -> Result<(), Exc> {
+    let withdrawn: BTreeSet<&str> = runs
+        .iter()
+        .flat_map(|run| &run.rows)
+        .filter(|row| row.withdrawal_status == "NOTICE_PRESENT")
+        .map(|row| row.docid.as_str())
+        .collect();
+    for (number, capture) in runs.iter().enumerate() {
+        let number = number as i64 + 1;
+        run(
+            connection,
+            "INSERT INTO ruling_runs VALUES (?,?,?)",
+            rusqlite::params![number, capture.rulings_sha256, capture.notice],
+        )
+        .map_err(|e| sqlite_error(&e))?;
+        for row in &capture.rows {
+            let status = if withdrawn.contains(row.docid.as_str()) {
+                "NOTICE_PRESENT"
+            } else {
+                "UNKNOWN"
+            };
+            counts.ruling_paragraphs += 1;
+            for (kind, key, act, citation, end) in citations(&row.text) {
+                let target = cited_title(&row.text, end, act.as_deref(), None, |n| named(names, n));
+                run(
+                    connection,
+                    "INSERT INTO ruling_refs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    rusqlite::params![
+                        number,
+                        row.docid,
+                        row.title,
+                        row.paragraph,
+                        row.source_url,
+                        row.fetched_on,
+                        status,
+                        kind,
+                        target,
+                        key,
+                        act,
+                        citation
+                    ],
+                )
+                .map_err(|e| sqlite_error(&e))?;
+                counts.ruling_refs += 1;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_index(
@@ -705,11 +909,17 @@ fn write_index(
     sources: &Json,
     sources_bytes: &[u8],
     names: &[(pyvalue::Key, Option<String>)],
+    runs: &[RulingsRun],
 ) -> Result<Counts, Exc> {
     let connection = Connection::open(temporary).map_err(|e| sqlite_error(&e))?;
     connection
         .execute_batch(SCHEMA_SQL)
         .map_err(|e| sqlite_error(&e))?;
+    if !runs.is_empty() {
+        connection
+            .execute_batch(RULINGS_SQL)
+            .map_err(|e| sqlite_error(&e))?;
+    }
     connection
         .execute_batch("BEGIN")
         .map_err(|e| sqlite_error(&e))?;
@@ -748,6 +958,7 @@ fn write_index(
                 insert_row(&connection, &entry.rid, row, place, names, &mut counts)?;
             }
         }
+        insert_rulings(&connection, runs, names, &mut counts)?;
         let mut meta = vec![
             ("schema".to_string(), Json::str(SCHEMA)),
             (
@@ -766,6 +977,14 @@ fn write_index(
             ("refs", counts.refs),
         ] {
             meta.push((format!("{name}_count"), Json::str(&value.to_string())));
+        }
+        if !runs.is_empty() {
+            for (name, value) in [
+                ("ruling_paragraphs", counts.ruling_paragraphs),
+                ("ruling_refs", counts.ruling_refs),
+            ] {
+                meta.push((format!("{name}_count"), Json::str(&value.to_string())));
+            }
         }
         for (key, value) in meta {
             run(
@@ -864,12 +1083,7 @@ fn insert_row(
             counts.definitions += 1;
         }
     }
-    let lookup = |name: &str| {
-        names
-            .iter()
-            .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
-            .and_then(|(_, v)| v.clone())
-    };
+    let lookup = |name: &str| named(names, name);
     for (kind, cited, act, citation, end) in citations(&text) {
         let target = cited_title(&text, end, act.as_deref(), Some(rid), lookup);
         run(
@@ -1439,7 +1653,7 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
     .into_iter()
     .map(object)
     .collect();
-    Ok(object(vec![
+    let mut report = vec![
         ("row_id".into(), Json::str(row_id)),
         ("register_id".into(), field(&row, "register_id").clone()),
         ("section".into(), field(&row, "section").clone()),
@@ -1448,7 +1662,31 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
         ("heading".into(), field(&row, "heading").clone()),
         ("cites".into(), Json::Array(outbound)),
         ("cited_by".into(), Json::Array(inbound)),
-    ]))
+    ];
+    if holds_rulings(connection)? {
+        let rulings = rows_of(
+            connection,
+            "SELECT DISTINCT docid, title, paragraph, withdrawal_status, fetched_on, \
+source_url, kind, citation FROM ruling_refs WHERE to_register_id = ? \
+AND ((kind = 'section' AND to_key = ?) OR (kind = 'division' AND to_key = ?) \
+OR (kind = 'subdivision' AND to_key = ?)) ORDER BY rowid",
+            &[
+                sql_value(field(&row, "register_id")),
+                sql_value(field(&row, "section_key")),
+                sql_value(field(&row, "division_key")),
+                sql_value(field(&row, "subdivision_key")),
+            ],
+        )?;
+        let rulings = rulings.into_iter().map(object).collect();
+        report.push(("cited_by_rulings".into(), Json::Array(rulings)));
+    }
+    Ok(object(report))
+}
+
+/// Whether the index was built with a rulings run.
+fn holds_rulings(connection: &Connection) -> Result<bool, Exc> {
+    let sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ruling_refs'";
+    Ok(!rows_of(connection, sql, &[])?.is_empty())
 }
 
 /// What `cite-check` calls a citation, in the order its summary lists them.
@@ -1876,11 +2114,17 @@ fn parser() -> Parser {
         )
         .subcommands("command")
         .sub("build", Some("index a finished corpus root"), |p| {
-            p.arg(Action::positional("corpus_root")).arg(
-                Action::option("--out")
-                    .required()
-                    .help("new index file; must not exist"),
-            )
+            p.arg(Action::positional("corpus_root"))
+                .arg(
+                    Action::option("--out")
+                        .required()
+                        .help("new index file; must not exist"),
+                )
+                .arg(
+                    Action::append("--rulings", crate::argparse::Value::None)
+                        .metavar("RUN_DIR")
+                        .help("a rulings run directory whose section references refs lists; repeat for each run"),
+                )
         })
         .sub(
             "query",
@@ -2334,20 +2578,54 @@ fn execute_refs(
             ));
         }
     }
+    if let Json::Array(rulings) = report.at("cited_by_rulings") {
+        for ruling in rulings {
+            let withdrawn = if ruling.at("withdrawal_status").as_str() == Some("NOTICE_PRESENT") {
+                ", withdrawal notice captured"
+            } else {
+                ""
+            };
+            run.print(&format!(
+                "  cited by ruling {}, paragraph {} ({}): captured {}{withdrawn}, {}",
+                s(ruling.at("title")),
+                s(ruling.at("paragraph")),
+                s(ruling.at("citation")),
+                s(ruling.at("fetched_on")),
+                s(ruling.at("source_url"))
+            ));
+        }
+        if !rulings.is_empty() {
+            run.print(RULINGS_NOTICE);
+        }
+    }
     run.print(&source_line(connection)?);
     Ok(0)
 }
 
+const RULINGS_NOTICE: &str = "Ruling paragraphs come from the ATO Legal Database under the ATO \
+copyright notice, kept in this index; neither the ATO nor the Commonwealth endorses it. A ruling \
+listed cited this provision in the capture shown. Without a captured withdrawal notice its status \
+is unknown, not current: check the ruling and its period on the live Legal Database before \
+reliance. A citation naming no Act is not read.";
+
 fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let command = args.str("command").unwrap_or_default();
     if command == "build" {
-        let [titles, rows, definitions, refs] = build(
+        let rulings = args.list("rulings");
+        let ([titles, rows, definitions, refs], [paragraphs, ruling_refs]) = build_with_rulings(
             &args.str("corpus_root").unwrap_or_default(),
             &args.str("out").unwrap_or_default(),
+            &rulings,
         )?;
         run.print(&format!(
             "indexed {titles} titles, {rows} rows, {definitions} definitions and {refs} section references"
         ));
+        if !rulings.is_empty() {
+            run.print(&format!(
+                "indexed {paragraphs} ruling paragraphs from {} runs with {ruling_refs} section references",
+                rulings.len()
+            ));
+        }
         return Ok(0);
     }
     let connection = open_index(&args.str("index").unwrap_or_default())?;

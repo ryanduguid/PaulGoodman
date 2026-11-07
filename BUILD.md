@@ -460,6 +460,7 @@ makes no request.
 
 ```bash
 python -m fadden search build corpus --out search.sqlite
+python -m fadden search build corpus --out search.sqlite --rulings rulings-run
 python -m fadden search query search.sqlite general deductions --limit 5
 python -m fadden search query search.sqlite 8-1 --title C2004A05138
 python -m fadden search define search.sqlite assessable income
@@ -505,6 +506,20 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   reads only `8-1`. A range such as `sections 8-1 to 8-10` reads only its
   first item. A Subdivision named by letter alone (`Subdivision B`) is not
   read, because the same letter recurs across Divisions of one title.
+- `build --rulings RUN_DIR`, repeated for each `rulings` run, also reads the section,
+  Division and Subdivision references in each run's paragraphs, and `refs` then lists
+  under `cited_by_rulings` each ruling paragraph that cites the row's section, Division
+  or Subdivision, with its title, paragraph number, citation, capture date and source
+  URL. A ruling paragraph names no Act of its own, so only a citation naming the Act
+  (`section 8-1 of the ITAA 1997`) is read; a bare `section 8-1` is not. The run
+  directory must hold the stage's `rulings.jsonl` and `LICENCE-NOTICE.md`, and the
+  index keeps the notice with the rows; a row the stage could not have written, such as
+  one with no `withdrawal_status`, stops the build. A document with a withdrawal notice
+  in any run is `NOTICE_PRESENT` in every run. `UNKNOWN` does not show the ruling is
+  current, and a listed ruling shows only that it cited the provision when captured:
+  read [the rulings stage](docs/rulings.md) before relying on one. The index stores
+  references, not ruling text. Without `--rulings`, the index is unchanged and
+  `refs --json` has no `cited_by_rulings` field.
 - `cite-check` reads a UTF-8 draft with the patterns `refs` uses and reports
   every citation with its line, one outcome and the rows it reached. `--json`
   prints one object per citation with the title's compilation, its
