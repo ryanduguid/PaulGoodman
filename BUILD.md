@@ -466,6 +466,7 @@ python -m fadden search query search.sqlite 8-1 --title C2004A05138
 python -m fadden search define search.sqlite assessable income
 python -m fadden search refs search.sqlite C2004A05138:0035:8-1
 python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
+python -m fadden search quote search.sqlite C2004A05138:0035:8-1 'You can deduct from your assessable income'
 python -m fadden search query search.sqlite general deductions --as-at 2026-07-15
 python -m fadden search define search.sqlite assessable income --as-at 2026-07-15
 python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
@@ -624,6 +625,14 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   provision or a numbered provision. That check is a net, not a proof. It also
   catches harmless phrases such as `as the Commissioner allows`, and whatever it
   misses, such as `of Éire`, is what the `assumed` label is for.
+- `quote INDEX ROW_ID QUOTATION` grades one quotation against one row by the rules
+  `cite-check` uses, for a quotation whose citation `cite-check` does not read, such as
+  `s 8-1`, or whose row you chose yourself. Give the quoted words without their
+  quotation marks. It reports the grade, `matched_words`, `quote_words`, `other_rows`
+  and `distinct` as `cite-check` does, with the row's compilation, current status,
+  retrieval date and `sections.jsonl` digest, and exits 1 unless the grade is `exact`
+  or `normalised`. The limits listed for `cite-check` apply, and a row of a section is
+  compared whole whatever subsection is quoted.
 - A row's Division and Subdivision come from the headings in the title's
   `<register_id>.md`, because a row's `container` names only its innermost
   heading. A row with no matching heading, such as `Introductory material`,

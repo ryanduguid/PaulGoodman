@@ -1760,16 +1760,32 @@ fn sentence_names_a_source(draft: &str, end: usize) -> bool {
         .any(|found| found.name("source").is_some())
 }
 
-const CITE_CHECK_NOTICE: &str = "A resolved citation names its Act and a provision this build holds. An \
+/// What a grade shows, in both `cite-check`'s and `quote`'s notices.
+macro_rules! grade_meaning {
+    () => {
+        "Exact and normalised show those words are in that row of this build, not that they \
+are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source."
+    };
+}
+
+const CITE_CHECK_NOTICE: &str = concat!(
+    "A resolved citation names its Act and a provision this build holds. An \
 assumed citation names no Act in its sentence, so it shows only that --title holds the \
 provision, not that the author meant that title. Neither shows \
 that the provision says what the draft claims or applied at any date. A quotation is read \
 only in quotation marks in the citation's sentence, and only against a resolved or assumed \
-section. Exact and normalised show those words are in that row of this build, not that they \
-are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source. Current and \
+section. ",
+    grade_meaning!(),
+    " Current and \
 superseded are this build's record from the Register, not a check today; a later amendment can \
 outdate them. Forms refs does \
-not read, such as s 8-1, are not counted.";
+not read, such as s 8-1, are not counted."
+);
+
+const QUOTE_NOTICE: &str = concat!(
+    grade_meaning!(),
+    " Partial and none are not matches. A section's row is compared whole, whatever subsection is quoted."
+);
 
 /// The register ID `title` gives, refused unless the index holds it.
 fn given_title(connection: &Connection, title: Option<&str>) -> Result<Option<String>, Exc> {
@@ -1900,6 +1916,65 @@ fn other_rows(connection: &Connection, quote: &str, row_id: &str) -> Result<usiz
     Ok(found.iter().filter(other).count())
 }
 
+/// `quote` graded against the row `row_id`, which holds `text`, and, when that row holds
+/// it whole, how many other rows do.
+fn grade_row(
+    connection: &Connection,
+    quote: &str,
+    row_id: &str,
+    text: &str,
+) -> Result<(quotes::Grade, Option<usize>), Exc> {
+    let found = quotes::grade(quote, text);
+    let others = if found.held() {
+        Some(other_rows(connection, quote, row_id)?)
+    } else {
+        None
+    };
+    Ok((found, others))
+}
+
+/// `distinct`: held by no other row and at least `DISTINCT_FLOOR_WORDS` long; `null`
+/// for a quotation the row does not hold.
+fn distinct_of(found: &quotes::Grade, others: Option<usize>) -> Json {
+    others.map_or(Json::Null, |n| {
+        Json::Bool(n == 0 && found.quote_words >= DISTINCT_FLOOR_WORDS)
+    })
+}
+
+/// `quote` graded against the row `row_id`, pinned to the row's title in this build.
+pub fn quote(connection: &Connection, row_id: &str, quote: &str) -> Result<Json, Exc> {
+    let sql = "SELECT r.row_id, r.register_id, r.text, t.compilation_number, \
+               t.compilation_date, t.retrieved, t.sections_sha256, t.version_is_current \
+               FROM rows r JOIN titles t ON t.register_id = r.register_id WHERE r.row_id = ?";
+    let found = rows_of(connection, sql, &[Sql::Text(row_id.to_string())])?;
+    let Some(row) = found.into_iter().next() else {
+        return Err(refused(format!("{row_id} is not in the index")));
+    };
+    let text = field(&row, "text").as_str().unwrap_or_default();
+    // Before any search: an empty phrase is not one FTS can look for.
+    if quotes::grade(quote, "").quote_words == 0 {
+        return Err(refused("the quotation has no words"));
+    }
+    let (graded, others) = grade_row(connection, quote, row_id, text)?;
+    let count = |n: Option<usize>| n.map_or(Json::Null, |n| Json::Int(n.into()));
+    let mut report = vec![
+        ("row_id".into(), Json::str(row_id)),
+        ("register_id".into(), field(&row, "register_id").clone()),
+        ("quote".into(), Json::str(quote)),
+        ("grade".into(), Json::str(graded.grade)),
+        ("matched_words".into(), count(graded.matched_words)),
+        ("quote_words".into(), count(Some(graded.quote_words))),
+        ("other_rows".into(), count(others)),
+        ("distinct".into(), distinct_of(&graded, others)),
+    ];
+    for name in TITLE_FIELDS {
+        report.push((name.into(), field(&row, name).clone()));
+    }
+    let current = field(&row, "version_is_current").truthy();
+    report.push(("version_is_current".into(), Json::Bool(current)));
+    Ok(object(report))
+}
+
 /// Why a quotation was not compared, or `None` if it can be.
 fn not_compared(quotation: &Quotation, row: Option<&Json>, end: usize) -> Option<&'static str> {
     if !quotation.closed {
@@ -1934,15 +2009,16 @@ fn quotation_report(
         let sql = "SELECT text FROM rows WHERE row_id = ?";
         let held = rows_of(connection, sql, &[Sql::Text(row_id.to_string())])?;
         let text = held.first().and_then(|r| field(r, "text").as_str());
-        let found = quotes::grade(&quotation.text, text.unwrap_or_default());
+        let (found, others_found) = grade_row(
+            connection,
+            &quotation.text,
+            row_id,
+            text.unwrap_or_default(),
+        )?;
         grade = Json::str(found.grade);
         (matched, words) = (found.matched_words, Some(found.quote_words));
-        if found.held() {
-            let others_found = other_rows(connection, &quotation.text, row_id)?;
-            others = Some(others_found);
-            let long_enough = found.quote_words >= DISTINCT_FLOOR_WORDS;
-            distinct = Json::Bool(others_found == 0 && long_enough);
-        }
+        others = others_found;
+        distinct = distinct_of(&found, others_found);
     }
     report.extend([
         ("grade".into(), grade),
@@ -2110,7 +2186,8 @@ fn parser() -> Parser {
     Parser::new("python -m fadden search")
         .description(
             "Build and query a local full-text, definitions and reference index. \
-             search cite-check INDEX DRAFT checks a draft's citations against one.",
+             search cite-check INDEX DRAFT checks a draft's citations against one, and \
+             search quote INDEX ROW_ID QUOTATION grades a quotation against one row.",
         )
         .subcommands("command")
         .sub("build", Some("index a finished corpus root"), |p| {
@@ -2182,6 +2259,20 @@ fn cite_check_parser() -> Parser {
         .arg(Action::flag("--json").help("print one object per citation"))
 }
 
+/// Apart from `parser` for the same reason as `cite_check_parser`.
+fn quote_parser() -> Parser {
+    Parser::new("python -m fadden search quote")
+        .description(
+            "Grade a quotation against one row of an index: exact, normalised, partial or none.",
+        )
+        .arg(Action::positional("index"))
+        .arg(Action::positional("row_id").help("the row the quotation is said to come from"))
+        .arg(
+            Action::positional("quotation").help("the quoted words, without their quotation marks"),
+        )
+        .arg(Action::flag("--json").help("print the result as one object"))
+}
+
 fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
     match args.get(key) {
         Some(crate::argparse::Value::List(items)) => items.clone(),
@@ -2190,10 +2281,10 @@ fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
 }
 
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
-    let outcome = if argv.first().is_some_and(|word| word == "cite-check") {
-        execute_cite_check(&cite_check_parser().parse(&argv[1..])?, run)
-    } else {
-        execute(&parser().parse(argv)?, run)
+    let outcome = match argv.first().map(String::as_str) {
+        Some("cite-check") => execute_cite_check(&cite_check_parser().parse(&argv[1..])?, run),
+        Some("quote") => execute_quote(&quote_parser().parse(&argv[1..])?, run),
+        _ => execute(&parser().parse(argv)?, run),
     };
     Ok(match outcome {
         Ok(code) => code,
@@ -2383,6 +2474,41 @@ fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Resul
             })
     });
     Ok(i32::from(!clean || !refusals.is_empty()))
+}
+
+/// Exits 0 only if the row holds the quotation, `exact` or `normalised`.
+fn execute_quote(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
+    let connection = open_index(&args.str("index").unwrap_or_default())?;
+    let row_id = args.str("row_id").unwrap_or_default();
+    let report = quote(
+        &connection,
+        &row_id,
+        &args.str("quotation").unwrap_or_default(),
+    )?;
+    let held = report
+        .at("grade")
+        .as_str()
+        .is_some_and(|grade| CLEAN_GRADES.contains(&grade));
+    if args.flag("json") {
+        run.print_points(&dumps_line(&report, false))?;
+    } else {
+        let s = |key: &str| pyvalue::py_str(report.at(key));
+        let state = if report.at("version_is_current").truthy() {
+            "current"
+        } else {
+            "not current"
+        };
+        run.print(&format!(
+            "{row_id}: compilation {} ({}), {state}, retrieved {}",
+            s("compilation_number"),
+            s("compilation_date"),
+            s("retrieved")
+        ));
+        print_quotation(&report, run);
+        run.print(QUOTE_NOTICE);
+        run.print(&source_line(&connection)?);
+    }
+    Ok(i32::from(!held))
 }
 
 fn print_refusals(refusals: &[Json], json: bool, run: &mut Run) -> Result<(), Exc> {

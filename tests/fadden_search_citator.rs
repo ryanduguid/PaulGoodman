@@ -325,3 +325,133 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
         assert!(!dir.path().join("index.sqlite").exists(), "{what}");
     }
 }
+
+fn quoted(dir: &Path, row: &str, quotation: &str) -> (i32, Value) {
+    let (code, out, err) = fadden(
+        &["search", "quote", "index.sqlite", row, quotation, "--json"],
+        dir,
+    );
+    let report = serde_json::from_str(out.trim()).unwrap_or_else(|_| panic!("{out}{err}"));
+    (code, report)
+}
+
+#[test]
+fn quote_grades_a_quotation_against_one_row_and_exits_0_only_if_it_is_held() {
+    let (dir, _) = indexed(&[]);
+    let row = format!("{ACT}:0002:2-1");
+    let cases = [
+        ("A widget attracts the sample levy", 0, "exact", json!(null)),
+        (
+            "A  widget attracts\nthe sample levy",
+            0,
+            "normalised",
+            json!(null),
+        ),
+        ("A widget attracts the sample tax", 1, "partial", json!(5)),
+        ("Gadgets are exempt", 1, "none", json!(null)),
+    ];
+    for (quotation, code, grade, matched) in cases {
+        let (exit, report) = quoted(dir.path(), &row, quotation);
+        assert_eq!(
+            (exit, report["grade"].as_str()),
+            (code, Some(grade)),
+            "{quotation}"
+        );
+        assert_eq!(report["matched_words"], matched, "{quotation}");
+        assert_eq!(report["quote"], quotation);
+    }
+    let (_, report) = quoted(dir.path(), &row, "A widget attracts the sample levy");
+    assert_eq!(report["row_id"], row);
+    assert_eq!(report["register_id"], ACT);
+    assert_eq!(report["quote_words"], 6);
+    assert_eq!(
+        (report["other_rows"].clone(), report["distinct"].clone()),
+        (json!(0), json!(false))
+    );
+    assert_eq!(report["compilation_number"], "1");
+    assert_eq!(report["compilation_date"], "2099-07-01");
+    assert_eq!(report["version_is_current"], true);
+    assert_eq!(report["sections_sha256"].as_str().unwrap().len(), 64);
+    // Sections 2-5 and 3-1 also hold these words.
+    let (_, report) = quoted(dir.path(), &row, "sample levy");
+    assert_eq!(
+        (report["grade"].as_str(), report["other_rows"].as_u64()),
+        (Some("exact"), Some(2))
+    );
+    let (_, report) = quoted(dir.path(), &row, "Gadgets are exempt");
+    assert_eq!(
+        (report["other_rows"].clone(), report["distinct"].clone()),
+        (json!(null), json!(null))
+    );
+}
+
+#[test]
+fn quote_prints_the_row_grade_and_what_a_grade_does_not_show() {
+    let (dir, _) = indexed(&[]);
+    let row = format!("{ACT}:0002:2-1");
+    let args = [
+        "search",
+        "quote",
+        "index.sqlite",
+        &row,
+        "A widget attracts the sample levy",
+    ];
+    let (code, out, _) = fadden(&args, dir.path());
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines[0],
+        format!("{row}: compilation 1 (2099-07-01), current, retrieved 2099-08-01")
+    );
+    assert_eq!(
+        lines[1],
+        "  quotation exact, not distinct, 0 other rows hold it: A widget attracts the sample levy"
+    );
+    assert!(
+        lines[2].starts_with("Exact and normalised show")
+            && lines[2].contains("Partial and none are not matches"),
+        "{out}"
+    );
+    assert!(
+        lines[3].starts_with("Index of the corpus retrieved 2099-08-01"),
+        "{out}"
+    );
+}
+
+#[test]
+fn quote_refuses_an_unknown_row_or_an_empty_quotation() {
+    let (dir, _) = indexed(&[]);
+    let row = format!("{ACT}:0002:2-1");
+    for (args, code, message) in [
+        (
+            vec![
+                "search",
+                "quote",
+                "index.sqlite",
+                "C2099A00001:0009:9",
+                "A widget",
+            ],
+            1,
+            "C2099A00001:0009:9 is not in the index",
+        ),
+        (
+            vec!["search", "quote", "index.sqlite", &row, " "],
+            1,
+            "the quotation has no words",
+        ),
+        (
+            vec!["search", "quote", "absent.sqlite", &row, "A widget"],
+            1,
+            "the index file does not exist",
+        ),
+        (
+            vec!["search", "quote", "index.sqlite", &row],
+            2,
+            "usage: python -m fadden search quote",
+        ),
+    ] {
+        let (exit, out, err) = fadden(&args, dir.path());
+        assert_eq!((exit, out.as_str()), (code, ""), "{args:?}");
+        assert!(err.contains(message), "{args:?}: {err}");
+    }
+}
