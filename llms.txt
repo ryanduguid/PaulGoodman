@@ -1,8 +1,8 @@
-# au-tax-legislation-corpus
+# PaulGoodman
 > Two halves in one repository: `fadden`, a builder that retrieves in-force Commonwealth tax legislation from the Federal Register and turns it into retrieval material, and `tax-radar-au`, a Rust binary running a synthetic provenance-first review queue that consumes a reviewed observation contract.
 
 ## Package overview
-- **Repository**: https://github.com/ryanduguid/au-tax-legislation-corpus
+- **Repository**: https://github.com/ryanduguid/PaulGoodman
 - **Version**: 0.4.0, released as the tag `v0.4.0`. Releases carry deterministic source archives built from Git with an SPDX 2.3 SBOM, `SHA256SUMS` and provenance attestations. They never carry a corpus or a builder wheel.
 - **Licence**: releases 0.3.0 and earlier keep their Apache-2.0 or MIT licence for the code. Release 0.4.0 keeps FSL-1.1-ALv2 for the code; `main` and later releases are under the Ryan Duguid Public Attribution Licence 1.0, the FSL-1.1-ALv2 text with a public attribution condition (`LICENSE`, `NOTICE`); each version from 0.4.0 also becomes available under Apache-2.0 2 years after it is made available. Generated corpus output is derived from the Federal Register's CC BY 4.0 material and carries its own source and licence records. The EPUBs embed the Commonwealth Coat of Arms, which the CC BY grant excludes, so the `dist` stage of the Rust `fadden` binary separates what may be redistributed from what may not.
 - **Packaging**: the review queue is the standalone Rust binary `tax-radar-au` (crate `tax-radar-au` 1.0.0, built with `cargo build --locked --release`); its Python import package `tax_radar_au` was removed. The Python distribution keeps the name `tax-radar-au` and carries the builder, which is not published to PyPI and has no console script; it runs as `python -m fadden <stage>`.
@@ -19,7 +19,7 @@
 - **Local search (`search`)**: indexes a finished corpus into one SQLite file (standard-library FTS5) after checking every row's provenance against `sources.json`, then answers full-text queries, defined-term lookups from definitions rows and section, Division and Subdivision cross-references. Every hit carries its `row_id`, compilation and Register page; none of it is authorised text.
 - **Dates in search (`search --as-at`)**: `query` and `define` return rows only from titles whose `as_at` status on the date is `captured`, and refuse the others by name with the status, the rows withheld and the next step. `cite-check --as-at` adds each cited title's status. `captured` is not a finding that the text was the law on that date, and the build holds one compilation of each title.
 - **Draft check (`search cite-check`)**: reports how each citation in a draft resolves against one index, and grades a quotation in the citation's sentence against the section reached as `exact`, `normalised`, `partial` or `none`, or leaves it ungraded if nothing was compared. A held quotation also reports how many other rows hold it. A grade shows what that row of the build holds, not that the provision applies or was the law at any date.
-- **Authorities export (`authorities`)**: writes that build's sections of current Acts and captured ruling ids as the closed list for `gate --authorities` in llm-tax-guardrails. A listed authority exists in the build; it is not thereby current or correctly applied.
+- **Authorities export (`authorities`)**: writes that build's sections of current Acts and captured ruling ids as the closed list for `gate --authorities` in DrDebits. A listed authority exists in the build; it is not thereby current or correctly applied.
 - **Evidence contracts**: live Register capture, synthetic observations and publication candidates are distinct. A successful capture or export authorises nothing for publication.
 
 - **Preset build (`quick`)**: `python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts locally, checks that each holds indexed rows, moves the build into that folder and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server's `search_tax_legislation`. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay. Nothing is downloaded from this project and nothing is published.
@@ -42,23 +42,23 @@ Documented network access is 7 builder stages that reach the Federal Register an
 - `as_at`, `authorities`, `compare_builds`, `search`, `witness`, `extract`, `pii_scan`, `pii_scan2`, `finalize`, `rates`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles` and `export_live_evidence_bundles` make no request at all. The monitor and publication exporters project facts a caller has already collected.
 
 ## Docs
-- [README](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/README.md): the offline search example, the preset build and the 2 systems.
-- [BUILD.md](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/BUILD.md): pipeline commands, timing and the traps the code exists to avoid.
-- [RADAR.md](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/RADAR.md): the synthetic review queue.
-- [Scope](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/scope.md): what a compilation date does and does not show, and the `as_at` stage.
-- [ATO rulings stage](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/rulings.md): reuse basis, accepted document families and fetch rules.
-- [Architecture](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/architecture.md)
-- [Monitor contract](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/monitor-contract.md)
-- [Evidence export](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/evidence-export.md)
-- [Build evidence](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/build-evidence.md)
+- [README](https://github.com/ryanduguid/PaulGoodman/blob/main/README.md): the offline search example, the preset build and the 2 systems.
+- [BUILD.md](https://github.com/ryanduguid/PaulGoodman/blob/main/BUILD.md): pipeline commands, timing and the traps the code exists to avoid.
+- [RADAR.md](https://github.com/ryanduguid/PaulGoodman/blob/main/RADAR.md): the synthetic review queue.
+- [Scope](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/scope.md): what a compilation date does and does not show, and the `as_at` stage.
+- [ATO rulings stage](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/rulings.md): reuse basis, accepted document families and fetch rules.
+- [Architecture](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/architecture.md)
+- [Monitor contract](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/monitor-contract.md)
+- [Evidence export](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/evidence-export.md)
+- [Build evidence](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/build-evidence.md)
 
 ## Reuse
 
-- [Reusing this code](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/AGENTS.md#reusing-this-code): Ryan Duguid's work under the Ryan Duguid Public Attribution Licence, Version 1.0 (LicenseRef-Duguid-Public-Attribution-1.0), which is FSL-1.1-ALv2 plus a public attribution condition; keep its notices and licence; where the Public Attribution Condition applies, a copy or port made available outside the user's organisation must credit Ryan Duguid publicly.
+- [Reusing this code](https://github.com/ryanduguid/PaulGoodman/blob/main/AGENTS.md#reusing-this-code): Ryan Duguid's work under the Ryan Duguid Public Attribution Licence, Version 1.0 (LicenseRef-Duguid-Public-Attribution-1.0), which is FSL-1.1-ALv2 plus a public attribution condition; keep its notices and licence; where the Public Attribution Condition applies, a copy or port made available outside the user's organisation must credit Ryan Duguid publicly.
 
 ## Optional
-- [Compared with the Open Australian Legal Corpus](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/comparison.md)
-- [Route a source change to affected work](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/docs/workpaper-impact.md)
-- [RELEASING.md](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/RELEASING.md): release rules.
-- [AGENTS.md](https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/AGENTS.md): the CI gates.
+- [Compared with the Open Australian Legal Corpus](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/comparison.md)
+- [Route a source change to affected work](https://github.com/ryanduguid/PaulGoodman/blob/main/docs/workpaper-impact.md)
+- [RELEASING.md](https://github.com/ryanduguid/PaulGoodman/blob/main/RELEASING.md): release rules.
+- [AGENTS.md](https://github.com/ryanduguid/PaulGoodman/blob/main/AGENTS.md): the CI gates.
 - [Author's site](https://duguid.com.au/): Ryan Duguid's website.

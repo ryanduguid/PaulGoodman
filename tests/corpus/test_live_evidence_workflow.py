@@ -48,7 +48,7 @@ function gh {
 }
 """
 TAG_LOOKUP = (
-    f"api repos/ryanduguid/au-tax-legislation-corpus/git/ref/tags/{TAG} "
+    f"api repos/ryanduguid/PaulGoodman/git/ref/tags/{TAG} "
     "--jq .object.type + \" \" + .object.sha"
 )
 
@@ -179,16 +179,16 @@ class ApproveLiveEvidenceScriptTests(unittest.TestCase):
         self.assertEqual(calls[2], TAG_LOOKUP)
         self.assertEqual(calls[6], TAG_LOOKUP)
         self.assertEqual(
-            calls[1], f"release view {TAG} --repo ryanduguid/au-tax-legislation-corpus --json tagName,isDraft,assets,body"
+            calls[1], f"release view {TAG} --repo ryanduguid/PaulGoodman --json tagName,isDraft,assets,body"
         )
         self.assertRegex(
-            calls[3], rf"^release download {TAG} --repo ryanduguid/au-tax-legislation-corpus --dir .+reviewed-live-evidence$"
+            calls[3], rf"^release download {TAG} --repo ryanduguid/PaulGoodman --dir .+reviewed-live-evidence$"
         )
         self.assertRegex(calls[4], r"^attestation verify .+reviewed-live-evidence[\\/]a\.json ")
         self.assertTrue(
             calls[4].endswith(
-                " --repo ryanduguid/au-tax-legislation-corpus"
-                " --signer-workflow ryanduguid/au-tax-legislation-corpus/.github/workflows/publish-live-evidence.yml"
+                " --repo ryanduguid/PaulGoodman"
+                " --signer-workflow ryanduguid/PaulGoodman/.github/workflows/publish-live-evidence.yml"
                 " --source-ref refs/heads/main"
                 f" --source-digest {SOURCE_SHA}"
                 " --predicate-type https://slsa.dev/provenance/v1"
@@ -198,17 +198,17 @@ class ApproveLiveEvidenceScriptTests(unittest.TestCase):
             calls[4],
         )
         self.assertEqual(
-            calls[7], f"release edit {TAG} --repo ryanduguid/au-tax-legislation-corpus --draft=false --latest=false"
+            calls[7], f"release edit {TAG} --repo ryanduguid/PaulGoodman --draft=false --latest=false"
         )
 
     def test_each_gh_call_receives_its_exact_arguments(self) -> None:
         status, _, output, argv = self._run()
         self.assertEqual(status, 0, output)
-        repo = ["--repo", "ryanduguid/au-tax-legislation-corpus"]
+        repo = ["--repo", "ryanduguid/PaulGoodman"]
         view = ["release", "view", TAG, *repo, "--json", "tagName,isDraft,assets,body"]
         tag = [
             "api",
-            f"repos/ryanduguid/au-tax-legislation-corpus/git/ref/tags/{TAG}",
+            f"repos/ryanduguid/PaulGoodman/git/ref/tags/{TAG}",
             "--jq",
             '.object.type + " " + .object.sha',
         ]
@@ -226,7 +226,7 @@ class ApproveLiveEvidenceScriptTests(unittest.TestCase):
                 str(Path(download_dir) / "a.json"),
                 *repo,
                 "--signer-workflow",
-                "ryanduguid/au-tax-legislation-corpus/.github/workflows/publish-live-evidence.yml",
+                "ryanduguid/PaulGoodman/.github/workflows/publish-live-evidence.yml",
                 "--source-ref",
                 "refs/heads/main",
                 "--source-digest",
@@ -435,7 +435,7 @@ class LiveEvidenceWorkflowPolicyTests(unittest.TestCase):
             [
                 ["--version"],
                 ["release", "view"],
-                ["api", '"repos/ryanduguid/au-tax-legislation-corpus/git/ref/tags/$releaseTag"'],
+                ["api", '"repos/ryanduguid/PaulGoodman/git/ref/tags/$releaseTag"'],
                 ["release", "download"],
                 ["attestation", "verify"],
                 ["release", "edit"],
@@ -532,10 +532,10 @@ class LiveEvidenceWorkflowPolicyTests(unittest.TestCase):
                 self.assertEqual(len(result.failures), 1)
 
     _CREATE_REF_AND_DRAFT = (
-        "          & gh api --method POST repos/ryanduguid/au-tax-legislation-corpus/git/refs "
+        "          & gh api --method POST repos/ryanduguid/PaulGoodman/git/refs "
         "--raw-field \"ref=refs/tags/$releaseTag\" --raw-field \"sha=$env:GITHUB_SHA\"\n"
         "          if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI release operation failed.' }\n"
-        "          & gh release create $releaseTag --repo ryanduguid/au-tax-legislation-corpus "
+        "          & gh release create $releaseTag --repo ryanduguid/PaulGoodman "
         "--draft --verify-tag --title $releaseTag --notes $notes\n"
         "          if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI release operation failed.' }\n"
     )
@@ -558,7 +558,7 @@ class LiveEvidenceWorkflowPolicyTests(unittest.TestCase):
                 "for ($offset = 0; $offset -lt $assetPaths.Count; $offset += $batchSize) {",
                 "$last = [Math]::Min($offset + $batchSize - 1, $assetPaths.Count - 1)",
                 "$batch = $assetPaths[$offset..$last]",
-                "& gh release upload $releaseTag @batch --repo ryanduguid/au-tax-legislation-corpus",
+                "& gh release upload $releaseTag @batch --repo ryanduguid/PaulGoodman",
                 "if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI release operation failed.' }",
                 "}",
             ],
@@ -633,7 +633,7 @@ class LiveEvidenceWorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(
             self._yaml_scalar_lines(workflow, "if", 4),
             [
-                "    if: github.repository == 'ryanduguid/au-tax-legislation-corpus' && "
+                "    if: github.repository == 'ryanduguid/PaulGoodman' && "
                 "github.ref == 'refs/heads/main' && inputs.authorise-tag"
             ],
         )
@@ -818,14 +818,14 @@ class LiveEvidenceWorkflowPolicyTests(unittest.TestCase):
         ]
         expected_gh_commands = [
             "& gh api --method POST "
-            "repos/ryanduguid/au-tax-legislation-corpus/git/refs "
+            "repos/ryanduguid/PaulGoodman/git/refs "
             "--raw-field \"ref=refs/tags/$releaseTag\" "
             "--raw-field \"sha=$env:GITHUB_SHA\"",
             "& gh release create $releaseTag "
-            "--repo ryanduguid/au-tax-legislation-corpus --draft --verify-tag "
+            "--repo ryanduguid/PaulGoodman --draft --verify-tag "
             "--title $releaseTag --notes $notes",
             "& gh release upload $releaseTag @batch "
-            "--repo ryanduguid/au-tax-legislation-corpus",
+            "--repo ryanduguid/PaulGoodman",
         ]
         release_gh_commands = [
             line for line in self._active_run_lines(release_step) if self._is_gh_command(line)
@@ -858,7 +858,7 @@ class LiveEvidenceWorkflowPolicyTests(unittest.TestCase):
             "$assetPaths.Count - 1)\n"
             "            $batch = $assetPaths[$offset..$last]\n"
             "            & gh release upload $releaseTag @batch "
-            "--repo ryanduguid/au-tax-legislation-corpus\n"
+            "--repo ryanduguid/PaulGoodman\n"
             "            if ($LASTEXITCODE -ne 0) { throw "
             "'GitHub CLI release operation failed.' }\n"
             "          }"

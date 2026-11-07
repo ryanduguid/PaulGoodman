@@ -1475,7 +1475,7 @@ class LiveRegisterProductionSessionTests(unittest.TestCase):
             self.assertEqual(request.full_url, CURRENT_URL)
             self.assertEqual(
                 request.get_header("User-agent"),
-                "au-tax-legislation-corpus (+https://github.com/ryanduguid/au-tax-legislation-corpus)",
+                "au-tax-legislation-corpus (+https://github.com/ryanduguid/PaulGoodman)",
             )
         self.assertEqual(response.read_sizes, [(256 * 1024) + 1])
         self.assertEqual(len(handlers), 1)

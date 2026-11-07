@@ -685,7 +685,7 @@ came from and out of git; rebuild it after any corpus rebuild.
 ## Exporting an authorities list
 
 `python -m fadden authorities` writes the closed list that `gate --authorities` in
-[llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails) reads, so that
+[DrDebits](https://github.com/ryanduguid/DrDebits) reads, so that
 gate can check a draft's citations against your build. Run it on your own build; the
 file describes that build and, like an index, stays out of git. It makes no request.
 

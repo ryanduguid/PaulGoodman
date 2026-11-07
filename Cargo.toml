@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.99"
 description = "Provenance-first AU tax change-review queue over the staged legislation corpus"
 license = "LicenseRef-Duguid-Public-Attribution-1.0"
-repository = "https://github.com/ryanduguid/au-tax-legislation-corpus"
+repository = "https://github.com/ryanduguid/PaulGoodman"
 publish = false
 
 [lib]

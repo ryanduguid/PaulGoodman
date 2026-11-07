@@ -1,6 +1,6 @@
 # Releasing the builder
 
-The repository's [GitHub Releases](https://github.com/ryanduguid/au-tax-legislation-corpus/releases) page is the canonical release history. A separate changelog is intentionally not maintained.
+The repository's [GitHub Releases](https://github.com/ryanduguid/PaulGoodman/releases) page is the canonical release history. A separate changelog is intentionally not maintained.
 
 The repository releases the build code only. A GitHub release must never be described as a current or validated corpus, and must not attach a locally generated `corpus/`, `epub/`, `markdown/`, `rates/` or `dist/` tree.
 
@@ -24,7 +24,7 @@ Before tagging:
 3. From an operator session authenticated with repository Administration read access, run:
 
     ```bash
-    gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/ryanduguid/au-tax-legislation-corpus/immutable-releases --jq .enabled
+    gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/ryanduguid/PaulGoodman/immutable-releases --jq .enabled
     ```
 
     Do not push the tag unless the output is exactly `true`. The Actions `GITHUB_TOKEN` cannot be granted repository Administration read access, so the tag workflow cannot perform this preflight itself.

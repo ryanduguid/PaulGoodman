@@ -1,7 +1,7 @@
 // Copyright 2026 Ryan Duguid
 // SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
-//! `fadden authorities`: write the closed list llm-tax-guardrails' `gate
+//! `fadden authorities`: write the closed list DrDebits' `gate
 //! --authorities` reads, from a search index and any rulings stage output.
 //!
 //! The file lists each section of a current Act the index holds, as `s 8-1 of the
@@ -26,7 +26,7 @@ use crate::py;
 use crate::pyjson::{self, Json, Layout, PyStr};
 use crate::pypath::PyPath;
 
-// Copied from `tools/drdebits_build/src/gate.rs` in llm-tax-guardrails, with the
+// Copied from `tools/drdebits_build/src/gate.rs` in DrDebits, with the
 // same regex engine, so what is written here is what the gate reads.
 const SERIES: &str = r"TR|TD|LCR|GSTR|GSTD|MT|CR|PR|SGR|PCG|PS\s+LA|TPB\(GS\)";
 const ACT: &str = r"[A-Z][\w'’-]*(?:\s+(?:[A-Z][\w'’-]*|and|of|for|the|to|on|in|an|a|\([^()]*\)))*\s+Act\s+\d{4}\b";
@@ -255,7 +255,7 @@ fn sha256(bytes: &[u8]) -> String {
 
 fn parser() -> Parser {
     Parser::new("python -m fadden authorities")
-        .description("Write the closed list of authorities llm-tax-guardrails' gate reads.")
+        .description("Write the closed list of authorities DrDebits' gate reads.")
         .arg(Action::positional("index").help("a search index"))
         .arg(
             Action::option("--out")

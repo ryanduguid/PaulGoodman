@@ -23,7 +23,7 @@ env:
 
 jobs:
   publish:
-    if: github.repository == 'ryanduguid/au-tax-legislation-corpus' && github.ref == 'refs/heads/main' && inputs.authorise-tag
+    if: github.repository == 'ryanduguid/PaulGoodman' && github.ref == 'refs/heads/main' && inputs.authorise-tag
     # Protected environment: a required reviewer approves each run before it can tag.
     environment: publication
     permissions:
@@ -177,14 +177,14 @@ jobs:
 
           # Fail closed. A pre-existing tag, draft or release for this identity fails
           # here and is never moved, replaced or reused; an operator handles it by hand.
-          & gh api --method POST repos/ryanduguid/au-tax-legislation-corpus/git/refs --raw-field "ref=refs/tags/$releaseTag" --raw-field "sha=$env:GITHUB_SHA"
+          & gh api --method POST repos/ryanduguid/PaulGoodman/git/refs --raw-field "ref=refs/tags/$releaseTag" --raw-field "sha=$env:GITHUB_SHA"
           if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI release operation failed.' }
-          & gh release create $releaseTag --repo ryanduguid/au-tax-legislation-corpus --draft --verify-tag --title $releaseTag --notes $notes
+          & gh release create $releaseTag --repo ryanduguid/PaulGoodman --draft --verify-tag --title $releaseTag --notes $notes
           if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI release operation failed.' }
           $batchSize = 64
           for ($offset = 0; $offset -lt $assetPaths.Count; $offset += $batchSize) {
             $last = [Math]::Min($offset + $batchSize - 1, $assetPaths.Count - 1)
             $batch = $assetPaths[$offset..$last]
-            & gh release upload $releaseTag @batch --repo ryanduguid/au-tax-legislation-corpus
+            & gh release upload $releaseTag @batch --repo ryanduguid/PaulGoodman
             if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI release operation failed.' }
           }

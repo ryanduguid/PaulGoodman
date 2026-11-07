@@ -33,7 +33,7 @@ import urllib.request
 # where curl would have cut it. These are small JSON pages off one API, and a
 # stalled socket still trips the timeout, so the looser bound is acceptable.
 TIMEOUT = 90
-UA = "au-tax-legislation-corpus (+https://github.com/ryanduguid/au-tax-legislation-corpus)"
+UA = "au-tax-legislation-corpus (+https://github.com/ryanduguid/PaulGoodman)"
 # One attempt budget for every Register caller. capture_register.py reads these
 # through MAX_ATTEMPTS and RETRY_DELAY_SECONDS; it used to carry its own copies.
 TRIES = 3

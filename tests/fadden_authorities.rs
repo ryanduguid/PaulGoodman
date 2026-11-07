@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! `fadden authorities`. Every title, row and ruling is fabricated, and the
-//! expected entries are written out in the form llm-tax-guardrails' gate reads.
+//! expected entries are written out in the form DrDebits' gate reads.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
