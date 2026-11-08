@@ -39,7 +39,8 @@ pub fn titles(root: &str) -> Result<BTreeSet<String>, Exc> {
 
 /// `load_rows(root, rid)`: the rows of one title's sections.jsonl. A row
 /// repeating a JSON member, naming another title, holding a container, section
-/// or heading that is not text (a lone surrogate included), or giving another
+/// or heading that is not text (a lone surrogate included), holding a lone
+/// surrogate anywhere in its compilation number or date, or giving another
 /// compilation than the first row is refused.
 pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
     let path = child(
@@ -76,6 +77,9 @@ pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
             || !["container", "section", "heading"]
                 .into_iter()
                 .all(text_or_none)
+            || ["compilation_number", "compilation_date"]
+                .into_iter()
+                .any(|name| row.get(name).is_some_and(has_lone_surrogate))
         {
             return Err(Exc::value(format!(
                 "{path}:{number} is not a sections.jsonl row"
@@ -93,6 +97,19 @@ pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
         rows.push(row);
     }
     Ok(rows)
+}
+
+/// Whether a lone surrogate appears anywhere in `value`, member names included:
+/// the report prints the compilation fields, and such text cannot be printed.
+fn has_lone_surrogate(value: &Json) -> bool {
+    match value {
+        Json::Str(PyStr::Lone(_)) => true,
+        Json::Array(items) => items.iter().any(has_lone_surrogate),
+        Json::Object(pairs) => pairs
+            .iter()
+            .any(|(key, item)| matches!(key, PyStr::Lone(_)) || has_lone_surrogate(item)),
+        _ => false,
+    }
 }
 
 /// `row.get(field)`, None when absent.

@@ -927,3 +927,30 @@ fn a_lone_surrogate_in_section_metadata_is_refused_before_any_output() {
         );
     }
 }
+
+#[test]
+fn a_lone_surrogate_in_compilation_metadata_is_refused_before_any_output() {
+    // A deliberate departure: the stricter Python fails with UnicodeEncodeError
+    // printing a string number or date that holds one (both modes), and prints
+    // a nested one escaped in text mode but fails on it in --json mode.
+    for (number, date) in [
+        (r#""\ud800""#, r#""2026-01-01""#),
+        (r#""1""#, r#""\udc00""#),
+        (r#"{"n": "\ud800"}"#, r#""2026-01-01""#),
+        (r#""1""#, r#"{"\udc00": 1}"#),
+    ] {
+        let build = |text| {
+            [format!(
+                r#"{{"register_id": "{ACT}", "compilation_number": {number}, "compilation_date": {date}, "section": "1", "heading": "Heading", "container": null, "text": "{text}"}}"#
+            )]
+        };
+        let refused =
+            "error: ROOT/old/markdown/C2099A00001/sections.jsonl:1 is not a sections.jsonl row\n";
+        expect_outputs(
+            &build("one"),
+            &build("uno"),
+            (1, "", refused),
+            (1, "", refused),
+        );
+    }
+}
