@@ -2753,25 +2753,32 @@ fn execute_refs(
             ));
         }
     }
-    if let Json::Array(rulings) = report.at("cited_by_rulings") {
-        for ruling in rulings {
-            let withdrawn = if ruling.at("withdrawal_status").as_str() == Some("NOTICE_PRESENT") {
-                ", withdrawal notice captured"
-            } else {
-                ""
-            };
-            run.print(&format!(
-                "  cited by ruling {}, paragraph {} ({}): captured {}{withdrawn}, {}",
-                s(ruling.at("title")),
-                s(ruling.at("paragraph")),
-                s(ruling.at("citation")),
-                s(ruling.at("fetched_on")),
-                s(ruling.at("source_url"))
-            ));
-        }
-        if !rulings.is_empty() {
+    // Text output tells an index holding no rulings from one where none cites the row.
+    match report.at("cited_by_rulings") {
+        Json::Array(rulings) if rulings.is_empty() => {
+            run.print("  no captured ruling cites this by its Act");
             run.print(RULINGS_NOTICE);
         }
+        Json::Array(rulings) => {
+            for ruling in rulings {
+                let withdrawn = if ruling.at("withdrawal_status").as_str() == Some("NOTICE_PRESENT")
+                {
+                    ", withdrawal notice captured"
+                } else {
+                    ""
+                };
+                run.print(&format!(
+                    "  cited by ruling {}, paragraph {} ({}): captured {}{withdrawn}, {}",
+                    s(ruling.at("title")),
+                    s(ruling.at("paragraph")),
+                    s(ruling.at("citation")),
+                    s(ruling.at("fetched_on")),
+                    s(ruling.at("source_url"))
+                ));
+            }
+            run.print(RULINGS_NOTICE);
+        }
+        _ => run.print("  this index holds no rulings; build with --rulings to list them"),
     }
     run.print(&source_line(connection)?);
     Ok(0)

@@ -229,18 +229,28 @@ fn refs_lists_the_rulings_that_cite_a_section_by_its_act() {
         "{out}"
     );
     assert!(out.contains("status is unknown, not current"), "{out}");
+    // No ruling cites section 2-5: the text says so and keeps the notice, which says a
+    // citation naming no Act is not read.
     let (_, out, _) = fadden(
         &["search", "refs", "index.sqlite", &format!("{ACT}:0003:2-5")],
         dir.path(),
     );
+    assert!(!out.contains("cited by ruling"), "{out}");
     assert!(
-        !out.contains("cited by ruling") && !out.contains("not current"),
+        out.contains("\n  no captured ruling cites this by its Act\nRuling paragraphs come"),
         "{out}"
     );
+    assert!(
+        out.contains("A citation naming no Act is not read."),
+        "{out}"
+    );
+    assert!(!out.contains("holds no rulings"), "{out}");
 }
 
+/// An index built without `--rulings` is byte for byte the index an earlier build
+/// wrote (the golden search fixtures pin its digest), so this covers both.
 #[test]
-fn an_index_without_rulings_reports_no_ruling_field() {
+fn an_index_without_rulings_says_so_and_has_no_ruling_field() {
     let (dir, out) = indexed(&[]);
     assert!(!out.contains("ruling"), "{out}");
     let row = format!("{ACT}:0002:2-1");
@@ -251,6 +261,16 @@ fn an_index_without_rulings_reports_no_ruling_field() {
     assert_eq!(code, 0);
     let report: Value = serde_json::from_str(out.trim()).unwrap();
     assert!(report.get("cited_by_rulings").is_none(), "{report}");
+    let (code, out, _) = fadden(&["search", "refs", "index.sqlite", &row], dir.path());
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("\n  this index holds no rulings; build with --rulings to list them\nIndex of the corpus"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("no captured ruling") && !out.contains("Ruling paragraphs"),
+        "{out}"
+    );
 }
 
 #[test]
