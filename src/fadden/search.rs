@@ -692,10 +692,10 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
         .ok()
         .and_then(|text| pyjson::loads_standard(text).ok())
         .filter(|manifest| manifest.get("stage") == Some(&Json::str("rulings")));
-    let (Some(stated @ Json::Int(_)), Some(Json::Array(excluded))) = (
-        manifest.as_ref().and_then(|m| m.get("rows")),
-        manifest.as_ref().and_then(|m| m.get("excluded")),
-    ) else {
+    let member = |key: &str| manifest.as_ref().and_then(|m| m.get(key));
+    let (Some(stated @ Json::Int(_)), Some(Json::Array(excluded)), Some(Json::Array(documents))) =
+        (member("rows"), member("excluded"), member("documents"))
+    else {
         return Err(refused(format!(
             "{dir}: manifest.json is not the rulings stage's"
         )));
@@ -708,12 +708,70 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             rows.len()
         )));
     }
+    if let Some(difference) = manifest_difference(&rows, documents) {
+        return Err(refused(format!("{dir}: {difference}")));
+    }
     Ok(RulingsRun {
         excluded: excluded.len(),
         rows,
         rulings_sha256: hex(&data),
         notice,
     })
+}
+
+/// The first way `rows` differ from the documents a run's manifest lists, if any. The
+/// stage writes each document's paragraphs together, in the manifest's order, so a row
+/// count that matches can still hide a swapped or truncated document.
+fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String> {
+    let mut held: Vec<(&str, usize)> = Vec::new();
+    for row in rows {
+        match held.last_mut() {
+            Some((docid, count)) if *docid == row.docid => *count += 1,
+            _ => held.push((row.docid.as_str(), 1)),
+        }
+    }
+    let mut listed = Vec::new();
+    for document in documents {
+        let docid = document.get("docid").and_then(Json::as_str);
+        let (Some(docid), Some(count @ Json::Int(_))) = (docid, document.get("paragraphs")) else {
+            return Some(
+                "manifest.json lists a document without a docid and paragraph count".into(),
+            );
+        };
+        // A document with no paragraphs has no rows to compare.
+        if *count != Json::Int(0.into()) {
+            listed.push((docid, count));
+        }
+    }
+    for index in 0..held.len().max(listed.len()) {
+        match (listed.get(index), held.get(index)) {
+            (Some((docid, count)), Some((row_docid, row_count))) => {
+                if docid != row_docid {
+                    return Some(format!(
+                        "manifest.json lists {docid} where rulings.jsonl holds {row_docid}"
+                    ));
+                }
+                if **count != Json::Int((*row_count).into()) {
+                    return Some(format!(
+                        "manifest.json counts {} paragraphs of {docid} but rulings.jsonl holds {row_count}",
+                        pyvalue::py_str(count)
+                    ));
+                }
+            }
+            (Some((docid, _)), None) => {
+                return Some(format!(
+                    "manifest.json lists {docid}, which rulings.jsonl does not hold"
+                ));
+            }
+            (None, Some((row_docid, _))) => {
+                return Some(format!(
+                    "rulings.jsonl holds {row_docid} after the last document manifest.json lists"
+                ));
+            }
+            (None, None) => {}
+        }
+    }
+    None
 }
 
 /// How `sqlite3` binds one parameter (1-based `index`).

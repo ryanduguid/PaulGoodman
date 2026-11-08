@@ -56,6 +56,10 @@ Python stages the `fadden` binary replaced, on Windows and Linux, with what Pyth
 and wrote. A failure there is a departure from the Python behaviour, not a stale fixture;
 regenerate fixtures only with the port's differential harness against the base revision.
 
+No Python search stage remains, so the search cases were edited by hand where search
+changed: #284 (0ee6bc4) re-recorded index digests and usage text, and 17f1d15 added the
+`refs` line saying an index holds no rulings.
+
 The fenced list records the unique single-line commands. The multiline binary-smoke gate
 is reproduced exactly in the next section.
 ```bash

@@ -97,17 +97,37 @@ fn write_run(dir: &Path, rows: &[Value]) -> PathBuf {
         format!("# ATO Legal Database material\n\n> {NOTICE}\n"),
     )
     .unwrap();
-    write_manifest(dir, json!(rows.len()), &[]);
+    write_manifest(dir, &[]);
     dir.to_path_buf()
 }
 
-/// The fields of the stage's `manifest.json` that `build` reads.
-fn write_manifest(dir: &Path, rows: Value, excluded: &[&str]) {
+/// The fields of the stage's `manifest.json` that `build` reads, for the rows in the
+/// run's `rulings.jsonl`: their count, and each document with its paragraph count.
+fn write_manifest(dir: &Path, excluded: &[&str]) {
+    let jsonl = std::fs::read_to_string(dir.join("rulings.jsonl")).unwrap();
+    let mut documents: Vec<(String, usize)> = Vec::new();
+    for line in jsonl.lines() {
+        let docid = serde_json::from_str::<Value>(line).unwrap()["docid"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        match documents.last_mut() {
+            Some((last, count)) if *last == docid => *count += 1,
+            _ => documents.push((docid, 1)),
+        }
+    }
+    let documents: Vec<Value> = documents
+        .into_iter()
+        .map(|(docid, paragraphs)| json!({"docid": docid, "paragraphs": paragraphs}))
+        .collect();
     let excluded: Vec<Value> = excluded
         .iter()
         .map(|docid| json!({"docid": docid, "reason": "fabricated"}))
         .collect();
-    let manifest = json!({"stage": "rulings", "rows": rows, "excluded": excluded});
+    let manifest = json!({
+        "stage": "rulings", "rows": jsonl.lines().count(), "documents": documents,
+        "excluded": excluded,
+    });
     std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
 }
 
@@ -189,7 +209,7 @@ fn indexed(rulings: &[&Path]) -> (tempfile::TempDir, String) {
 fn refs_lists_the_rulings_that_cite_a_section_by_its_act() {
     let runs = tempfile::tempdir().unwrap();
     let (first, second) = write_runs(runs.path());
-    write_manifest(&second, json!(1), &["TXR/TR20993/NAT/ATO/00001"]);
+    write_manifest(&second, &["TXR/TR20993/NAT/ATO/00001"]);
     let (dir, out) = indexed(&[&first, &second]);
     assert!(
         out.contains(
@@ -314,10 +334,30 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
     status.as_object_mut().unwrap().remove("withdrawal_status");
     let mut paragraph = good.clone();
     paragraph["paragraph"] = json!(1);
-    let manifest =
-        |rows: &str| format!(r#"{{"stage": "rulings", "rows": {rows}, "excluded": []}}"#);
-    let short = manifest("2");
-    let no_count = manifest("\"1\"");
+    // A second document, so a manifest can list the same row count for other rows.
+    let other = ruling(
+        TD,
+        "TD 2099/2 Fabricated",
+        "1",
+        "Section 2-5 of the Sample Levy Act 2099.",
+        "UNKNOWN",
+    );
+    let manifest = |rows: &str, documents: &[(&str, usize)]| {
+        let documents: Vec<Value> = documents
+            .iter()
+            .map(|(docid, paragraphs)| json!({"docid": docid, "paragraphs": paragraphs}))
+            .collect();
+        format!(
+            r#"{{"stage": "rulings", "rows": {rows}, "documents": {}, "excluded": []}}"#,
+            Value::Array(documents)
+        )
+    };
+    let short = manifest("2", &[(TR, 2)]);
+    let no_count = manifest("\"1\"", &[(TR, 1)]);
+    let other_rows = manifest("1", &[(TD, 1)]);
+    let miscounted = manifest("2", &[(TR, 2)]);
+    let swapped = format!("manifest.json lists {TD} where rulings.jsonl holds {TR}");
+    let recounted = format!("manifest.json counts 2 paragraphs of {TR} but rulings.jsonl holds 1");
     // Each case: what it tests, the rows, a file the run then lacks (no text) or holds
     // instead, and the refusal.
     let cases: Vec<(&str, Vec<Value>, Option<(&str, Option<&str>)>, &str)> = vec![
@@ -379,6 +419,19 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             Some(("manifest.json", Some(&short))),
             "manifest.json counts 2 rows but rulings.jsonl holds 1",
         ),
+        // The row count matches; the rows do not.
+        (
+            "other rows",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&other_rows))),
+            &swapped,
+        ),
+        (
+            "rows of another document",
+            vec![good.clone(), other.clone()],
+            Some(("manifest.json", Some(&miscounted))),
+            &recounted,
+        ),
     ];
     for (what, rows, change, message) in cases {
         let dir = tempfile::tempdir().unwrap();
@@ -429,7 +482,6 @@ fn quote_grades_a_quotation_against_one_row_and_exits_0_only_if_it_is_held() {
         ("A widget attracts the sample tax", 1, "partial", json!(5)),
         ("Gadgets are exempt", 1, "none", json!(null)),
     ];
-    let row_ids = [&row; 4].map(String::to_string);
     // Edits that reverse the law: a changed rate, and a dropped 'no'.
     let edits = [
         (
@@ -446,7 +498,11 @@ fn quote_grades_a_quotation_against_one_row_and_exits_0_only_if_it_is_held() {
             ("A gadget attracts sample levy", 1, "none", json!(null)),
         ),
     ];
-    let all = row_ids.into_iter().zip(cases).chain(edits);
+    // Every case against section 2-1, so none can be dropped by a short list of rows.
+    let all = cases
+        .map(|case| (row.clone(), case))
+        .into_iter()
+        .chain(edits);
     for (row, (quotation, code, grade, matched)) in all {
         let (exit, report) = quoted(dir.path(), &row, quotation);
         assert_eq!(
