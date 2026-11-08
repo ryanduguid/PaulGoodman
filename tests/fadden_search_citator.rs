@@ -521,7 +521,24 @@ fn quote_prints_the_row_grade_and_what_a_grade_does_not_show() {
 fn quote_refuses_an_unknown_row_or_a_quotation_without_letters_or_digits() {
     let (dir, _) = indexed(&[]);
     let row = format!("{ACT}:0002:2-1");
+    // Section 2-5 ends `levy.`, so `.` there would otherwise grade `exact`.
+    let gadgets = format!("{ACT}:0003:2-5");
     for (args, code, message) in [
+        (
+            vec!["search", "quote", "index.sqlite", &gadgets, "."],
+            1,
+            "the quotation has no letters or digits",
+        ),
+        (
+            vec!["search", "quote", "index.sqlite", &gadgets, "*"],
+            1,
+            "the quotation has no letters or digits",
+        ),
+        (
+            vec!["search", "quote", "index.sqlite", &row, " "],
+            1,
+            "the quotation has no letters or digits",
+        ),
         (
             vec![
                 "search",
@@ -532,22 +549,6 @@ fn quote_refuses_an_unknown_row_or_a_quotation_without_letters_or_digits() {
             ],
             1,
             "C2099A00001:0009:9 is not in the index",
-        ),
-        (
-            vec!["search", "quote", "index.sqlite", &row, " "],
-            1,
-            "the quotation has no letters or digits",
-        ),
-        // The row ends with a full stop, so `.` would otherwise grade `exact`.
-        (
-            vec!["search", "quote", "index.sqlite", &row, "."],
-            1,
-            "the quotation has no letters or digits",
-        ),
-        (
-            vec!["search", "quote", "index.sqlite", &row, "*"],
-            1,
-            "the quotation has no letters or digits",
         ),
         (
             vec!["search", "quote", "absent.sqlite", &row, "A widget"],
