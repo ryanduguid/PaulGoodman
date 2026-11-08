@@ -6,7 +6,11 @@
 //! replaced (the base revision, 43b5e0c) on Windows and on Linux. Every input
 //! is fabricated. For each case the binary must exit as Python did, print what
 //! Python printed (the last line of a traceback where Python printed one), and
-//! leave every file with the recorded SHA-256 of its normalised text.
+//! leave every file with the recorded SHA-256 of its normalised text. The
+//! `compare_builds` cases depart from 43b5e0c on purpose: they were re-recorded
+//! against a stricter `compare_builds.py` that refuses repeated JSON members,
+//! rows naming another title, section metadata that is not text and rows from
+//! two compilations, and lists each title found in only one build.
 //!
 //! Outputs are normalised as the harness normalised them: the case directory
 //! reads `ROOT`, the module directory `MODULE`, generated stage, backup and

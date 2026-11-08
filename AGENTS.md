@@ -55,6 +55,9 @@ cross-system contract test in `tests/corpus/test_monitor_contract.py`.
 Python stages the `fadden` binary replaced, on Windows and Linux, with what Python printed
 and wrote. A failure there is a departure from the Python behaviour, not a stale fixture;
 regenerate fixtures only with the port's differential harness against the base revision.
+The `compare_builds` cases follow its stricter behaviour instead (the module doc of
+`tests/fadden_golden.rs` says what changed), so regenerating them from the base revision
+would undo it.
 
 The fenced list records the unique single-line commands. The multiline binary-smoke gate
 is reproduced exactly in the next section.
