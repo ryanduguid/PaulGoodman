@@ -705,6 +705,7 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
                 entry
                     .get("docid")
                     .and_then(Json::as_str)
+                    .filter(|docid| !docid.is_empty())
                     .map(str::to_string)
             })
             .collect::<Option<Vec<_>>>(),
@@ -717,6 +718,17 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             "{dir}: manifest.json is not the rulings stage's"
         )));
     };
+    // The stage either captures a target or excludes it, never both.
+    let listed = |docid: &str| {
+        documents
+            .iter()
+            .any(|document| document.get("docid").and_then(Json::as_str) == Some(docid))
+    };
+    if let Some(docid) = excluded.iter().find(|docid| listed(docid)) {
+        return Err(refused(format!(
+            "{dir}: manifest.json both lists and excludes {docid}"
+        )));
+    }
     // A short or padded rulings.jsonl would otherwise index as a whole run.
     if *stated != Json::Int(rows.len().into()) {
         return Err(refused(format!(
@@ -743,6 +755,18 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
 /// `refs` reports.
 fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String> {
     let held: Vec<&[RulingRow]> = rows.chunk_by(|a, b| a.docid == b.docid).collect();
+    // The stage refuses a repeated target, so a document's rows never come in 2 groups.
+    for (index, group) in held.iter().enumerate() {
+        if held[..index]
+            .iter()
+            .any(|earlier| earlier[0].docid == group[0].docid)
+        {
+            return Some(format!(
+                "rulings.jsonl holds {} in 2 places, but the stage writes a document's paragraphs together",
+                group[0].docid
+            ));
+        }
+    }
     let mut listed = Vec::new();
     for document in documents {
         let docid = document.get("docid").and_then(Json::as_str);
@@ -780,7 +804,10 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String>
                         ("withdrawal_status", &row.withdrawal_status),
                     ];
                     for (key, value) in fields {
-                        if document.get(key).and_then(Json::as_str) != Some(value.as_str()) {
+                        let Some(recorded) = document.get(key) else {
+                            return Some(format!("manifest.json's record of {docid} has no {key}"));
+                        };
+                        if recorded.as_str() != Some(value.as_str()) {
                             return Some(format!(
                                 "rulings.jsonl gives paragraph {} of {docid} a {key} its manifest.json record does not",
                                 row.paragraph

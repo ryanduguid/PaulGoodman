@@ -394,16 +394,37 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
     };
     let [date_differs, title_differs, source_differs, status_differs] =
         ["fetched_on", "title", "source_url", "withdrawal_status"].map(differs);
-    // The stage's manifest for `good` in every other respect.
-    let unnamed_exclusion = json!({
-        "stage": "rulings", "rows": 1, "excluded": [{"reason": "fabricated"}],
-        "documents": [{
-            "docid": TR, "paragraphs": 1, "title": good["title"],
-            "source_url": good["source_url"], "fetched_on": good["fetched_on"],
-            "withdrawal_status": good["withdrawal_status"],
-        }],
-    })
-    .to_string();
+    // The stage's manifest for `good`, excluding `entry`.
+    let excluding = |entry: Value| {
+        json!({
+            "stage": "rulings", "rows": 1, "excluded": [entry],
+            "documents": [{
+                "docid": TR, "paragraphs": 1, "title": good["title"],
+                "source_url": good["source_url"], "fetched_on": good["fetched_on"],
+                "withdrawal_status": good["withdrawal_status"],
+            }],
+        })
+        .to_string()
+    };
+    let unnamed_exclusion = excluding(json!({"reason": "fabricated"}));
+    let empty_exclusion = excluding(json!({"docid": "", "reason": "fabricated"}));
+    let own_exclusion = excluding(json!({"docid": TR, "reason": "fabricated"}));
+    let both = format!("manifest.json both lists and excludes {TR}");
+    // A second paragraph of TR 2099/1: the manifest is written for `good` and `second`,
+    // and the run then holds `second` with only its capture date changed.
+    let mut second = good.clone();
+    second["paragraph"] = json!("2");
+    let mut second_redated = second.clone();
+    second_redated["fetched_on"] = json!("2099-08-03");
+    let second_differs = format!(
+        "rulings.jsonl gives paragraph 2 of {TR} a fetched_on its manifest.json record does not"
+    );
+    let second_changed = format!("{good}\n{second_redated}\n");
+    let split = format!(
+        "rulings.jsonl holds {TR} in 2 places, but the stage writes a document's paragraphs together"
+    );
+    let bare_record = manifest("1", &[(TR, 1)]);
+    let no_title = format!("manifest.json's record of {TR} has no title");
     // Each case: what it tests, the rows, a file the run then lacks (no text) or holds
     // instead, and the refusal.
     let cases: Vec<(&str, Vec<Value>, Option<FileChange>, &str)> = vec![
@@ -514,6 +535,37 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             vec![good.clone()],
             Some(("rulings.jsonl", Some(&withdrawn))),
             &status_differs,
+        ),
+        (
+            "second paragraph redated",
+            vec![good.clone(), second.clone()],
+            Some(("rulings.jsonl", Some(&second_changed))),
+            &second_differs,
+        ),
+        // The manifest lists TR 2099/1, TD 2099/2, then TR 2099/1 again, as the rows do.
+        (
+            "a document in 2 places",
+            vec![good.clone(), other.clone(), second.clone()],
+            None,
+            &split,
+        ),
+        (
+            "record without a title",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&bare_record))),
+            &no_title,
+        ),
+        (
+            "empty exclusion",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&empty_exclusion))),
+            "manifest.json is not the rulings stage's",
+        ),
+        (
+            "listed and excluded",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&own_exclusion))),
+            &both,
         ),
     ];
     let mut failures = Vec::new();
