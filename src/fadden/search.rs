@@ -603,11 +603,13 @@ struct RulingRow {
 }
 
 /// A `rulings` run directory: its rows, the digest of its `rulings.jsonl` and its
-/// `LICENCE-NOTICE.md`, which the index keeps with the rows.
+/// `LICENCE-NOTICE.md`, which the index keeps with the rows, and how many documents its
+/// manifest says the stage excluded.
 struct RulingsRun {
     rows: Vec<RulingRow>,
     rulings_sha256: String,
     notice: String,
+    excluded: usize,
 }
 
 fn read_run_file(dir: &str, name: &str) -> Result<Vec<u8>, Exc> {
@@ -686,7 +688,28 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
     if rows.is_empty() {
         return Err(refused(format!("{dir}: rulings.jsonl has no rows")));
     }
+    let manifest = std::str::from_utf8(&read_run_file(dir, "manifest.json")?)
+        .ok()
+        .and_then(|text| pyjson::loads_standard(text).ok())
+        .filter(|manifest| manifest.get("stage") == Some(&Json::str("rulings")));
+    let (Some(stated @ Json::Int(_)), Some(Json::Array(excluded))) = (
+        manifest.as_ref().and_then(|m| m.get("rows")),
+        manifest.as_ref().and_then(|m| m.get("excluded")),
+    ) else {
+        return Err(refused(format!(
+            "{dir}: manifest.json is not the rulings stage's"
+        )));
+    };
+    // A short or padded rulings.jsonl would otherwise index as a whole run.
+    if *stated != Json::Int(rows.len().into()) {
+        return Err(refused(format!(
+            "{dir}: manifest.json counts {} rows but rulings.jsonl holds {}",
+            pyvalue::py_str(stated),
+            rows.len()
+        )));
+    }
     Ok(RulingsRun {
+        excluded: excluded.len(),
         rows,
         rulings_sha256: hex(&data),
         notice,
@@ -768,13 +791,13 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
 }
 
 /// `build`, also reading the section references in each `rulings` run directory in
-/// `rulings`. Returns the corpus counts, then the ruling paragraphs read and the
-/// references stored.
+/// `rulings`. Returns the corpus counts, then the ruling paragraphs read, the
+/// references stored and the documents the runs' manifests list as excluded.
 pub fn build_with_rulings(
     root: &str,
     out: &str,
     rulings: &[String],
-) -> Result<([usize; 4], [usize; 2]), Exc> {
+) -> Result<([usize; 4], [usize; 3]), Exc> {
     let destination = PyPath::new(out);
     if std::fs::symlink_metadata(destination.fs()).is_ok() {
         return Err(refused("the index destination must not already exist"));
@@ -833,7 +856,11 @@ pub fn build_with_rulings(
     crate::pyos::unlink(&temporary)?;
     Ok((
         [read.len(), counts.rows, counts.definitions, counts.refs],
-        [counts.ruling_paragraphs, counts.ruling_refs],
+        [
+            counts.ruling_paragraphs,
+            counts.ruling_refs,
+            runs.iter().map(|run| run.excluded).sum(),
+        ],
     ))
 }
 
@@ -2794,11 +2821,12 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc>
     let command = args.str("command").unwrap_or_default();
     if command == "build" {
         let rulings = args.list("rulings");
-        let ([titles, rows, definitions, refs], [paragraphs, ruling_refs]) = build_with_rulings(
-            &args.str("corpus_root").unwrap_or_default(),
-            &args.str("out").unwrap_or_default(),
-            &rulings,
-        )?;
+        let ([titles, rows, definitions, refs], [paragraphs, ruling_refs, excluded]) =
+            build_with_rulings(
+                &args.str("corpus_root").unwrap_or_default(),
+                &args.str("out").unwrap_or_default(),
+                &rulings,
+            )?;
         run.print(&format!(
             "indexed {titles} titles, {rows} rows, {definitions} definitions and {refs} section references"
         ));
@@ -2806,6 +2834,10 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc>
             run.print(&format!(
                 "indexed {paragraphs} ruling paragraphs from {} runs with {ruling_refs} section references",
                 rulings.len()
+            ));
+            // An excluded document's citations are absent, which is not the same as none.
+            run.print(&format!(
+                "excluded by the rulings stage and not indexed: {excluded} documents"
             ));
         }
         return Ok(0);

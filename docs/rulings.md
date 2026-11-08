@@ -106,7 +106,9 @@ fields carry no withdrawal observation.
 A run prints each captured notice beside its docid, with that warning. Rows with a
 notice stay in `rulings.jsonl`; `authorities` leaves them out of the closed list and
 says so. `search build --rulings` keeps each paragraph's withdrawal status beside its
-section references, and `search refs` prints it with the warning above.
+section references, and `search refs` prints it with the warning above. The build
+refuses a run whose `rulings.jsonl` holds a different number of rows from its
+`manifest.json`, and prints how many documents the run excluded.
 
 ### How paragraphs are found
 

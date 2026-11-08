@@ -76,7 +76,8 @@ fn ruling(docid: &str, title: &str, paragraph: &str, text: &str, withdrawal: &st
     })
 }
 
-/// A run directory holding `rows` and the stage's licence notice.
+/// A run directory holding `rows`, the stage's licence notice and a manifest that
+/// counts them and excludes nothing.
 fn write_run(dir: &Path, rows: &[Value]) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
     let jsonl: String = rows.iter().map(|row| format!("{row}\n")).collect();
@@ -86,7 +87,18 @@ fn write_run(dir: &Path, rows: &[Value]) -> PathBuf {
         format!("# ATO Legal Database material\n\n> {NOTICE}\n"),
     )
     .unwrap();
+    write_manifest(dir, json!(rows.len()), &[]);
     dir.to_path_buf()
+}
+
+/// The fields of the stage's `manifest.json` that `build` reads.
+fn write_manifest(dir: &Path, rows: Value, excluded: &[&str]) {
+    let excluded: Vec<Value> = excluded
+        .iter()
+        .map(|docid| json!({"docid": docid, "reason": "fabricated"}))
+        .collect();
+    let manifest = json!({"stage": "rulings", "rows": rows, "excluded": excluded});
+    std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
 }
 
 const TR: &str = "TXR/TR20991/NAT/ATO/00001";
@@ -167,9 +179,13 @@ fn indexed(rulings: &[&Path]) -> (tempfile::TempDir, String) {
 fn refs_lists_the_rulings_that_cite_a_section_by_its_act() {
     let runs = tempfile::tempdir().unwrap();
     let (first, second) = write_runs(runs.path());
+    write_manifest(&second, json!(1), &["TXR/TR20993/NAT/ATO/00001"]);
     let (dir, out) = indexed(&[&first, &second]);
     assert!(
-        out.contains("indexed 4 ruling paragraphs from 2 runs with 3 section references"),
+        out.contains(
+            "indexed 4 ruling paragraphs from 2 runs with 3 section references\n\
+             excluded by the rulings stage and not indexed: 1 documents\n"
+        ),
         "{out}"
     );
     let row = format!("{ACT}:0002:2-1");
@@ -288,47 +304,80 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
     status.as_object_mut().unwrap().remove("withdrawal_status");
     let mut paragraph = good.clone();
     paragraph["paragraph"] = json!(1);
-    let cases: Vec<(&str, Vec<Value>, Option<&str>, &str)> = vec![
+    let manifest =
+        |rows: &str| format!(r#"{{"stage": "rulings", "rows": {rows}, "excluded": []}}"#);
+    let short = manifest("2");
+    let no_count = manifest("\"1\"");
+    // Each case: what it tests, the rows, a file the run then lacks (no text) or holds
+    // instead, and the refusal.
+    let cases: Vec<(&str, Vec<Value>, Option<(&str, Option<&str>)>, &str)> = vec![
         (
             "no notice",
             vec![good.clone()],
-            None,
+            Some(("LICENCE-NOTICE.md", None)),
             "cannot read LICENCE-NOTICE.md",
         ),
         (
             "other notice",
             vec![good.clone()],
-            Some("All rights reserved.\n"),
+            Some(("LICENCE-NOTICE.md", Some("All rights reserved.\n"))),
             "LICENCE-NOTICE.md is not the rulings stage's",
         ),
         (
             "basis",
             vec![basis],
-            Some(""),
+            None,
             "rulings.jsonl:1 has no licence basis the rulings stage writes",
         ),
         (
             "status",
             vec![status],
-            Some(""),
+            None,
             "rulings.jsonl:1 is not a rulings row",
         ),
         (
             "paragraph",
             vec![paragraph],
-            Some(""),
+            None,
             "rulings.jsonl:1 is not a rulings row",
         ),
-        ("empty", vec![], Some(""), "rulings.jsonl has no rows"),
+        ("empty", vec![], None, "rulings.jsonl has no rows"),
+        (
+            "no manifest",
+            vec![good.clone()],
+            Some(("manifest.json", None)),
+            "cannot read manifest.json",
+        ),
+        (
+            "other stage",
+            vec![good.clone()],
+            Some((
+                "manifest.json",
+                Some(r#"{"stage": "discover", "rows": 1, "excluded": []}"#),
+            )),
+            "manifest.json is not the rulings stage's",
+        ),
+        (
+            "no count",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&no_count))),
+            "manifest.json is not the rulings stage's",
+        ),
+        (
+            "rows lost",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&short))),
+            "manifest.json counts 2 rows but rulings.jsonl holds 1",
+        ),
     ];
-    for (what, rows, notice, message) in cases {
+    for (what, rows, change, message) in cases {
         let dir = tempfile::tempdir().unwrap();
         write_corpus(&dir.path().join("corpus"));
         let run = write_run(&dir.path().join("run"), &rows);
-        match notice {
-            None => std::fs::remove_file(run.join("LICENCE-NOTICE.md")).unwrap(),
-            Some("") => {}
-            Some(text) => std::fs::write(run.join("LICENCE-NOTICE.md"), text).unwrap(),
+        match change {
+            None => {}
+            Some((name, None)) => std::fs::remove_file(run.join(name)).unwrap(),
+            Some((name, Some(text))) => std::fs::write(run.join(name), text).unwrap(),
         }
         let args = [
             "search",

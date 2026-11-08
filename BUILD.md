@@ -513,9 +513,11 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   or Subdivision, with its title, paragraph number, citation, capture date and source
   URL. A ruling paragraph names no Act of its own, so only a citation naming the Act
   (`section 8-1 of the ITAA 1997`) is read; a bare `section 8-1` is not. The run
-  directory must hold the stage's `rulings.jsonl` and `LICENCE-NOTICE.md`, and the
-  index keeps the notice with the rows; a row the stage could not have written, such as
-  one with no `withdrawal_status`, stops the build. A document with a withdrawal notice
+  directory must hold the stage's `rulings.jsonl`, `LICENCE-NOTICE.md` and
+  `manifest.json`, and the index keeps the notice with the rows; a row the stage could
+  not have written, such as one with no `withdrawal_status`, or a row count other than
+  the manifest's, stops the build. The build prints how many documents the stage
+  excluded, whose citations are therefore absent. A document with a withdrawal notice
   in any run is `NOTICE_PRESENT` in every run. `UNKNOWN` does not show the ruling is
   current, and a listed ruling shows only that it cited the provision when captured:
   read [the rulings stage](docs/rulings.md) before relying on one. The index stores
