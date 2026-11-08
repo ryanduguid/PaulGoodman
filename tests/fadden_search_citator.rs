@@ -319,6 +319,9 @@ fn an_index_without_rulings_says_so_and_has_no_ruling_field() {
     );
 }
 
+/// A file in a run directory, and the text it then holds, or `None` to remove it.
+type FileChange<'a> = (&'a str, Option<&'a str>);
+
 #[test]
 fn a_run_the_stage_could_not_have_written_stops_the_build() {
     let good = ruling(
@@ -360,7 +363,7 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
     let recounted = format!("manifest.json counts 2 paragraphs of {TR} but rulings.jsonl holds 1");
     // Each case: what it tests, the rows, a file the run then lacks (no text) or holds
     // instead, and the refusal.
-    let cases: Vec<(&str, Vec<Value>, Option<(&str, Option<&str>)>, &str)> = vec![
+    let cases: Vec<(&str, Vec<Value>, Option<FileChange>, &str)> = vec![
         (
             "no notice",
             vec![good.clone()],
