@@ -12,7 +12,7 @@ use tax_radar_au::fadden::rulings::NOTICE;
 const ACT: &str = "C2099A00001";
 const NAME: &str = "Sample Levy Act 2099";
 
-/// A finished corpus of one title holding sections 1, 2-1, 2-5 and 3-1.
+/// A finished corpus of one title holding sections 1, 2-1, 2-5, 3-1, 82KZMA and 82KZMD.
 fn write_corpus(root: &Path) {
     let sections = [
         (
@@ -30,6 +30,16 @@ fn write_corpus(root: &Path) {
             "3-1",
             "3-1 Rate",
             "The rate of sample levy is 10% of the value.",
+        ),
+        (
+            "82KZMA",
+            "82KZMA Prepaid widgets",
+            "A prepaid widget is a widget.",
+        ),
+        (
+            "82KZMD",
+            "82KZMD Leased widgets",
+            "A leased widget is a widget.",
         ),
     ];
     let directory = root.join("markdown").join(ACT);
@@ -56,7 +66,7 @@ fn write_corpus(root: &Path) {
     let title = json!({
         "register_id": ACT, "name": NAME, "collection": "Act",
         "compilation_number": "1", "compilation_date": "2099-07-01",
-        "version_is_current": true, "retrieved": "2099-08-01", "jsonl_rows": 4,
+        "version_is_current": true, "retrieved": "2099-08-01", "jsonl_rows": 6,
         "register_page": format!("https://example.invalid/{ACT}"),
         "source_url": format!("https://example.invalid/{ACT}.epub"),
     });
@@ -574,6 +584,7 @@ fn a_section_the_title_does_not_hold_names_the_held_sections_either_side() {
         "Section 9 of the Sample Levy Act 2099 applies.",
         "Section 2-1 of the Sample Levy Act 2099 applies.",
         "Section 2-3 of the Missing Act 2099 applies.",
+        "Section 82KZMB of the Sample Levy Act 2099 applies.",
         "Division 7 of the Sample Levy Act 2099 applies.",
     ]
     .join("\n");
@@ -593,9 +604,11 @@ fn a_section_the_title_does_not_hold_names_the_held_sections_either_side() {
         ("not_held", json!(["2-1", "2-5"])),
         // By number, not as text: 2-10 follows 2-5.
         ("not_held", json!(["2-5", "3-1"])),
-        ("not_held", json!(["3-1"])),
+        ("not_held", json!(["3-1", "82KZMA"])),
         ("resolved", json!(null)),
         ("not_held", json!(null)),
+        // By the letters after the number: 82KZMB falls between 82KZMA and 82KZMD.
+        ("not_held", json!(["82KZMA", "82KZMD"])),
         ("not_held", json!(null)),
     ];
     let expected: Vec<(String, Value)> = expected
@@ -610,5 +623,5 @@ fn a_section_the_title_does_not_hold_names_the_held_sections_either_side() {
         "line 1: not_held: Section 2-3 of the Sample Levy Act 2099: "
     );
     assert_eq!(lines[1], "  nearest held sections: 2-1, 2-5");
-    assert_eq!(out.matches("nearest held sections").count(), 3, "{out}");
+    assert_eq!(out.matches("nearest held sections").count(), 4, "{out}");
 }
