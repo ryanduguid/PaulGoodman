@@ -419,7 +419,25 @@ fn quote_grades_a_quotation_against_one_row_and_exits_0_only_if_it_is_held() {
         ("A widget attracts the sample tax", 1, "partial", json!(5)),
         ("Gadgets are exempt", 1, "none", json!(null)),
     ];
-    for (quotation, code, grade, matched) in cases {
+    let row_ids = [&row; 4].map(String::to_string);
+    // Edits that reverse the law: a changed rate, and a dropped 'no'.
+    let edits = [
+        (
+            format!("{ACT}:0004:3-1"),
+            (
+                "The rate of sample levy is 15% of the value",
+                1,
+                "partial",
+                json!(6),
+            ),
+        ),
+        (
+            format!("{ACT}:0003:2-5"),
+            ("A gadget attracts sample levy", 1, "none", json!(null)),
+        ),
+    ];
+    let all = row_ids.into_iter().zip(cases).chain(edits);
+    for (row, (quotation, code, grade, matched)) in all {
         let (exit, report) = quoted(dir.path(), &row, quotation);
         assert_eq!(
             (exit, report["grade"].as_str()),
@@ -441,6 +459,8 @@ fn quote_grades_a_quotation_against_one_row_and_exits_0_only_if_it_is_held() {
     assert_eq!(report["compilation_date"], "2099-07-01");
     assert_eq!(report["version_is_current"], true);
     assert_eq!(report["sections_sha256"].as_str().unwrap().len(), 64);
+    // The same digest cite-check reports, which ties the grade to this build.
+    assert_eq!(report["sources_sha256"].as_str().unwrap().len(), 64);
     // Sections 2-5 and 3-1 also hold these words.
     let (_, report) = quoted(dir.path(), &row, "sample levy");
     assert_eq!(
@@ -488,7 +508,7 @@ fn quote_prints_the_row_grade_and_what_a_grade_does_not_show() {
 }
 
 #[test]
-fn quote_refuses_an_unknown_row_or_an_empty_quotation() {
+fn quote_refuses_an_unknown_row_or_a_quotation_without_letters_or_digits() {
     let (dir, _) = indexed(&[]);
     let row = format!("{ACT}:0002:2-1");
     for (args, code, message) in [
@@ -506,7 +526,18 @@ fn quote_refuses_an_unknown_row_or_an_empty_quotation() {
         (
             vec!["search", "quote", "index.sqlite", &row, " "],
             1,
-            "the quotation has no words",
+            "the quotation has no letters or digits",
+        ),
+        // The row ends with a full stop, so `.` would otherwise grade `exact`.
+        (
+            vec!["search", "quote", "index.sqlite", &row, "."],
+            1,
+            "the quotation has no letters or digits",
+        ),
+        (
+            vec!["search", "quote", "index.sqlite", &row, "*"],
+            1,
+            "the quotation has no letters or digits",
         ),
         (
             vec!["search", "quote", "absent.sqlite", &row, "A widget"],

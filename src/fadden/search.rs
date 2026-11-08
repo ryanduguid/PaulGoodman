@@ -2004,6 +2004,14 @@ fn distinct_of(found: &quotes::Grade, others: Option<usize>) -> Json {
     })
 }
 
+/// The digest of the build's `sources.json`, which ties a result to its build.
+fn sources_digest(connection: &Connection) -> Result<Json, Exc> {
+    let sql = "SELECT value FROM meta WHERE key = 'sources_sha256'";
+    Ok(rows_of(connection, sql, &[])?
+        .first()
+        .map_or(Json::Null, |row| field(row, "value").clone()))
+}
+
 /// `quote` graded against the row `row_id`, pinned to the row's title in this build.
 pub fn quote(connection: &Connection, row_id: &str, quote: &str) -> Result<Json, Exc> {
     let sql = "SELECT r.row_id, r.register_id, r.text, t.compilation_number, \
@@ -2014,9 +2022,10 @@ pub fn quote(connection: &Connection, row_id: &str, quote: &str) -> Result<Json,
         return Err(refused(format!("{row_id} is not in the index")));
     };
     let text = field(&row, "text").as_str().unwrap_or_default();
-    // Before any search: an empty phrase is not one FTS can look for.
-    if quotes::grade(quote, "").quote_words == 0 {
-        return Err(refused("the quotation has no words"));
+    // The test `quotes::quotations` applies to a draft: punctuation alone, such as `.`,
+    // is in almost every row and would grade `exact`.
+    if !quote.chars().any(char::is_alphanumeric) {
+        return Err(refused("the quotation has no letters or digits"));
     }
     let (graded, others) = grade_row(connection, quote, row_id, text)?;
     let count = |n: Option<usize>| n.map_or(Json::Null, |n| Json::Int(n.into()));
@@ -2035,6 +2044,7 @@ pub fn quote(connection: &Connection, row_id: &str, quote: &str) -> Result<Json,
     }
     let current = field(&row, "version_is_current").truthy();
     report.push(("version_is_current".into(), Json::Bool(current)));
+    report.push(("sources_sha256".into(), sources_digest(connection)?));
     Ok(object(report))
 }
 
@@ -2194,10 +2204,7 @@ pub fn cite_check(
 ) -> Result<Vec<Json>, Exc> {
     let own = given_title(connection, title)?;
     let names = title_names(connection)?;
-    let sql = "SELECT value FROM meta WHERE key = 'sources_sha256'";
-    let digest = rows_of(connection, sql, &[])?
-        .first()
-        .map_or(Json::Null, |row| field(row, "value").clone());
+    let digest = sources_digest(connection)?;
     let found = citations(draft);
     let all = quotes::quotations(draft);
     let spans = |item: &FoundCitation| (item.4, sentence_around(draft, item.4));

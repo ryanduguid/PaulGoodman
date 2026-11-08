@@ -640,9 +640,11 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   `s 8-1`, or whose row you chose yourself. Give the quoted words without their
   quotation marks. It reports the grade, `matched_words`, `quote_words`, `other_rows`
   and `distinct` as `cite-check` does, with the row's compilation, current status,
-  retrieval date and `sections.jsonl` digest, and exits 1 unless the grade is `exact`
-  or `normalised`. The limits listed for `cite-check` apply, and a row of a section is
-  compared whole whatever subsection is quoted.
+  retrieval date, `sections.jsonl` digest and the digest of `sources.json`, and exits 1
+  unless the grade is `exact` or `normalised`. It refuses a quotation with no letter or
+  digit, such as `.`, which `cite-check` does not read as a quotation either. The limits
+  listed for `cite-check` apply, and a row of a section is compared whole whatever
+  subsection is quoted.
 - A row's Division and Subdivision come from the headings in the title's
   `<register_id>.md`, because a row's `container` names only its innermost
   heading. A row with no matching heading, such as `Introductory material`,
