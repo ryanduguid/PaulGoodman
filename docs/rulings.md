@@ -108,7 +108,9 @@ notice stay in `rulings.jsonl`; `authorities` leaves them out of the closed list
 says so. `search build --rulings` keeps each paragraph's withdrawal status beside its
 section references, and `search refs` prints it with the warning above. The build
 refuses a run whose `rulings.jsonl` differs from its `manifest.json` in row count,
-documents or paragraphs per document, and prints how many documents the run excluded.
+documents or paragraphs per document, or in a row's title, source URL, capture date or
+withdrawal status against its document's record, and refuses a capture date that is not
+an ISO date. It prints how many documents the run excluded.
 
 ### How paragraphs are found
 

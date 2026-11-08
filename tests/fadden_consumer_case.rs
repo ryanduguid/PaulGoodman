@@ -50,9 +50,13 @@ fn write_run(dir: &Path) -> PathBuf {
     std::fs::write(run.join("rulings.jsonl"), format!("{row}\n")).unwrap();
     let notice = format!("# ATO Legal Database material\n\n> {NOTICE}\n");
     std::fs::write(run.join("LICENCE-NOTICE.md"), notice).unwrap();
+    let document = json!({
+        "docid": row["docid"], "paragraphs": 1, "title": row["title"],
+        "source_url": row["source_url"], "fetched_on": row["fetched_on"],
+        "withdrawal_status": row["withdrawal_status"],
+    });
     let manifest = json!({
-        "stage": "rulings", "rows": 1, "excluded": [],
-        "documents": [{"docid": "TXR/TR20991/NAT/ATO/00001", "paragraphs": 1}],
+        "stage": "rulings", "rows": 1, "excluded": [], "documents": [document],
     });
     std::fs::write(run.join("manifest.json"), manifest.to_string()).unwrap();
     run

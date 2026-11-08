@@ -515,9 +515,11 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   (`section 8-1 of the ITAA 1997`) is read; a bare `section 8-1` is not. The run
   directory must hold the stage's `rulings.jsonl`, `LICENCE-NOTICE.md` and
   `manifest.json`, and the index keeps the notice with the rows; a row the stage could
-  not have written, such as one with no `withdrawal_status`, or rows other than the
-  documents and paragraph counts the manifest lists, stops the build. The build prints
-  how many documents the stage excluded, whose citations are therefore absent. A
+  not have written, such as one with no `withdrawal_status` or a `fetched_on` that is
+  not a date, or rows other than the documents and paragraph counts the manifest lists,
+  or a row whose title, source URL, capture date or withdrawal status differs from its
+  document's record in the manifest, stops the build. The build prints how many
+  documents the stage excluded, whose citations are therefore absent. A
   document with a withdrawal notice in any run is `NOTICE_PRESENT` in every run. `UNKNOWN` does not show the ruling is
   current, and a listed ruling shows only that it cited the provision when captured:
   read [the rulings stage](docs/rulings.md) before relying on one. The index stores

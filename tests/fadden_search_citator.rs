@@ -102,24 +102,24 @@ fn write_run(dir: &Path, rows: &[Value]) -> PathBuf {
 }
 
 /// The fields of the stage's `manifest.json` that `build` reads, for the rows in the
-/// run's `rulings.jsonl`: their count, and each document with its paragraph count.
+/// run's `rulings.jsonl`: their count, and each document with its paragraph count and
+/// the title, source, capture date and withdrawal status its first row carries.
 fn write_manifest(dir: &Path, excluded: &[&str]) {
     let jsonl = std::fs::read_to_string(dir.join("rulings.jsonl")).unwrap();
-    let mut documents: Vec<(String, usize)> = Vec::new();
+    let mut documents: Vec<Value> = Vec::new();
     for line in jsonl.lines() {
-        let docid = serde_json::from_str::<Value>(line).unwrap()["docid"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        let row: Value = serde_json::from_str(line).unwrap();
         match documents.last_mut() {
-            Some((last, count)) if *last == docid => *count += 1,
-            _ => documents.push((docid, 1)),
+            Some(last) if last["docid"] == row["docid"] => {
+                last["paragraphs"] = json!(last["paragraphs"].as_u64().unwrap() + 1);
+            }
+            _ => documents.push(json!({
+                "docid": row["docid"], "paragraphs": 1, "title": row["title"],
+                "source_url": row["source_url"], "fetched_on": row["fetched_on"],
+                "withdrawal_status": row["withdrawal_status"],
+            })),
         }
     }
-    let documents: Vec<Value> = documents
-        .into_iter()
-        .map(|(docid, paragraphs)| json!({"docid": docid, "paragraphs": paragraphs}))
-        .collect();
     let excluded: Vec<Value> = excluded
         .iter()
         .map(|docid| json!({"docid": docid, "reason": "fabricated"}))
@@ -361,6 +361,23 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
     let miscounted = manifest("2", &[(TR, 2)]);
     let swapped = format!("manifest.json lists {TD} where rulings.jsonl holds {TR}");
     let recounted = format!("manifest.json counts 2 paragraphs of {TR} but rulings.jsonl holds 1");
+    let mut undated = good.clone();
+    undated["fetched_on"] = json!("2099-8-2");
+    // The manifest is written for `good`; the run then holds `good` with one field changed.
+    let altered = |key: &str, value: &str| {
+        let mut row = good.clone();
+        row[key] = json!(value);
+        format!("{row}\n")
+    };
+    let redated = altered("fetched_on", "2099-08-03");
+    let retitled = altered("title", "TR 2099/9 Fabricated");
+    let moved = altered("source_url", "https://example.invalid/elsewhere");
+    let withdrawn = altered("withdrawal_status", "NOTICE_PRESENT");
+    let differs = |key: &str| {
+        format!("rulings.jsonl gives paragraph 1 of {TR} a {key} its manifest.json record does not")
+    };
+    let [date_differs, title_differs, source_differs, status_differs] =
+        ["fetched_on", "title", "source_url", "withdrawal_status"].map(differs);
     // Each case: what it tests, the rows, a file the run then lacks (no text) or holds
     // instead, and the refusal.
     let cases: Vec<(&str, Vec<Value>, Option<FileChange>, &str)> = vec![
@@ -434,6 +451,37 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             vec![good.clone(), other.clone()],
             Some(("manifest.json", Some(&miscounted))),
             &recounted,
+        ),
+        (
+            "capture date",
+            vec![undated],
+            None,
+            "rulings.jsonl:1 has no capture date the rulings stage writes",
+        ),
+        // The documents and counts match; one field of the row does not.
+        (
+            "redated",
+            vec![good.clone()],
+            Some(("rulings.jsonl", Some(&redated))),
+            &date_differs,
+        ),
+        (
+            "retitled",
+            vec![good.clone()],
+            Some(("rulings.jsonl", Some(&retitled))),
+            &title_differs,
+        ),
+        (
+            "moved",
+            vec![good.clone()],
+            Some(("rulings.jsonl", Some(&moved))),
+            &source_differs,
+        ),
+        (
+            "withdrawn",
+            vec![good.clone()],
+            Some(("rulings.jsonl", Some(&withdrawn))),
+            &status_differs,
         ),
     ];
     for (what, rows, change, message) in cases {

@@ -675,6 +675,11 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
                 "{place} has no withdrawal status the rulings stage writes"
             )));
         }
+        if !as_at::is_date(&fetched_on) {
+            return Err(refused(format!(
+                "{place} has no capture date the rulings stage writes"
+            )));
+        }
         rows.push(RulingRow {
             docid,
             title,
@@ -721,15 +726,11 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
 
 /// The first way `rows` differ from the documents a run's manifest lists, if any. The
 /// stage writes each document's paragraphs together, in the manifest's order, so a row
-/// count that matches can still hide a swapped or truncated document.
+/// count that matches can still hide a swapped or truncated document. Each row must
+/// also carry its document's title, source, capture date and withdrawal status, which
+/// `refs` reports.
 fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String> {
-    let mut held: Vec<(&str, usize)> = Vec::new();
-    for row in rows {
-        match held.last_mut() {
-            Some((docid, count)) if *docid == row.docid => *count += 1,
-            _ => held.push((row.docid.as_str(), 1)),
-        }
-    }
+    let held: Vec<&[RulingRow]> = rows.chunk_by(|a, b| a.docid == b.docid).collect();
     let mut listed = Vec::new();
     for document in documents {
         let docid = document.get("docid").and_then(Json::as_str);
@@ -740,32 +741,51 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String>
         };
         // A document with no paragraphs has no rows to compare.
         if *count != Json::Int(0.into()) {
-            listed.push((docid, count));
+            listed.push((docid, count, document));
         }
     }
     for index in 0..held.len().max(listed.len()) {
         match (listed.get(index), held.get(index)) {
-            (Some((docid, count)), Some((row_docid, row_count))) => {
+            (Some((docid, count, document)), Some(group)) => {
+                let row_docid = &group[0].docid;
                 if docid != row_docid {
                     return Some(format!(
                         "manifest.json lists {docid} where rulings.jsonl holds {row_docid}"
                     ));
                 }
-                if **count != Json::Int((*row_count).into()) {
+                if **count != Json::Int(group.len().into()) {
                     return Some(format!(
-                        "manifest.json counts {} paragraphs of {docid} but rulings.jsonl holds {row_count}",
-                        pyvalue::py_str(count)
+                        "manifest.json counts {} paragraphs of {docid} but rulings.jsonl holds {}",
+                        pyvalue::py_str(count),
+                        group.len()
                     ));
                 }
+                for row in *group {
+                    let fields = [
+                        ("title", &row.title),
+                        ("source_url", &row.source_url),
+                        ("fetched_on", &row.fetched_on),
+                        ("withdrawal_status", &row.withdrawal_status),
+                    ];
+                    for (key, value) in fields {
+                        if document.get(key).and_then(Json::as_str) != Some(value.as_str()) {
+                            return Some(format!(
+                                "rulings.jsonl gives paragraph {} of {docid} a {key} its manifest.json record does not",
+                                row.paragraph
+                            ));
+                        }
+                    }
+                }
             }
-            (Some((docid, _)), None) => {
+            (Some((docid, _, _)), None) => {
                 return Some(format!(
                     "manifest.json lists {docid}, which rulings.jsonl does not hold"
                 ));
             }
-            (None, Some((row_docid, _))) => {
+            (None, Some(group)) => {
                 return Some(format!(
-                    "rulings.jsonl holds {row_docid} after the last document manifest.json lists"
+                    "rulings.jsonl holds {} after the last document manifest.json lists",
+                    group[0].docid
                 ));
             }
             (None, None) => {}
