@@ -511,6 +511,7 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             &status_differs,
         ),
     ];
+    let mut failures = Vec::new();
     for (what, rows, change, message) in cases {
         let dir = tempfile::tempdir().unwrap();
         write_corpus(&dir.path().join("corpus"));
@@ -530,10 +531,15 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             "run",
         ];
         let (code, out, err) = fadden(&args, dir.path());
-        assert_eq!(code, 1, "{what}: {out}{err}");
-        assert!(err.contains(message), "{what}: {err}");
-        assert!(!dir.path().join("index.sqlite").exists(), "{what}");
+        let written = dir.path().join("index.sqlite").exists();
+        if code != 1 || !err.contains(message) || written {
+            failures.push(format!(
+                "{what}: exit {code}, index written {written}, wanted {message:?}: {out}{err}"
+            ));
+        }
     }
+    // Every case runs, so a failure names each case the build did not refuse.
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 fn quoted(dir: &Path, row: &str, quotation: &str) -> (i32, Value) {
