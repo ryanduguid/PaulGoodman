@@ -770,9 +770,10 @@ Know these limits before relying on a result:
   notice (`UNKNOWN`) is not thereby current. A withdrawn document's ids come from its
   captures' titles, so a document with no readable title in any capture cannot take
   another document's listing of its id out.
-- The gate compares citations exactly, and the list holds whole sections, so `s 8-1(1)`
-  is not `s 8-1` and goes to review. So does `s 8-1 ITAA 1997`: the gate reads an Act
-  named in full only.
+- The list holds whole sections. At llm-tax-guardrails f745aa1 the gate compares
+  citations exactly, so `s 8-1(1)` is not `s 8-1` and goes to review, and so does
+  `s 8-1 ITAA 1997`: that gate reads an Act named in full only. A later gate may differ;
+  see [Checking a draft end to end](#checking-a-draft-end-to-end).
 - A section is listed by its label in the title. A provision in a Schedule with its own
   Divisions, such as Schedule 1 to the *Taxation Administration Act 1953*, is listed as
   a section of the Act, and `container` cannot show which Schedule it sits in.
@@ -799,14 +800,15 @@ cargo run --manifest-path tools/drdebits_build/Cargo.toml --locked --release -- 
 
 The interface between the 2 is the file `authorities` writes: one key, `authorities`,
 listing `s <label> of the <Act>` for each section and each ruling id, as
-[above](#exporting-an-authorities-list). The 2 tools read different citation forms.
-`cite-check` reads `section 8-1 of the Income Tax Assessment Act 1997` and grades the
-quotation beside it; the gate reads `s 8-1 of the Income Tax Assessment Act 1997` and
-ruling ids such as `TR 2022/1`, and compares each with the list exactly. An authority
-written in only one form is checked by only one tool. The gate compares section
-citations: it sends `s 8-1(1)` to review even when `s 8-1` is listed, and does not read
-`subsection 8-1(1)` at all, so a draft citing only that form passes the gate unchecked.
-A subsection citation needs a gate update before the gate checks it. `search quote` grades a
+[above](#exporting-an-authorities-list). `cite-check` reads `section 8-1 of the Income
+Tax Assessment Act 1997` and `subsection 8-1(1) of` that Act, not `s 8-1`, and grades
+the quotation beside it. At llm-tax-guardrails f745aa1 the 2 tools read different
+citation forms: that gate reads `s 8-1` or `section 8-1` of an Act named in full and
+ruling ids such as `TR 2022/1`, matches each with the list exactly, and does not read
+`subsection 8-1(1)`. So there `s 8-1(1)` goes to review even when `s 8-1` is listed, and
+a draft citing only `subsection 8-1(1)` passes the gate unchecked. A later gate may read
+more forms; its own pass note says which. A citation in a form only one tool reads is
+checked by that tool alone. `search quote` grades a
 quotation whose citation `cite-check` does not read. `tests/fadden_consumer_case.rs`
 runs the commands above, apart from the gate, on the fabricated search demo.
 
