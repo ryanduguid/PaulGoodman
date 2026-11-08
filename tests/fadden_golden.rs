@@ -10,7 +10,10 @@
 //! `compare_builds` cases depart from 43b5e0c on purpose: they were re-recorded
 //! against a stricter `compare_builds.py` that refuses repeated JSON members,
 //! rows naming another title, section metadata that is not text and rows from
-//! two compilations, and lists each title found in only one build.
+//! two compilations, and lists each title found in only one build. Where that
+//! Python admits a lone surrogate in a container, section or heading and then
+//! fails while printing it, the binary refuses the row before printing anything
+//! (`tests/fadden_compare_builds.rs`); no golden case holds that input.
 //!
 //! Outputs are normalised as the harness normalised them: the case directory
 //! reads `ROOT`, the module directory `MODULE`, generated stage, backup and

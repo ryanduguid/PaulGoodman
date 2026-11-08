@@ -57,7 +57,8 @@ and wrote. A failure there is a departure from the Python behaviour, not a stale
 regenerate fixtures only with the port's differential harness against the base revision.
 The `compare_builds` cases follow its stricter behaviour instead (the module doc of
 `tests/fadden_golden.rs` says what changed), so regenerating them from the base revision
-would undo it.
+would undo it. One input departs from that stricter Python too: a lone surrogate in a
+container, section or heading, which it admits and then crashes printing, is refused.
 
 The fenced list records the unique single-line commands. The multiline binary-smoke gate
 is reproduced exactly in the next section.

@@ -14,7 +14,7 @@ use super::corpus_paths::{child, register_id, register_id_str};
 use super::{Exc, Run, json_error};
 use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyio::Lines;
-use crate::pyjson::{self, DecodeError, Json};
+use crate::pyjson::{self, DecodeError, Json, PyStr};
 use crate::pyos::{OsError, Style};
 use crate::pyvalue::{self, Key, dumps_line, py_eq, str_points, type_name};
 
@@ -39,8 +39,8 @@ pub fn titles(root: &str) -> Result<BTreeSet<String>, Exc> {
 
 /// `load_rows(root, rid)`: the rows of one title's sections.jsonl. A row
 /// repeating a JSON member, naming another title, holding a container, section
-/// or heading that is not text, or giving another compilation than the first
-/// row is refused.
+/// or heading that is not text (a lone surrogate included), or giving another
+/// compilation than the first row is refused.
 pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
     let path = child(
         root,
@@ -61,7 +61,14 @@ pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
             }
             other => json_error(other),
         })?;
-        let text_or_none = |name| matches!(row.get(name), None | Some(Json::Null | Json::Str(_)));
+        // A lone surrogate is refused here, where the stricter Python admitted
+        // it and then failed part way through printing the report.
+        let text_or_none = |name| {
+            matches!(
+                row.get(name),
+                None | Some(Json::Null | Json::Str(PyStr::Text(_)))
+            )
+        };
         if !matches!(row.get("text"), Some(Json::Str(_)))
             || !row
                 .get("register_id")

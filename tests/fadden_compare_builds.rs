@@ -830,9 +830,10 @@ fn raw_row(
 }
 
 /// Write the builds, run text and --json, and compare exit, stdout and stderr
-/// with what the stricter Python printed (stderr as the traceback's last line,
-/// paths under the case directory as `ROOT/...`).
-fn same_as_python(
+/// with the expected text: what the stricter Python printed unless a test says
+/// otherwise (stderr as the traceback's last line, paths under the case
+/// directory as `ROOT/...`).
+fn expect_outputs(
     old: &[String],
     new: &[String],
     text: (i32, &str, &str),
@@ -877,7 +878,7 @@ fn a_nan_compilation_number_differs_from_itself_as_in_python() {
         raw_row(2, "two", "NaN", "null", r#""1""#, r#""Heading""#),
     ];
     let refused = "error: ROOT/old/markdown/C2099A00001/sections.jsonl:2 has inconsistent compilation metadata\n";
-    same_as_python(&rows, &rows, (1, "", refused), (1, "", refused));
+    expect_outputs(&rows, &rows, (1, "", refused), (1, "", refused));
 }
 
 #[test]
@@ -895,7 +896,7 @@ fn compilation_numbers_python_calls_equal_are_one_compilation() {
         let json = format!(
             r#"{{"register_id": "C2099A00001", "old_compilation": {{"number": {dumped}, "date": "2026-01-01"}}, "new_compilation": {{"number": {dumped}, "date": "2026-01-01"}}, "added": [], "removed": [], "changed": [{{"container": null, "section": "1", "heading": "Heading", "change": "text"}}]}}"#
         ) + "\n";
-        same_as_python(
+        expect_outputs(
             &build("one"),
             &build("uno"),
             (0, text.as_str(), ""),
@@ -905,31 +906,24 @@ fn compilation_numbers_python_calls_equal_are_one_compilation() {
 }
 
 #[test]
-fn a_lone_surrogate_in_section_metadata_fails_where_python_prints_it() {
-    // The stricter Python admits a lone surrogate as text and then fails to
-    // print it; the binary keeps that behaviour rather than refusing the row.
+fn a_lone_surrogate_in_section_metadata_is_refused_before_any_output() {
+    // A deliberate departure: the stricter Python admits a lone surrogate as
+    // text, then fails with UnicodeEncodeError while printing (exit 1, in text
+    // mode after the first report line). The binary refuses the row instead.
     let heading = r#""Heading""#;
-    for (container, section, heading, point, text_at, json_at) in [
-        (r#""\ud800""#, r#""1""#, heading, "ud800", 18, 202),
-        ("null", r#""\udc00""#, heading, "udc00", 20, 219),
-        ("null", "null", r#""\ud83d""#, "ud83d", 18, 236),
+    for (container, section, heading) in [
+        (r#""\ud800""#, r#""1""#, heading),
+        ("null", r#""\udc00""#, heading),
+        ("null", "null", r#""\ud83d""#),
     ] {
         let build = |text| [raw_row(1, text, r#""1""#, container, section, heading)];
-        let error = |at| {
-            format!(
-                "UnicodeEncodeError: 'utf-8' codec can't encode character '\\{point}' in position {at}: surrogates not allowed\n"
-            )
-        };
-        let (text_error, json_error) = (error(text_at), error(json_at));
-        same_as_python(
+        let refused =
+            "error: ROOT/old/markdown/C2099A00001/sections.jsonl:1 is not a sections.jsonl row\n";
+        expect_outputs(
             &build("one"),
             &build("uno"),
-            (
-                1,
-                "C2099A00001: compilation 1 (2026-01-01) to 1 (2026-01-01)\n",
-                text_error.as_str(),
-            ),
-            (1, "", json_error.as_str()),
+            (1, "", refused),
+            (1, "", refused),
         );
     }
 }
