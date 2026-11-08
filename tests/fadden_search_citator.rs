@@ -293,6 +293,22 @@ fn refs_lists_the_rulings_that_cite_a_section_by_its_act() {
     assert!(!out.contains("holds no rulings"), "{out}");
 }
 
+/// The excluded count is of documents no run holds, each once: TR 2099/1 is excluded by
+/// the second run but captured by the first, and TR 2099/3 is excluded by both.
+#[test]
+fn the_excluded_count_is_of_distinct_documents_no_run_holds() {
+    let runs = tempfile::tempdir().unwrap();
+    let (first, second) = write_runs(runs.path());
+    let absent = "TXR/TR20993/NAT/ATO/00001";
+    write_manifest(&first, &[absent]);
+    write_manifest(&second, &[absent, TR]);
+    let (_dir, out) = indexed(&[&first, &second]);
+    assert!(
+        out.contains("excluded by the rulings stage and not indexed: 1 documents\n"),
+        "{out}"
+    );
+}
+
 /// An index built without `--rulings` is byte for byte the index an earlier build
 /// wrote (the golden search fixtures pin its digest), so this covers both.
 #[test]
@@ -424,6 +440,17 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             Some((
                 "manifest.json",
                 Some(r#"{"stage": "discover", "rows": 1, "excluded": []}"#),
+            )),
+            "manifest.json is not the rulings stage's",
+        ),
+        (
+            "exclusion without a docid",
+            vec![good.clone()],
+            Some((
+                "manifest.json",
+                Some(
+                    r#"{"stage": "rulings", "rows": 1, "documents": [], "excluded": [{"reason": "fabricated"}]}"#,
+                ),
             )),
             "manifest.json is not the rulings stage's",
         ),

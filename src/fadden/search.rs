@@ -603,13 +603,13 @@ struct RulingRow {
 }
 
 /// A `rulings` run directory: its rows, the digest of its `rulings.jsonl` and its
-/// `LICENCE-NOTICE.md`, which the index keeps with the rows, and how many documents its
-/// manifest says the stage excluded.
+/// `LICENCE-NOTICE.md`, which the index keeps with the rows, and the docids its manifest
+/// says the stage excluded.
 struct RulingsRun {
     rows: Vec<RulingRow>,
     rulings_sha256: String,
     notice: String,
-    excluded: usize,
+    excluded: Vec<String>,
 }
 
 fn read_run_file(dir: &str, name: &str) -> Result<Vec<u8>, Exc> {
@@ -698,8 +698,20 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
         .and_then(|text| pyjson::loads_standard(text).ok())
         .filter(|manifest| manifest.get("stage") == Some(&Json::str("rulings")));
     let member = |key: &str| manifest.as_ref().and_then(|m| m.get(key));
-    let (Some(stated @ Json::Int(_)), Some(Json::Array(excluded)), Some(Json::Array(documents))) =
-        (member("rows"), member("excluded"), member("documents"))
+    let excluded = match member("excluded") {
+        Some(Json::Array(entries)) => entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("docid")
+                    .and_then(Json::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    let (Some(stated @ Json::Int(_)), Some(excluded), Some(Json::Array(documents))) =
+        (member("rows"), excluded, member("documents"))
     else {
         return Err(refused(format!(
             "{dir}: manifest.json is not the rulings stage's"
@@ -717,7 +729,7 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
         return Err(refused(format!("{dir}: {difference}")));
     }
     Ok(RulingsRun {
-        excluded: excluded.len(),
+        excluded,
         rows,
         rulings_sha256: hex(&data),
         notice,
@@ -870,7 +882,8 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
 
 /// `build`, also reading the section references in each `rulings` run directory in
 /// `rulings`. Returns the corpus counts, then the ruling paragraphs read, the
-/// references stored and the documents the runs' manifests list as excluded.
+/// references stored and the distinct documents the runs' manifests list as excluded
+/// that no run holds.
 pub fn build_with_rulings(
     root: &str,
     out: &str,
@@ -932,13 +945,22 @@ pub fn build_with_rulings(
         return Err(Exc::Os(error));
     }
     crate::pyos::unlink(&temporary)?;
+    // A document excluded by one run but captured by another is indexed, and one
+    // excluded by several runs is one document.
+    let mut excluded: Vec<&str> = runs
+        .iter()
+        .flat_map(|run| run.excluded.iter().map(String::as_str))
+        .filter(|docid| {
+            !runs
+                .iter()
+                .any(|run| run.rows.iter().any(|row| row.docid == *docid))
+        })
+        .collect();
+    excluded.sort_unstable();
+    excluded.dedup();
     Ok((
         [read.len(), counts.rows, counts.definitions, counts.refs],
-        [
-            counts.ruling_paragraphs,
-            counts.ruling_refs,
-            runs.iter().map(|run| run.excluded).sum(),
-        ],
+        [counts.ruling_paragraphs, counts.ruling_refs, excluded.len()],
     ))
 }
 

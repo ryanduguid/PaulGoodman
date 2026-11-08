@@ -519,7 +519,7 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   not a date, or rows other than the documents and paragraph counts the manifest lists,
   or a row whose title, source URL, capture date or withdrawal status differs from its
   document's record in the manifest, stops the build. The build prints how many
-  documents the stage excluded, whose citations are therefore absent. A
+  distinct documents the stage excluded and no run holds, whose citations are therefore absent. A
   document with a withdrawal notice in any run is `NOTICE_PRESENT` in every run. `UNKNOWN` does not show the ruling is
   current, and a listed ruling shows only that it cited the provision when captured:
   read [the rulings stage](docs/rulings.md) before relying on one. The index stores
