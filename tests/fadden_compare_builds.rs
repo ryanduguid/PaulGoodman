@@ -814,3 +814,122 @@ fn titles_not_compared_are_not_read() {
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(out.lines().count(), 1);
 }
+
+/// One sections.jsonl line with raw JSON for the fields a case varies.
+fn raw_row(
+    ordinal: u32,
+    text: &str,
+    number: &str,
+    container: &str,
+    section: &str,
+    heading: &str,
+) -> String {
+    format!(
+        r#"{{"register_id": "{ACT}", "act": "Sample Act 2099", "compilation_number": {number}, "compilation_date": "2026-01-01", "row_id": "{ACT}:{ordinal:04}:-", "section": {section}, "heading": {heading}, "container": {container}, "text": "{text}"}}"#
+    )
+}
+
+/// Write the builds, run text and --json, and compare exit, stdout and stderr
+/// with what the stricter Python printed (stderr as the traceback's last line,
+/// paths under the case directory as `ROOT/...`).
+fn same_as_python(
+    old: &[String],
+    new: &[String],
+    text: (i32, &str, &str),
+    json: (i32, &str, &str),
+) {
+    let b = builds();
+    for (root, rows) in [(&b.old, old), (&b.new, new)] {
+        let directory = root.join("markdown").join(ACT);
+        std::fs::create_dir_all(&directory).unwrap();
+        let body: String = rows.iter().map(|r| format!("{r}\n")).collect();
+        std::fs::write(directory.join("sections.jsonl"), body).unwrap();
+    }
+    let parent = b.old.parent().unwrap();
+    let canonical = std::fs::canonicalize(parent).unwrap();
+    let canonical = canonical.to_string_lossy();
+    let mut forms = vec![
+        parent.to_string_lossy().into_owned(),
+        canonical
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&canonical)
+            .to_string(),
+    ];
+    forms.sort_by_key(|f| std::cmp::Reverse(f.len()));
+    for (args, want) in [(&[][..], text), (&["--json"][..], json)] {
+        let (code, out, mut err) = run(&b, args);
+        if forms.iter().any(|f| err.contains(f.as_str())) {
+            for form in &forms {
+                err = err.replace(form.as_str(), "ROOT");
+            }
+            err = err.replace('\\', "/");
+        }
+        assert_eq!((code, out.as_str(), err.as_str()), want, "{args:?}");
+    }
+}
+
+const SUMMARY: &str = "1 titles compared, 1 with section changes; 0 only in the old build, 0 only in the new build.\nThis compares the derived reading view; read both compilations on the Register before relying on a change.\n";
+
+#[test]
+fn a_nan_compilation_number_differs_from_itself_as_in_python() {
+    let rows = [
+        raw_row(1, "one", "NaN", "null", r#""1""#, r#""Heading""#),
+        raw_row(2, "two", "NaN", "null", r#""1""#, r#""Heading""#),
+    ];
+    let refused = "error: ROOT/old/markdown/C2099A00001/sections.jsonl:2 has inconsistent compilation metadata\n";
+    same_as_python(&rows, &rows, (1, "", refused), (1, "", refused));
+}
+
+#[test]
+fn compilation_numbers_python_calls_equal_are_one_compilation() {
+    for (first, second, shown, dumped) in [("true", "1", "True", "true"), ("1", "1.0", "1", "1")] {
+        let build = |text| {
+            [
+                raw_row(1, text, first, "null", r#""1""#, r#""Heading""#),
+                raw_row(2, "two", second, "null", r#""1""#, r#""Heading""#),
+            ]
+        };
+        let text = format!(
+            "C2099A00001: compilation {shown} (2026-01-01) to {shown} (2026-01-01)\n  changed (text): s 1\n{SUMMARY}"
+        );
+        let json = format!(
+            r#"{{"register_id": "C2099A00001", "old_compilation": {{"number": {dumped}, "date": "2026-01-01"}}, "new_compilation": {{"number": {dumped}, "date": "2026-01-01"}}, "added": [], "removed": [], "changed": [{{"container": null, "section": "1", "heading": "Heading", "change": "text"}}]}}"#
+        ) + "\n";
+        same_as_python(
+            &build("one"),
+            &build("uno"),
+            (0, text.as_str(), ""),
+            (0, json.as_str(), ""),
+        );
+    }
+}
+
+#[test]
+fn a_lone_surrogate_in_section_metadata_fails_where_python_prints_it() {
+    // The stricter Python admits a lone surrogate as text and then fails to
+    // print it; the binary keeps that behaviour rather than refusing the row.
+    let heading = r#""Heading""#;
+    for (container, section, heading, point, text_at, json_at) in [
+        (r#""\ud800""#, r#""1""#, heading, "ud800", 18, 202),
+        ("null", r#""\udc00""#, heading, "udc00", 20, 219),
+        ("null", "null", r#""\ud83d""#, "ud83d", 18, 236),
+    ] {
+        let build = |text| [raw_row(1, text, r#""1""#, container, section, heading)];
+        let error = |at| {
+            format!(
+                "UnicodeEncodeError: 'utf-8' codec can't encode character '\\{point}' in position {at}: surrogates not allowed\n"
+            )
+        };
+        let (text_error, json_error) = (error(text_at), error(json_at));
+        same_as_python(
+            &build("one"),
+            &build("uno"),
+            (
+                1,
+                "C2099A00001: compilation 1 (2026-01-01) to 1 (2026-01-01)\n",
+                text_error.as_str(),
+            ),
+            (1, "", json_error.as_str()),
+        );
+    }
+}
