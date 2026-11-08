@@ -394,6 +394,16 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
     };
     let [date_differs, title_differs, source_differs, status_differs] =
         ["fetched_on", "title", "source_url", "withdrawal_status"].map(differs);
+    // The stage's manifest for `good` in every other respect.
+    let unnamed_exclusion = json!({
+        "stage": "rulings", "rows": 1, "excluded": [{"reason": "fabricated"}],
+        "documents": [{
+            "docid": TR, "paragraphs": 1, "title": good["title"],
+            "source_url": good["source_url"], "fetched_on": good["fetched_on"],
+            "withdrawal_status": good["withdrawal_status"],
+        }],
+    })
+    .to_string();
     // Each case: what it tests, the rows, a file the run then lacks (no text) or holds
     // instead, and the refusal.
     let cases: Vec<(&str, Vec<Value>, Option<FileChange>, &str)> = vec![
@@ -446,12 +456,7 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
         (
             "exclusion without a docid",
             vec![good.clone()],
-            Some((
-                "manifest.json",
-                Some(
-                    r#"{"stage": "rulings", "rows": 1, "documents": [], "excluded": [{"reason": "fabricated"}]}"#,
-                ),
-            )),
+            Some(("manifest.json", Some(&unnamed_exclusion))),
             "manifest.json is not the rulings stage's",
         ),
         (
