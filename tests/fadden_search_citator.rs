@@ -116,6 +116,7 @@ fn write_manifest(dir: &Path, excluded: &[&str]) {
             _ => documents.push(json!({
                 "docid": row["docid"], "paragraphs": 1, "title": row["title"],
                 "source_url": row["source_url"], "fetched_on": row["fetched_on"],
+                "sha256": row["source_sha256"],
                 "withdrawal_status": row["withdrawal_status"],
             })),
         }
@@ -126,7 +127,7 @@ fn write_manifest(dir: &Path, excluded: &[&str]) {
         .collect();
     let manifest = json!({
         "stage": "rulings", "rows": jsonl.lines().count(), "documents": documents,
-        "excluded": excluded,
+        "excluded": excluded, "fetched_on": "2099-08-02",
     });
     std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
 }
@@ -162,7 +163,7 @@ fn write_runs(base: &Path) -> (PathBuf, PathBuf) {
     let second = write_run(
         &base.join("run2"),
         &[ruling(
-            TD,
+            &TD.to_ascii_lowercase(),
             td,
             "1",
             "This determination is withdrawn.",
@@ -301,7 +302,7 @@ fn the_excluded_count_is_of_distinct_documents_no_run_holds() {
     let (first, second) = write_runs(runs.path());
     let absent = "TXR/TR20993/NAT/ATO/00001";
     write_manifest(&first, &[absent]);
-    write_manifest(&second, &[absent, TR]);
+    write_manifest(&second, &[&absent.to_ascii_lowercase(), TR]);
     let (_dir, out) = indexed(&[&first, &second]);
     assert!(
         out.contains("excluded by the rulings stage and not indexed: 1 documents\n"),
@@ -315,15 +316,36 @@ fn the_excluded_count_is_of_distinct_documents_no_run_holds() {
 fn an_index_without_rulings_says_so_and_has_no_ruling_field() {
     let (dir, out) = indexed(&[]);
     assert!(!out.contains("ruling"), "{out}");
-    let row = format!("{ACT}:0002:2-1");
-    let (code, out, _) = fadden(
-        &["search", "refs", "index.sqlite", &row, "--json"],
-        dir.path(),
+    assert_has_no_ruling_field(dir.path());
+}
+
+#[test]
+fn an_all_excluded_run_can_be_indexed_with_or_without_a_captured_run() {
+    let runs = tempfile::tempdir().unwrap();
+    let empty = write_run(&runs.path().join("excluded"), &[]);
+    write_manifest(&empty, &[&TR.to_ascii_lowercase()]);
+    let (dir, out) = indexed(&[&empty]);
+    assert!(
+        out.contains("excluded by the rulings stage and not indexed: 1 documents"),
+        "{out}"
     );
+    assert_has_no_ruling_field(dir.path());
+
+    let (captured, _) = write_runs(runs.path());
+    let (_, out) = indexed(&[&empty, &captured]);
+    assert!(
+        out.contains("excluded by the rulings stage and not indexed: 0 documents"),
+        "{out}"
+    );
+}
+
+fn assert_has_no_ruling_field(dir: &Path) {
+    let row = format!("{ACT}:0002:2-1");
+    let (code, out, _) = fadden(&["search", "refs", "index.sqlite", &row, "--json"], dir);
     assert_eq!(code, 0);
     let report: Value = serde_json::from_str(out.trim()).unwrap();
     assert!(report.get("cited_by_rulings").is_none(), "{report}");
-    let (code, out, _) = fadden(&["search", "refs", "index.sqlite", &row], dir.path());
+    let (code, out, _) = fadden(&["search", "refs", "index.sqlite", &row], dir);
     assert_eq!(code, 0);
     assert!(
         out.contains("\n  this index holds no rulings; build with --rulings to list them\nIndex of the corpus"),
@@ -367,7 +389,7 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             .map(|(docid, paragraphs)| json!({"docid": docid, "paragraphs": paragraphs}))
             .collect();
         format!(
-            r#"{{"stage": "rulings", "rows": {rows}, "documents": {}, "excluded": []}}"#,
+            r#"{{"stage": "rulings", "rows": {rows}, "documents": {}, "excluded": [], "fetched_on": "2099-08-02"}}"#,
             Value::Array(documents)
         )
     };
@@ -386,30 +408,57 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
         format!("{row}\n")
     };
     let redated = altered("fetched_on", "2099-08-03");
+    let redigested = altered("source_sha256", &"1".repeat(64));
     let retitled = altered("title", "TR 2099/9 Fabricated");
     let moved = altered("source_url", "https://example.invalid/elsewhere");
     let withdrawn = altered("withdrawal_status", "NOTICE_PRESENT");
     let differs = |key: &str| {
         format!("rulings.jsonl gives paragraph 1 of {TR} a {key} its manifest.json record does not")
     };
-    let [date_differs, title_differs, source_differs, status_differs] =
-        ["fetched_on", "title", "source_url", "withdrawal_status"].map(differs);
+    let [
+        date_differs,
+        title_differs,
+        source_differs,
+        status_differs,
+        digest_differs,
+    ] = [
+        "fetched_on",
+        "title",
+        "source_url",
+        "withdrawal_status",
+        "sha256",
+    ]
+    .map(differs);
     // The stage's manifest for `good`, excluding `entry`.
     let excluding = |entry: Value| {
         json!({
-            "stage": "rulings", "rows": 1, "excluded": [entry],
+            "stage": "rulings", "rows": 1, "excluded": [entry], "fetched_on": "2099-08-02",
             "documents": [{
                 "docid": TR, "paragraphs": 1, "title": good["title"],
                 "source_url": good["source_url"], "fetched_on": good["fetched_on"],
+                "sha256": good["source_sha256"],
                 "withdrawal_status": good["withdrawal_status"],
             }],
         })
-        .to_string()
     };
-    let unnamed_exclusion = excluding(json!({"reason": "fabricated"}));
-    let empty_exclusion = excluding(json!({"docid": "", "reason": "fabricated"}));
-    let own_exclusion = excluding(json!({"docid": TR, "reason": "fabricated"}));
-    let both = format!("manifest.json both lists and excludes {TR}");
+    let unnamed_exclusion = excluding(json!({"reason": "fabricated"})).to_string();
+    let empty_exclusion = excluding(json!({"docid": "", "reason": "fabricated"})).to_string();
+    let lower = TR.to_ascii_lowercase();
+    let own_exclusion = excluding(json!({"docid": lower, "reason": "fabricated"})).to_string();
+    let both = format!("manifest.json both lists and excludes {lower}");
+    let mut redated_run = excluding(json!({"docid": TD, "reason": "fabricated"}));
+    redated_run["fetched_on"] = json!("2099-08-03");
+    let redated_run = redated_run.to_string();
+    let run_date_differs =
+        format!("manifest.json's record of {TR} has a different capture date from the run");
+    let no_paragraphs = manifest("1", &[(TR, 0)]);
+    let empty_document = format!("manifest.json lists {TR} without any paragraphs");
+    let duplicate_exclusions = json!({
+        "stage": "rulings", "rows": 0, "documents": [], "fetched_on": "2099-08-02",
+        "excluded": [{"docid": TR}, {"docid": lower}],
+    })
+    .to_string();
+    let duplicate_exclusion = format!("manifest.json excludes {lower} more than once");
     // A second paragraph of TR 2099/1: the manifest is written for `good` and `second`,
     // and the run then holds `second` with only its capture date changed.
     let mut second = good.clone();
@@ -420,8 +469,10 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
         "rulings.jsonl gives paragraph 2 of {TR} a fetched_on its manifest.json record does not"
     );
     let second_changed = format!("{good}\n{second_redated}\n");
+    let mut split_row = second.clone();
+    split_row["docid"] = json!(lower);
     let split = format!(
-        "rulings.jsonl holds {TR} in 2 places, but the stage writes a document's paragraphs together"
+        "rulings.jsonl holds {lower} in 2 places, but the stage writes a document's paragraphs together"
     );
     let bare_record = manifest("1", &[(TR, 1)]);
     let no_title = format!("manifest.json's record of {TR} has no title");
@@ -458,7 +509,12 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             None,
             "rulings.jsonl:1 is not a rulings row",
         ),
-        ("empty", vec![], None, "rulings.jsonl has no rows"),
+        (
+            "empty included document",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&no_paragraphs))),
+            &empty_document,
+        ),
         (
             "no manifest",
             vec![good.clone()],
@@ -519,6 +575,18 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             &date_differs,
         ),
         (
+            "redated run",
+            vec![good.clone()],
+            Some(("manifest.json", Some(&redated_run))),
+            &run_date_differs,
+        ),
+        (
+            "redigested",
+            vec![good.clone()],
+            Some(("rulings.jsonl", Some(&redigested))),
+            &digest_differs,
+        ),
+        (
             "retitled",
             vec![good.clone()],
             Some(("rulings.jsonl", Some(&retitled))),
@@ -545,7 +613,7 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
         // The manifest lists TR 2099/1, TD 2099/2, then TR 2099/1 again, as the rows do.
         (
             "a document in 2 places",
-            vec![good.clone(), other.clone(), second.clone()],
+            vec![good.clone(), other.clone(), split_row],
             None,
             &split,
         ),
@@ -566,6 +634,12 @@ fn a_run_the_stage_could_not_have_written_stops_the_build() {
             vec![good.clone()],
             Some(("manifest.json", Some(&own_exclusion))),
             &both,
+        ),
+        (
+            "excluded twice",
+            vec![],
+            Some(("manifest.json", Some(&duplicate_exclusions))),
+            &duplicate_exclusion,
         ),
     ];
     let mut failures = Vec::new();

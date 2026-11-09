@@ -517,15 +517,17 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   `manifest.json`, and the index keeps the notice with the rows; a row the stage could
   not have written, such as one with no `withdrawal_status` or a `fetched_on` that is
   not a date, or rows other than the documents and paragraph counts the manifest lists,
-  or a row whose title, source URL, capture date or withdrawal status differs from its
-  document's record in the manifest, stops the build. The build prints how many
+  or a row whose title, source URL, digest, capture date or withdrawal status differs
+  from its document's record in the manifest, stops the build. Each document's
+  capture date must also match the run's. The build prints how many
   distinct documents the stage excluded and no run holds, whose citations are therefore absent. A
   document with a withdrawal notice in any run is `NOTICE_PRESENT` in every run. `UNKNOWN` does not show the ruling is
   current, and a listed ruling shows only that it cited the provision when captured:
   read [the rulings stage](docs/rulings.md) before relying on one. The index stores
   references, not ruling text. In text, `refs` says `no captured ruling cites this by
   its Act` when the index holds rulings and none cites the row, and `this index holds no
-  rulings` when it was built without `--rulings`. Without `--rulings`, the index is byte
+  rulings` when no run contributed any paragraphs or it was built without
+  `--rulings`. Without `--rulings`, the index is byte
   for byte what an earlier build wrote and `refs --json` has no `cited_by_rulings`
   field. So the schema version stays the same: a reader finds the ruling tables in the
   index or does without them.

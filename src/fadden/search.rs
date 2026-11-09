@@ -23,6 +23,7 @@ use unicode_normalization::UnicodeNormalization;
 use super::as_at;
 use super::corpus_paths::{child, register_id, register_id_str};
 use super::quotes::{self, Quotation};
+use super::rulings::canonical_docid;
 use super::{Exc, Run};
 use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyjson::{self, Json, PyStr};
@@ -598,6 +599,7 @@ struct RulingRow {
     paragraph: String,
     text: String,
     source_url: String,
+    source_sha256: String,
     fetched_on: String,
     withdrawal_status: String,
 }
@@ -647,6 +649,7 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             "paragraph",
             "text",
             "source_url",
+            "source_sha256",
             "fetched_on",
             "licence_basis",
             "withdrawal_status",
@@ -658,6 +661,7 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             Some(paragraph),
             Some(text),
             Some(source_url),
+            Some(source_sha256),
             Some(fetched_on),
             Some(basis),
             Some(withdrawal_status),
@@ -686,12 +690,10 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             paragraph,
             text,
             source_url,
+            source_sha256,
             fetched_on,
             withdrawal_status,
         });
-    }
-    if rows.is_empty() {
-        return Err(refused(format!("{dir}: rulings.jsonl has no rows")));
     }
     let manifest = std::str::from_utf8(&read_run_file(dir, "manifest.json")?)
         .ok()
@@ -711,23 +713,35 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             .collect::<Option<Vec<_>>>(),
         _ => None,
     };
-    let (Some(stated @ Json::Int(_)), Some(excluded), Some(Json::Array(documents))) =
-        (member("rows"), excluded, member("documents"))
+    let run_date = member("fetched_on")
+        .and_then(Json::as_str)
+        .filter(|date| as_at::is_date(date));
+    let (Some(stated @ Json::Int(_)), Some(excluded), Some(Json::Array(documents)), Some(run_date)) =
+        (member("rows"), excluded, member("documents"), run_date)
     else {
         return Err(refused(format!(
             "{dir}: manifest.json is not the rulings stage's"
         )));
     };
     // The stage either captures a target or excludes it, never both.
-    let listed = |docid: &str| {
-        documents
-            .iter()
-            .any(|document| document.get("docid").and_then(Json::as_str) == Some(docid))
-    };
-    if let Some(docid) = excluded.iter().find(|docid| listed(docid)) {
-        return Err(refused(format!(
-            "{dir}: manifest.json both lists and excludes {docid}"
-        )));
+    let listed: BTreeSet<_> = documents
+        .iter()
+        .filter_map(|document| document.get("docid").and_then(Json::as_str))
+        .map(canonical_docid)
+        .collect();
+    let mut excluded_ids = BTreeSet::new();
+    for docid in &excluded {
+        let key = canonical_docid(docid);
+        if listed.contains(&key) {
+            return Err(refused(format!(
+                "{dir}: manifest.json both lists and excludes {docid}"
+            )));
+        }
+        if !excluded_ids.insert(key) {
+            return Err(refused(format!(
+                "{dir}: manifest.json excludes {docid} more than once"
+            )));
+        }
     }
     // A short or padded rulings.jsonl would otherwise index as a whole run.
     if *stated != Json::Int(rows.len().into()) {
@@ -737,7 +751,7 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             rows.len()
         )));
     }
-    if let Some(difference) = manifest_difference(&rows, documents) {
+    if let Some(difference) = manifest_difference(&rows, documents, run_date) {
         return Err(refused(format!("{dir}: {difference}")));
     }
     Ok(RulingsRun {
@@ -751,16 +765,14 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
 /// The first way `rows` differ from the documents a run's manifest lists, if any. The
 /// stage writes each document's paragraphs together, in the manifest's order, so a row
 /// count that matches can still hide a swapped or truncated document. Each row must
-/// also carry its document's title, source, capture date and withdrawal status, which
-/// `refs` reports.
-fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String> {
+/// carry its document's title, source URL and digest, capture date and withdrawal
+/// status. The document capture date must match the run's.
+fn manifest_difference(rows: &[RulingRow], documents: &[Json], run_date: &str) -> Option<String> {
     let held: Vec<&[RulingRow]> = rows.chunk_by(|a, b| a.docid == b.docid).collect();
     // The stage refuses a repeated target, so a document's rows never come in 2 groups.
-    for (index, group) in held.iter().enumerate() {
-        if held[..index]
-            .iter()
-            .any(|earlier| earlier[0].docid == group[0].docid)
-        {
+    let mut seen = BTreeSet::new();
+    for group in &held {
+        if !seen.insert(canonical_docid(&group[0].docid)) {
             return Some(format!(
                 "rulings.jsonl holds {} in 2 places, but the stage writes a document's paragraphs together",
                 group[0].docid
@@ -775,10 +787,12 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String>
                 "manifest.json lists a document without a docid and paragraph count".into(),
             );
         };
-        // A document with no paragraphs has no rows to compare.
-        if *count != Json::Int(0.into()) {
-            listed.push((docid, count, document));
+        if *count == Json::Int(0.into()) {
+            return Some(format!(
+                "manifest.json lists {docid} without any paragraphs"
+            ));
         }
+        listed.push((docid, count, document));
     }
     for index in 0..held.len().max(listed.len()) {
         match (listed.get(index), held.get(index)) {
@@ -800,6 +814,7 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String>
                     let fields = [
                         ("title", &row.title),
                         ("source_url", &row.source_url),
+                        ("sha256", &row.source_sha256),
                         ("fetched_on", &row.fetched_on),
                         ("withdrawal_status", &row.withdrawal_status),
                     ];
@@ -814,6 +829,11 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json]) -> Option<String>
                             ));
                         }
                     }
+                }
+                if document.get("fetched_on").and_then(Json::as_str) != Some(run_date) {
+                    return Some(format!(
+                        "manifest.json's record of {docid} has a different capture date from the run"
+                    ));
                 }
             }
             (Some((docid, _, _)), None) => {
@@ -974,20 +994,23 @@ pub fn build_with_rulings(
     crate::pyos::unlink(&temporary)?;
     // A document excluded by one run but captured by another is indexed, and one
     // excluded by several runs is one document.
-    let mut excluded: Vec<&str> = runs
+    let captured: BTreeSet<_> = runs
         .iter()
-        .flat_map(|run| run.excluded.iter().map(String::as_str))
-        .filter(|docid| {
-            !runs
-                .iter()
-                .any(|run| run.rows.iter().any(|row| row.docid == *docid))
-        })
+        .flat_map(|run| &run.rows)
+        .map(|row| canonical_docid(&row.docid))
         .collect();
-    excluded.sort_unstable();
-    excluded.dedup();
+    let excluded: BTreeSet<_> = runs
+        .iter()
+        .flat_map(|run| &run.excluded)
+        .map(|docid| canonical_docid(docid))
+        .collect();
     Ok((
         [read.len(), counts.rows, counts.definitions, counts.refs],
-        [counts.ruling_paragraphs, counts.ruling_refs, excluded.len()],
+        [
+            counts.ruling_paragraphs,
+            counts.ruling_refs,
+            excluded.difference(&captured).count(),
+        ],
     ))
 }
 
@@ -1008,11 +1031,11 @@ fn insert_rulings(
     names: &[(pyvalue::Key, Option<String>)],
     counts: &mut Counts,
 ) -> Result<(), Exc> {
-    let withdrawn: BTreeSet<&str> = runs
+    let withdrawn: BTreeSet<_> = runs
         .iter()
         .flat_map(|run| &run.rows)
         .filter(|row| row.withdrawal_status == "NOTICE_PRESENT")
-        .map(|row| row.docid.as_str())
+        .map(|row| canonical_docid(&row.docid))
         .collect();
     for (number, capture) in runs.iter().enumerate() {
         let number = number as i64 + 1;
@@ -1023,7 +1046,7 @@ fn insert_rulings(
         )
         .map_err(|e| sqlite_error(&e))?;
         for row in &capture.rows {
-            let status = if withdrawn.contains(row.docid.as_str()) {
+            let status = if withdrawn.contains(&canonical_docid(&row.docid)) {
                 "NOTICE_PRESENT"
             } else {
                 "UNKNOWN"
@@ -1069,7 +1092,8 @@ fn write_index(
     connection
         .execute_batch(SCHEMA_SQL)
         .map_err(|e| sqlite_error(&e))?;
-    if !runs.is_empty() {
+    let holds_rulings = runs.iter().any(|run| !run.rows.is_empty());
+    if holds_rulings {
         connection
             .execute_batch(RULINGS_SQL)
             .map_err(|e| sqlite_error(&e))?;
@@ -1112,7 +1136,9 @@ fn write_index(
                 insert_row(&connection, &entry.rid, row, place, names, &mut counts)?;
             }
         }
-        insert_rulings(&connection, runs, names, &mut counts)?;
+        if holds_rulings {
+            insert_rulings(&connection, runs, names, &mut counts)?;
+        }
         let mut meta = vec![
             ("schema".to_string(), Json::str(SCHEMA)),
             (
@@ -1132,7 +1158,7 @@ fn write_index(
         ] {
             meta.push((format!("{name}_count"), Json::str(&value.to_string())));
         }
-        if !runs.is_empty() {
+        if holds_rulings {
             for (name, value) in [
                 ("ruling_paragraphs", counts.ruling_paragraphs),
                 ("ruling_refs", counts.ruling_refs),
