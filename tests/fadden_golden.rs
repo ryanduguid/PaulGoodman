@@ -7,6 +7,8 @@
 //! is fabricated. For each case the binary must exit as Python did, print what
 //! Python printed (the last line of a traceback where Python printed one), and
 //! leave every file with the recorded SHA-256 of its normalised text.
+//! The finalize fixtures refresh the shipped http_fetch.py digest for the
+//! PaulGoodman contact URL.
 //!
 //! Outputs are normalised as the harness normalised them: the case directory
 //! reads `ROOT`, the module directory `MODULE`, generated stage, backup and
