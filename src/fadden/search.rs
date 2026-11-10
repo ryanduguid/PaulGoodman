@@ -672,61 +672,89 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             continue;
         }
         let place = format!("{dir}/rulings.jsonl:{}", number + 1);
-        let row =
-            pyjson::loads_standard(line).map_err(|_| refused(format!("{place} is not JSON")))?;
-        let field = |key: &str| row.get(key).and_then(Json::as_str).map(str::to_string);
-        let fields = [
-            "docid",
-            "title",
-            "paragraph",
-            "text",
-            "source_url",
-            "source_sha256",
-            "fetched_on",
-            "licence_basis",
-            "withdrawal_status",
-        ]
-        .map(field);
-        let [
-            Some(docid),
-            Some(title),
-            Some(paragraph),
-            Some(text),
-            Some(source_url),
-            Some(source_sha256),
-            Some(fetched_on),
-            Some(basis),
-            Some(withdrawal_status),
-        ] = fields
-        else {
-            return Err(refused(format!("{place} is not a rulings row")));
-        };
-        if !LICENCE_BASES.contains(&basis.as_str()) {
-            return Err(refused(format!(
-                "{place} has no licence basis the rulings stage writes"
-            )));
-        }
-        if !matches!(withdrawal_status.as_str(), "UNKNOWN" | "NOTICE_PRESENT") {
-            return Err(refused(format!(
-                "{place} has no withdrawal status the rulings stage writes"
-            )));
-        }
-        if !as_at::is_date(&fetched_on) {
-            return Err(refused(format!(
-                "{place} has no capture date the rulings stage writes"
-            )));
-        }
-        rows.push(RulingRow {
-            docid,
-            title,
-            paragraph,
-            text,
-            source_url,
-            source_sha256,
-            fetched_on,
-            withdrawal_status,
-        });
+        rows.push(ruling_row(&place, line)?);
     }
+    let excluded = check_run_manifest(dir, &rows)?;
+    Ok(RulingsRun {
+        excluded,
+        rows,
+        rulings_sha256: hex(&data),
+        notice,
+    })
+}
+
+/// One line of `rulings.jsonl`, at `place`, as the stage writes it.
+fn ruling_row(place: &str, line: &str) -> Result<RulingRow, Exc> {
+    let row = pyjson::loads_standard(line).map_err(|_| refused(format!("{place} is not JSON")))?;
+    let field = |key: &str| row.get(key).and_then(Json::as_str).map(str::to_string);
+    let fields = [
+        "docid",
+        "title",
+        "paragraph",
+        "text",
+        "source_url",
+        "source_sha256",
+        "fetched_on",
+        "licence_basis",
+        "withdrawal_status",
+    ]
+    .map(field);
+    let [
+        Some(docid),
+        Some(title),
+        Some(paragraph),
+        Some(text),
+        Some(source_url),
+        Some(source_sha256),
+        Some(fetched_on),
+        Some(basis),
+        Some(withdrawal_status),
+    ] = fields
+    else {
+        return Err(refused(format!("{place} is not a rulings row")));
+    };
+    check_row_values(place, &basis, &withdrawal_status, &fetched_on)?;
+    Ok(RulingRow {
+        docid,
+        title,
+        paragraph,
+        text,
+        source_url,
+        source_sha256,
+        fetched_on,
+        withdrawal_status,
+    })
+}
+
+/// Refuse a row whose licence basis, withdrawal status or capture date the stage would
+/// not have written.
+fn check_row_values(
+    place: &str,
+    basis: &str,
+    withdrawal_status: &str,
+    fetched_on: &str,
+) -> Result<(), Exc> {
+    if !LICENCE_BASES.contains(&basis) {
+        return Err(refused(format!(
+            "{place} has no licence basis the rulings stage writes"
+        )));
+    }
+    if !matches!(withdrawal_status, "UNKNOWN" | "NOTICE_PRESENT") {
+        return Err(refused(format!(
+            "{place} has no withdrawal status the rulings stage writes"
+        )));
+    }
+    if !as_at::is_date(fetched_on) {
+        return Err(refused(format!(
+            "{place} has no capture date the rulings stage writes"
+        )));
+    }
+    Ok(())
+}
+
+/// Check the run's `manifest.json` against its `rows`, refusing a manifest the stage
+/// could not have written. Returns the docids it lists as excluded.
+fn check_run_manifest(dir: &str, rows: &[RulingRow]) -> Result<Vec<String>, Exc> {
     let manifest = std::str::from_utf8(&read_run_file(dir, "manifest.json")?)
         .ok()
         .and_then(|text| pyjson::loads_standard(text).ok())
@@ -755,14 +783,31 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             "{dir}: manifest.json is not the rulings stage's"
         )));
     };
-    // The stage either captures a target or excludes it, never both.
+    check_exclusions(dir, documents, &excluded)?;
+    // A short or padded rulings.jsonl would otherwise index as a whole run.
+    if *stated != Json::Int(rows.len().into()) {
+        return Err(refused(format!(
+            "{dir}: manifest.json counts {} rows but rulings.jsonl holds {}",
+            pyvalue::py_str(stated),
+            rows.len()
+        )));
+    }
+    if let Some(difference) = manifest_difference(rows, documents, run_date) {
+        return Err(refused(format!("{dir}: {difference}")));
+    }
+    Ok(excluded)
+}
+
+/// Refuse a manifest that both lists and excludes a document, or excludes one twice:
+/// the stage either captures a target or excludes it, never both.
+fn check_exclusions(dir: &str, documents: &[Json], excluded: &[String]) -> Result<(), Exc> {
     let listed: BTreeSet<_> = documents
         .iter()
         .filter_map(|document| document.get("docid").and_then(Json::as_str))
         .map(canonical_docid)
         .collect();
     let mut excluded_ids = BTreeSet::new();
-    for docid in &excluded {
+    for docid in excluded {
         let key = canonical_docid(docid);
         if listed.contains(&key) {
             return Err(refused(format!(
@@ -775,23 +820,7 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
             )));
         }
     }
-    // A short or padded rulings.jsonl would otherwise index as a whole run.
-    if *stated != Json::Int(rows.len().into()) {
-        return Err(refused(format!(
-            "{dir}: manifest.json counts {} rows but rulings.jsonl holds {}",
-            pyvalue::py_str(stated),
-            rows.len()
-        )));
-    }
-    if let Some(difference) = manifest_difference(&rows, documents, run_date) {
-        return Err(refused(format!("{dir}: {difference}")));
-    }
-    Ok(RulingsRun {
-        excluded,
-        rows,
-        rulings_sha256: hex(&data),
-        notice,
-    })
+    Ok(())
 }
 
 /// The first way `rows` differ from the documents a run's manifest lists, if any. The
@@ -801,15 +830,9 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
 /// status. The document capture date must match the run's.
 fn manifest_difference(rows: &[RulingRow], documents: &[Json], run_date: &str) -> Option<String> {
     let held: Vec<&[RulingRow]> = rows.chunk_by(|a, b| a.docid == b.docid).collect();
-    // The stage refuses a repeated target, so a document's rows never come in 2 groups.
-    let mut seen = BTreeSet::new();
-    for group in &held {
-        if !seen.insert(canonical_docid(&group[0].docid)) {
-            return Some(format!(
-                "rulings.jsonl holds {} in 2 places, but the stage writes a document's paragraphs together",
-                group[0].docid
-            ));
-        }
+    let repeated = repeated_document(&held);
+    if repeated.is_some() {
+        return repeated;
     }
     let mut listed = Vec::new();
     for document in documents {
@@ -829,43 +852,9 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json], run_date: &str) -
     for index in 0..held.len().max(listed.len()) {
         match (listed.get(index), held.get(index)) {
             (Some((docid, count, document)), Some(group)) => {
-                let row_docid = &group[0].docid;
-                if docid != row_docid {
-                    return Some(format!(
-                        "manifest.json lists {docid} where rulings.jsonl holds {row_docid}"
-                    ));
-                }
-                if **count != Json::Int(group.len().into()) {
-                    return Some(format!(
-                        "manifest.json counts {} paragraphs of {docid} but rulings.jsonl holds {}",
-                        pyvalue::py_str(count),
-                        group.len()
-                    ));
-                }
-                for row in *group {
-                    let fields = [
-                        ("title", &row.title),
-                        ("source_url", &row.source_url),
-                        ("sha256", &row.source_sha256),
-                        ("fetched_on", &row.fetched_on),
-                        ("withdrawal_status", &row.withdrawal_status),
-                    ];
-                    for (key, value) in fields {
-                        let Some(recorded) = document.get(key) else {
-                            return Some(format!("manifest.json's record of {docid} has no {key}"));
-                        };
-                        if recorded.as_str() != Some(value.as_str()) {
-                            return Some(format!(
-                                "rulings.jsonl gives paragraph {} of {docid} a {key} its manifest.json record does not",
-                                row.paragraph
-                            ));
-                        }
-                    }
-                }
-                if document.get("fetched_on").and_then(Json::as_str) != Some(run_date) {
-                    return Some(format!(
-                        "manifest.json's record of {docid} has a different capture date from the run"
-                    ));
+                let difference = document_difference(docid, count, document, group, run_date);
+                if difference.is_some() {
+                    return difference;
                 }
             }
             (Some((docid, _, _)), None) => {
@@ -881,6 +870,71 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json], run_date: &str) -
             }
             (None, None) => {}
         }
+    }
+    None
+}
+
+/// The first document whose rows come in 2 groups, if any. The stage refuses a repeated
+/// target, so a document's rows never do.
+fn repeated_document(held: &[&[RulingRow]]) -> Option<String> {
+    let mut seen = BTreeSet::new();
+    for group in held {
+        if !seen.insert(canonical_docid(&group[0].docid)) {
+            return Some(format!(
+                "rulings.jsonl holds {} in 2 places, but the stage writes a document's paragraphs together",
+                group[0].docid
+            ));
+        }
+    }
+    None
+}
+
+/// The first way the `group` of rows in one document's place differs from the
+/// `document` the manifest lists there with `docid` and paragraph `count`, if any.
+fn document_difference(
+    docid: &str,
+    count: &Json,
+    document: &Json,
+    group: &[RulingRow],
+    run_date: &str,
+) -> Option<String> {
+    let row_docid = &group[0].docid;
+    if docid != row_docid {
+        return Some(format!(
+            "manifest.json lists {docid} where rulings.jsonl holds {row_docid}"
+        ));
+    }
+    if *count != Json::Int(group.len().into()) {
+        return Some(format!(
+            "manifest.json counts {} paragraphs of {docid} but rulings.jsonl holds {}",
+            pyvalue::py_str(count),
+            group.len()
+        ));
+    }
+    for row in group {
+        let fields = [
+            ("title", &row.title),
+            ("source_url", &row.source_url),
+            ("sha256", &row.source_sha256),
+            ("fetched_on", &row.fetched_on),
+            ("withdrawal_status", &row.withdrawal_status),
+        ];
+        for (key, value) in fields {
+            let Some(recorded) = document.get(key) else {
+                return Some(format!("manifest.json's record of {docid} has no {key}"));
+            };
+            if recorded.as_str() != Some(value.as_str()) {
+                return Some(format!(
+                    "rulings.jsonl gives paragraph {} of {docid} a {key} its manifest.json record does not",
+                    row.paragraph
+                ));
+            }
+        }
+    }
+    if document.get("fetched_on").and_then(Json::as_str) != Some(run_date) {
+        return Some(format!(
+            "manifest.json's record of {docid} has a different capture date from the run"
+        ));
     }
     None
 }
@@ -1000,6 +1054,25 @@ pub fn build_with_rulings(
             None => names.push((key, Some(entry.rid.clone()))),
         }
     }
+    let counts = publish(&destination, |temporary| {
+        write_index(temporary, &read, &sources, &sources_bytes, &names, &runs)
+    })?;
+    Ok((
+        [read.len(), counts.rows, counts.definitions, counts.refs],
+        [
+            counts.ruling_paragraphs,
+            counts.ruling_refs,
+            uncaptured_exclusions(&runs),
+        ],
+    ))
+}
+
+/// Write the index with `write` to a temporary file beside `destination`, then link it
+/// there.
+fn publish(
+    destination: &PyPath,
+    write: impl FnOnce(&str) -> Result<Counts, Exc>,
+) -> Result<Counts, Exc> {
     let temporary = destination
         .parent()
         .join(&format!(
@@ -1008,7 +1081,7 @@ pub fn build_with_rulings(
             crate::pyos::random_hex(32)
         ))
         .display();
-    let result = write_index(&temporary, &read, &sources, &sources_bytes, &names, &runs);
+    let result = write(&temporary);
     let cleanup = |path: &str| {
         let _ = std::fs::remove_file(path);
     };
@@ -1024,8 +1097,13 @@ pub fn build_with_rulings(
         return Err(Exc::Os(error));
     }
     crate::pyos::unlink(&temporary)?;
-    // A document excluded by one run but captured by another is indexed, and one
-    // excluded by several runs is one document.
+    Ok(counts)
+}
+
+/// The distinct documents the runs' manifests list as excluded that no run holds. A
+/// document excluded by one run but captured by another is indexed, and one excluded by
+/// several runs is one document.
+fn uncaptured_exclusions(runs: &[RulingsRun]) -> usize {
     let captured: BTreeSet<_> = runs
         .iter()
         .flat_map(|run| &run.rows)
@@ -1036,14 +1114,7 @@ pub fn build_with_rulings(
         .flat_map(|run| &run.excluded)
         .map(|docid| canonical_docid(docid))
         .collect();
-    Ok((
-        [read.len(), counts.rows, counts.definitions, counts.refs],
-        [
-            counts.ruling_paragraphs,
-            counts.ruling_refs,
-            excluded.difference(&captured).count(),
-        ],
-    ))
+    excluded.difference(&captured).count()
 }
 
 /// The register ID a cited name stands for, if exactly one title has it.
@@ -1084,30 +1155,43 @@ fn insert_rulings(
                 "UNKNOWN"
             };
             counts.ruling_paragraphs += 1;
-            for (kind, key, act, citation, end) in citations(&row.text) {
-                let target = cited_title(&row.text, end, act.as_deref(), None, |n| named(names, n));
-                run(
-                    connection,
-                    "INSERT INTO ruling_refs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    rusqlite::params![
-                        number,
-                        row.docid,
-                        row.title,
-                        row.paragraph,
-                        row.source_url,
-                        row.fetched_on,
-                        status,
-                        kind,
-                        target,
-                        key,
-                        act,
-                        citation
-                    ],
-                )
-                .map_err(|e| sqlite_error(&e))?;
-                counts.ruling_refs += 1;
-            }
+            insert_ruling_refs(connection, number, row, status, names, counts)?;
         }
+    }
+    Ok(())
+}
+
+/// Store the section references in one paragraph of run `number`.
+fn insert_ruling_refs(
+    connection: &Connection,
+    number: i64,
+    row: &RulingRow,
+    status: &str,
+    names: &[(pyvalue::Key, Option<String>)],
+    counts: &mut Counts,
+) -> Result<(), Exc> {
+    for (kind, key, act, citation, end) in citations(&row.text) {
+        let target = cited_title(&row.text, end, act.as_deref(), None, |n| named(names, n));
+        run(
+            connection,
+            "INSERT INTO ruling_refs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                number,
+                row.docid,
+                row.title,
+                row.paragraph,
+                row.source_url,
+                row.fetched_on,
+                status,
+                kind,
+                target,
+                key,
+                act,
+                citation
+            ],
+        )
+        .map_err(|e| sqlite_error(&e))?;
+        counts.ruling_refs += 1;
     }
     Ok(())
 }
