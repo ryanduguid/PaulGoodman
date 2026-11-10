@@ -1436,11 +1436,12 @@ def capture_register_run(
 
     prefix = f".{output.name}.register-capture-"
     staging = output.parent / f"{prefix}{uuid.uuid4().hex}.tmp"
-    created = False
+    try:
+        os.mkdir(staging, 0o700)
+    except OSError as exc:
+        raise CaptureRegisterError("capture output could not be written.") from exc
     try:
         try:
-            os.mkdir(staging, 0o700)
-            created = True
             evidence_directory = staging / "evidence"
             os.mkdir(evidence_directory, 0o700)
             _write_new(staging / "monitor-baseline.json", baseline_content)
@@ -1461,8 +1462,7 @@ def capture_register_run(
             raise CaptureRegisterError("capture output could not be promoted.") from exc
     finally:
         # Only a staging directory this run created is its to remove.
-        if created:
-            _remove_owned_staging(staging, parent=output.parent, prefix=prefix)
+        _remove_owned_staging(staging, parent=output.parent, prefix=prefix)
 
     return {
         "baseline": output / "monitor-baseline.json",
