@@ -55,6 +55,12 @@ cross-system contract test in `tests/corpus/test_monitor_contract.py`.
 Python stages the `fadden` binary replaced, on Windows and Linux, with what Python printed
 and wrote. A failure there is a departure from the Python behaviour, not a stale fixture;
 regenerate fixtures only with the port's differential harness against the base revision.
+Search schema 4's deliberate format additions use `search-indexes.json`: original
+Python inputs replayed by that harness and checked against the original schema-2
+hashes before export. The logical oracle preserves original data and FTS postings,
+adds independently generated native SQLite Porter postings and permits only the
+documented version and captured-window column changes. Other file hashes remain
+frozen. Search query usage also includes the new `--stem` flag.
 
 No Python search stage remains, so the search cases were edited by hand where search
 changed: #284 (0ee6bc4) re-recorded index digests and usage text, and 17f1d15 added the
