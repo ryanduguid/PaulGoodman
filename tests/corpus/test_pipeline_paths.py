@@ -43,6 +43,25 @@ class BuilderLayoutTests(TemporaryDirectoryTestCase):
     def test_a_root_without_markdown_has_no_unlisted_titles(self) -> None:
         self.assertIsNone(corpus_paths.refuse_unlisted_titles(self.base, set()))
 
+    def test_only_unlisted_nondot_entries_are_refused_and_left_in_place(self) -> None:
+        markdown = self.base / "markdown"
+        markdown.mkdir()
+        (markdown / RID).mkdir()
+        (markdown / ".cache").mkdir()
+        corpus_paths.refuse_unlisted_titles(self.base, {RID})
+
+        stale = markdown / "C2099A00002"
+        stale.write_text("stale title", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, stale.name):
+            corpus_paths.refuse_unlisted_titles(self.base, {RID})
+        self.assertEqual(stale.read_text(encoding="utf-8"), "stale title")
+
+    def test_metadata_is_one_literal_markdown_line(self) -> None:
+        self.assertEqual(
+            corpus_paths.markdown_text("Croft Manor [draft]\r\n*Title*"),
+            r"Croft Manor \[draft\] \*Title\*",
+        )
+
 
 class AtomicTextWriterTests(TemporaryDirectoryTestCase):
     def test_a_colliding_staging_name_is_skipped(self) -> None:
