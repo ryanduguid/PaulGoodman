@@ -189,7 +189,7 @@ fn a_draft_is_checked_end_to_end_against_one_build() {
     assert_eq!(item["nearest"], json!(["3"]));
 
     // The gate's closed list from the same build: the draft's authorities in the form
-    // the gate reads are each on it. The gate itself runs in llm-tax-guardrails.
+    // the gate reads are each on it. The gate itself runs in DrDebits.
     let jsonl = format!("{run}/rulings.jsonl");
     let (code, _) = fadden(
         cwd,
