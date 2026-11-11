@@ -6,7 +6,7 @@ The repository releases the build code. A GitHub release must never be described
 
 The one exception is a corpus snapshot: an archive holding only a `dist/` tree built by `python -m fadden dist` may be published as a data asset in its own release, tagged `corpus-<retrieval date>`, never in a `v*` builder release (that workflow publishes the builder's assets and the verification below expects only those). Its notes may state the date its compilations were checked against the Register and that `dist_verify` passed, and nothing stronger. It may be published when all of these hold:
 
-- The archive is made from the folder holding `dist/`, with fixed modes, owner and times, so the same tree always gives the same bytes:
+- The archive is made from the folder holding `dist/`, with fixed modes, owner and times, so the same tree gives the same bytes under the same GNU tar (1.28 or later, for `--sort`) and GNU gzip:
 
   ```bash
   tar --sort=name --mtime='<retrieval date> 00:00:00Z' --owner=0 --group=0 --numeric-owner \
