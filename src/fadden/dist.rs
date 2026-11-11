@@ -1215,6 +1215,17 @@ pub(super) const README_SECTIONS: [(&str, &str); 3] = [
     ),
 ];
 
+/// The first lines of finalize's README and LICENCE-NOTICE.md.
+pub(super) const README_TITLE: &str = "# Commonwealth tax legislation knowledge base\n";
+pub(super) const NOTICE_TITLE: &str = "# Licence notice\n";
+
+/// sources.json's `licence_note` for a distribution: finalize's describes the
+/// EPUBs under `epub/`, which dist leaves out.
+const DIST_LICENCE_NOTE: &str = "Excludes the Commonwealth Coat of Arms and any third-party material. \
+     This distribution holds no EPUBs and no images; the markdown omits the Coat of Arms. Authorised versions \
+     are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view \
+     the markdown was converted from is NOT the authorised text.";
+
 /// The same for finalize's LICENCE-NOTICE.md.
 pub(super) const NOTICE_SECTIONS: [(&str, &str); 2] = [
     ("## Attribution for the raw EPUBs under `epub/`", ""),
@@ -1229,26 +1240,40 @@ pub(super) const NOTICE_SECTIONS: [(&str, &str); 2] = [
 ];
 
 /// Replace the section headed `heading`, up to the next `## ` heading or the
-/// end, with `replacement`. Text without that heading comes back unchanged.
-fn replace_section(text: &str, heading: &str, replacement: &str) -> String {
-    let Some(at) = text.find(&format!("\n{heading}\n")) else {
-        return text.to_string();
-    };
-    let start = at + 1;
+/// end, with `replacement`; `None` when the text has no such heading.
+fn replace_section(text: &str, heading: &str, replacement: &str) -> Option<String> {
+    let start = text.find(&format!("\n{heading}\n"))? + 1;
     let body = start + heading.len();
     let end = text[body..]
         .find("\n## ")
         .map_or(text.len(), |i| body + i + 1);
-    format!("{}{replacement}{}", &text[..start], &text[end..])
+    Some(format!("{}{replacement}{}", &text[..start], &text[end..]))
 }
 
-/// Every section in `sections` replaced in turn.
-fn replace_sections(text: &str, sections: &[(&str, &str)]) -> String {
-    sections
-        .iter()
-        .fold(text.to_string(), |text, (heading, replacement)| {
-            replace_section(&text, heading, replacement)
-        })
+/// Every section in `sections` replaced in turn. A `file` that opens with
+/// finalize's `title` must hold each heading, or it would ship text about
+/// files dist leaves out. Other text, such as the golden cases' stand-ins, has
+/// none of them and is kept as Python kept it.
+fn replace_sections(
+    text: &str,
+    title: &str,
+    sections: &[(&str, &str)],
+    file: &str,
+) -> Result<String, Exc> {
+    let mut text = text.to_string();
+    for (heading, replacement) in sections {
+        match replace_section(&text, heading, replacement) {
+            Some(replaced) => text = replaced,
+            None if text.starts_with(title) => {
+                return Err(Exc::Runtime(format!(
+                    "{file} opens as finalize writes it but has no `{heading}` section; \
+                     rerun finalize with this fadden, then dist"
+                )));
+            }
+            None => {}
+        }
+    }
+    Ok(text)
 }
 
 /// Python `re.sub(pattern, replacement, text, count=1, flags=re.M)` with a
@@ -1591,6 +1616,9 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         "excluded_titles",
         Json::Array(excluded.into_iter().map(|(_, e)| e).collect()),
     );
+    if get(&src, "licence_note")?.is_some() {
+        set(&mut out, "licence_note", Json::str(DIST_LICENCE_NOTE));
+    }
     dump_json(&child(staging, &["sources.json"])?, &out)?;
 
     let licence_src = child(&paths.root, &["LICENCE-NOTICE.md"])?;
@@ -1600,7 +1628,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     // notice describing the EPUBs is rewritten, since none ship here.
     copyfile(&licence_src, &licence_dst, &py::repr_str(&licence_src))?;
     let notice = crate::pyio::read_text(&licence_dst)?;
-    let rewritten = replace_sections(&notice, &NOTICE_SECTIONS);
+    let rewritten = replace_sections(&notice, NOTICE_TITLE, &NOTICE_SECTIONS, "LICENCE-NOTICE.md")?;
     if rewritten != notice {
         write_text(&licence_dst, &pts(&rewritten))?;
     }
@@ -1699,7 +1727,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         &rd,
     );
     rd = replace_readme_table_block_paragraph(&rd, table_block);
-    rd = replace_sections(&rd, &README_SECTIONS);
+    rd = replace_sections(&rd, README_TITLE, &README_SECTIONS, "README.md")?;
     rd = format!(
         "> **This is the redistributable subset.** The EPUBs, {} titles that name private individuals and {} \
          accounting standards under restrictive copyright notices are not included. See REMOVED.md for what \

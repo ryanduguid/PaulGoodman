@@ -1963,6 +1963,71 @@ fn the_distribution_describes_only_what_it_ships() {
     assert_eq!(verify(&f).0, 0);
 }
 
+/// finalize's sources.json note describes EPUBs under `epub/`; dist ships none.
+#[test]
+fn the_distributed_licence_note_describes_no_epubs() {
+    let f = fixture();
+    let path = f.root.join("sources.json");
+    let mut sources = read_json(&path);
+    sources["licence_note"] = json!(
+        "Excludes the Coat of Arms. The EPUBs under epub/ embed the Coat of Arms as an image."
+    );
+    write(&path, &sources.to_string());
+    let shipped = read_json(&publish(&f).join("sources.json"));
+    let note = shipped["licence_note"].as_str().unwrap();
+    assert!(!note.contains("epub/"), "{note}");
+    assert!(note.contains("This distribution holds no EPUBs"), "{note}");
+}
+
+/// A README or notice that opens as finalize writes it must hold every section
+/// dist rewrites; without one, dist would ship text about files it leaves out.
+#[test]
+fn a_finalized_file_missing_a_rewritten_section_stops_dist() {
+    // Each file is otherwise publishable, so only the missing section stops it.
+    let readme = std::fs::read_to_string(fixture().root.join("README.md")).unwrap();
+    let cases = [
+        (
+            "README.md",
+            format!(
+                "# Commonwealth tax legislation knowledge base\n\n{readme}\n\
+                 ## Checking staleness\n\nRun check_current.py.\n\n\
+                 ## Licence and attribution\n\nThe EPUBs are unchanged.\n"
+            ),
+            "`## Build record`",
+        ),
+        (
+            "LICENCE-NOTICE.md",
+            "# Licence notice\n\nCC BY 4.0.\n\n## Not covered by CC BY\n\n\
+             The EPUBs under `epub/` embed the Coat of Arms.\n"
+                .to_string(),
+            "`## Attribution for the raw EPUBs under `epub/``",
+        ),
+    ];
+    // Both cases run before any assertion, so each shows its own outcome.
+    let outcomes: Vec<_> = cases
+        .iter()
+        .map(|(file, text, heading)| {
+            let f = fixture();
+            let marker = with_existing_dist(&f);
+            write(&f.root.join(file), text);
+            let (code, _, err) = stage(&f, "dist");
+            // A dist that succeeds replaces the old tree, marker and all.
+            let kept = std::fs::read_to_string(&marker).is_ok_and(|t| t == "keep me")
+                && managed_paths(&f).is_empty();
+            (
+                *file,
+                code,
+                err.contains(file) && err.contains(heading),
+                kept,
+                err,
+            )
+        })
+        .collect();
+    for (file, code, named, kept, err) in &outcomes {
+        assert_eq!((*code, *named, *kept), (1, true, true), "{file}\n{err}");
+    }
+}
+
 /// The allowlist size is not a count of contacts found in these titles.
 #[test]
 fn removed_md_names_the_contact_count_as_the_allowlist_size() {

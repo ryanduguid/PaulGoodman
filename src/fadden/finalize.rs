@@ -1769,6 +1769,8 @@ mod tests {
     fn the_rewritten_readme_text_is_in_the_template() {
         assert!(README.contains(KEYWORD_SCOPE));
         assert!(README.contains(KEYWORD_LIMITS));
+        assert!(README.starts_with(super::super::dist::README_TITLE));
+        assert!(LICENCE_NOTICE.starts_with(super::super::dist::NOTICE_TITLE));
         for (heading, _) in super::super::dist::README_SECTIONS {
             assert!(README.contains(&format!("\n{heading}\n")), "{heading}");
         }

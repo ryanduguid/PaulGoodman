@@ -42,10 +42,13 @@
 //! reach the script. How hard can it be? (Top Gear)
 //!
 //! 2 wording fixes depart from Python on purpose, and `departed` maps each
-//! back to Python's text before hashing, so every other byte stays frozen:
-//! finalize's README says "about 1 minute" where Python said "1 minutes", and
-//! dist's REMOVED.md names the contact allowlist's size as that, where Python
-//! called it the contacts the second pass approved.
+//! back to Python's text before hashing: finalize's README says "about 1
+//! minute" where Python said "1 minutes", and dist's REMOVED.md names the
+//! contact allowlist's size as that, where Python called it the contacts the
+//! second pass approved. dist's other departures never reach these cases: its
+//! README and LICENCE-NOTICE.md section rewrites and its `licence_note` apply
+//! only to finalize's headings and field, which no dist input holds, so those
+//! are covered by tests/fadden_dist.rs alone.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
