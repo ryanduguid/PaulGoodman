@@ -62,6 +62,10 @@ adds independently generated native SQLite Porter postings and permits only the
 documented version and captured-window column changes. Other file hashes remain
 frozen. Search query usage also includes the new `--stem` flag.
 
+No Python search stage remains, so the search cases were edited by hand where search
+changed: #284 (0ee6bc4) re-recorded index digests and usage text, and 17f1d15 added the
+`refs` line saying an index holds no rulings.
+
 The fenced list records the unique single-line commands. The multiline binary-smoke gate
 is reproduced exactly in the next section.
 ```bash

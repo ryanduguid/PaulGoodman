@@ -24,6 +24,7 @@ use unicode_normalization::UnicodeNormalization;
 use super::as_at;
 use super::corpus_paths::{child, register_id, register_id_str};
 use super::quotes::{self, Quotation};
+use super::rulings::canonical_docid;
 use super::{Exc, Run};
 use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyjson::{self, Json, PyStr};
@@ -607,6 +608,337 @@ CREATE INDEX refs_to ON refs (to_register_id, kind, to_key);
 CREATE INDEX refs_from ON refs (from_row_id);
 ";
 
+/// Written only when `build` is given a rulings run, so an index without rulings is
+/// byte for byte what it was. A reader checks for `ruling_refs` before using it.
+const RULINGS_SQL: &str = "
+CREATE TABLE ruling_runs (run INTEGER PRIMARY KEY, rulings_sha256 TEXT NOT NULL,
+  licence_notice TEXT NOT NULL);
+CREATE TABLE ruling_refs (
+  run INTEGER NOT NULL REFERENCES ruling_runs, docid TEXT NOT NULL, title TEXT NOT NULL,
+  paragraph TEXT NOT NULL, source_url TEXT NOT NULL, fetched_on TEXT NOT NULL,
+  withdrawal_status TEXT NOT NULL, kind TEXT NOT NULL, to_register_id TEXT,
+  to_key TEXT NOT NULL, cited_act TEXT, citation TEXT NOT NULL);
+CREATE INDEX ruling_refs_to ON ruling_refs (to_register_id, kind, to_key);
+";
+
+/// The values of `licence_basis` the `rulings` stage writes.
+const LICENCE_BASES: [&str; 2] = ["document-notice", "site-notice-via-dc-rights"];
+
+/// One paragraph of a `rulings` run, as `build` keeps it.
+struct RulingRow {
+    docid: String,
+    title: String,
+    paragraph: String,
+    text: String,
+    source_url: String,
+    source_sha256: String,
+    fetched_on: String,
+    withdrawal_status: String,
+}
+
+/// A `rulings` run directory: its rows, the digest of its `rulings.jsonl` and its
+/// `LICENCE-NOTICE.md`, which the index keeps with the rows, and the docids its manifest
+/// says the stage excluded.
+struct RulingsRun {
+    rows: Vec<RulingRow>,
+    rulings_sha256: String,
+    notice: String,
+    excluded: Vec<String>,
+}
+
+fn read_run_file(dir: &str, name: &str) -> Result<Vec<u8>, Exc> {
+    let path = child(dir, &[name])?;
+    let unreadable = |e: OsError| refused(format!("{dir}: cannot read {name} ({})", strerror(&e)));
+    read_all(crate::pyio::open(&path).map_err(unreadable)?, &path).map_err(unreadable)
+}
+
+/// Read a `rulings` run directory, refusing anything the stage could not have written.
+/// The licence notice must be present and carry the ATO's reuse sentence.
+fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
+    let notice = String::from_utf8(read_run_file(dir, "LICENCE-NOTICE.md")?)
+        .ok()
+        .filter(|text| text.contains(super::rulings::NOTICE))
+        .ok_or_else(|| {
+            refused(format!(
+                "{dir}: LICENCE-NOTICE.md is not the rulings stage's"
+            ))
+        })?;
+    let data = read_run_file(dir, "rulings.jsonl")?;
+    let text = std::str::from_utf8(&data)
+        .map_err(|_| refused(format!("{dir}: rulings.jsonl is not UTF-8")))?;
+    let mut rows = Vec::new();
+    for (number, line) in crate::py::splitlines(text).into_iter().enumerate() {
+        if crate::py::strip(line).is_empty() {
+            continue;
+        }
+        let place = format!("{dir}/rulings.jsonl:{}", number + 1);
+        rows.push(ruling_row(&place, line)?);
+    }
+    let excluded = check_run_manifest(dir, &rows)?;
+    Ok(RulingsRun {
+        excluded,
+        rows,
+        rulings_sha256: hex(&data),
+        notice,
+    })
+}
+
+/// One line of `rulings.jsonl`, at `place`, as the stage writes it.
+fn ruling_row(place: &str, line: &str) -> Result<RulingRow, Exc> {
+    let row = pyjson::loads_standard(line).map_err(|_| refused(format!("{place} is not JSON")))?;
+    let field = |key: &str| row.get(key).and_then(Json::as_str).map(str::to_string);
+    let fields = [
+        "docid",
+        "title",
+        "paragraph",
+        "text",
+        "source_url",
+        "source_sha256",
+        "fetched_on",
+        "licence_basis",
+        "withdrawal_status",
+    ]
+    .map(field);
+    let [
+        Some(docid),
+        Some(title),
+        Some(paragraph),
+        Some(text),
+        Some(source_url),
+        Some(source_sha256),
+        Some(fetched_on),
+        Some(basis),
+        Some(withdrawal_status),
+    ] = fields
+    else {
+        return Err(refused(format!("{place} is not a rulings row")));
+    };
+    check_row_values(place, &basis, &withdrawal_status, &fetched_on)?;
+    Ok(RulingRow {
+        docid,
+        title,
+        paragraph,
+        text,
+        source_url,
+        source_sha256,
+        fetched_on,
+        withdrawal_status,
+    })
+}
+
+/// Refuse a row whose licence basis, withdrawal status or capture date the stage would
+/// not have written.
+fn check_row_values(
+    place: &str,
+    basis: &str,
+    withdrawal_status: &str,
+    fetched_on: &str,
+) -> Result<(), Exc> {
+    if !LICENCE_BASES.contains(&basis) {
+        return Err(refused(format!(
+            "{place} has no licence basis the rulings stage writes"
+        )));
+    }
+    if !matches!(withdrawal_status, "UNKNOWN" | "NOTICE_PRESENT") {
+        return Err(refused(format!(
+            "{place} has no withdrawal status the rulings stage writes"
+        )));
+    }
+    if !as_at::is_date(fetched_on) {
+        return Err(refused(format!(
+            "{place} has no capture date the rulings stage writes"
+        )));
+    }
+    Ok(())
+}
+
+/// Check the run's `manifest.json` against its `rows`, refusing a manifest the stage
+/// could not have written. Returns the docids it lists as excluded.
+fn check_run_manifest(dir: &str, rows: &[RulingRow]) -> Result<Vec<String>, Exc> {
+    let manifest = std::str::from_utf8(&read_run_file(dir, "manifest.json")?)
+        .ok()
+        .and_then(|text| pyjson::loads_standard(text).ok())
+        .filter(|manifest| manifest.get("stage") == Some(&Json::str("rulings")));
+    let member = |key: &str| manifest.as_ref().and_then(|m| m.get(key));
+    let excluded = match member("excluded") {
+        Some(Json::Array(entries)) => entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("docid")
+                    .and_then(Json::as_str)
+                    .filter(|docid| !docid.is_empty())
+                    .map(str::to_string)
+            })
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    let run_date = member("fetched_on")
+        .and_then(Json::as_str)
+        .filter(|date| as_at::is_date(date));
+    let (Some(stated @ Json::Int(_)), Some(excluded), Some(Json::Array(documents)), Some(run_date)) =
+        (member("rows"), excluded, member("documents"), run_date)
+    else {
+        return Err(refused(format!(
+            "{dir}: manifest.json is not the rulings stage's"
+        )));
+    };
+    check_exclusions(dir, documents, &excluded)?;
+    // A short or padded rulings.jsonl would otherwise index as a whole run.
+    if *stated != Json::Int(rows.len().into()) {
+        return Err(refused(format!(
+            "{dir}: manifest.json counts {} rows but rulings.jsonl holds {}",
+            pyvalue::py_str(stated),
+            rows.len()
+        )));
+    }
+    if let Some(difference) = manifest_difference(rows, documents, run_date) {
+        return Err(refused(format!("{dir}: {difference}")));
+    }
+    Ok(excluded)
+}
+
+/// Refuse a manifest that both lists and excludes a document, or excludes one twice:
+/// the stage either captures a target or excludes it, never both.
+fn check_exclusions(dir: &str, documents: &[Json], excluded: &[String]) -> Result<(), Exc> {
+    let listed: BTreeSet<_> = documents
+        .iter()
+        .filter_map(|document| document.get("docid").and_then(Json::as_str))
+        .map(canonical_docid)
+        .collect();
+    let mut excluded_ids = BTreeSet::new();
+    for docid in excluded {
+        let key = canonical_docid(docid);
+        if listed.contains(&key) {
+            return Err(refused(format!(
+                "{dir}: manifest.json both lists and excludes {docid}"
+            )));
+        }
+        if !excluded_ids.insert(key) {
+            return Err(refused(format!(
+                "{dir}: manifest.json excludes {docid} more than once"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The first way `rows` differ from the documents a run's manifest lists, if any. The
+/// stage writes each document's paragraphs together, in the manifest's order, so a row
+/// count that matches can still hide a swapped or truncated document. Each row must
+/// carry its document's title, source URL and digest, capture date and withdrawal
+/// status. The document capture date must match the run's.
+fn manifest_difference(rows: &[RulingRow], documents: &[Json], run_date: &str) -> Option<String> {
+    let held: Vec<&[RulingRow]> = rows.chunk_by(|a, b| a.docid == b.docid).collect();
+    let repeated = repeated_document(&held);
+    if repeated.is_some() {
+        return repeated;
+    }
+    let mut listed = Vec::new();
+    for document in documents {
+        let docid = document.get("docid").and_then(Json::as_str);
+        let (Some(docid), Some(count @ Json::Int(_))) = (docid, document.get("paragraphs")) else {
+            return Some(
+                "manifest.json lists a document without a docid and paragraph count".into(),
+            );
+        };
+        if *count == Json::Int(0.into()) {
+            return Some(format!(
+                "manifest.json lists {docid} without any paragraphs"
+            ));
+        }
+        listed.push((docid, count, document));
+    }
+    for index in 0..held.len().max(listed.len()) {
+        match (listed.get(index), held.get(index)) {
+            (Some((docid, count, document)), Some(group)) => {
+                let difference = document_difference(docid, count, document, group, run_date);
+                if difference.is_some() {
+                    return difference;
+                }
+            }
+            (Some((docid, _, _)), None) => {
+                return Some(format!(
+                    "manifest.json lists {docid}, which rulings.jsonl does not hold"
+                ));
+            }
+            (None, Some(group)) => {
+                return Some(format!(
+                    "rulings.jsonl holds {} after the last document manifest.json lists",
+                    group[0].docid
+                ));
+            }
+            (None, None) => {}
+        }
+    }
+    None
+}
+
+/// The first document whose rows come in 2 groups, if any. The stage refuses a repeated
+/// target, so a document's rows never do.
+fn repeated_document(held: &[&[RulingRow]]) -> Option<String> {
+    let mut seen = BTreeSet::new();
+    for group in held {
+        if !seen.insert(canonical_docid(&group[0].docid)) {
+            return Some(format!(
+                "rulings.jsonl holds {} in 2 places, but the stage writes a document's paragraphs together",
+                group[0].docid
+            ));
+        }
+    }
+    None
+}
+
+/// The first way the `group` of rows in one document's place differs from the
+/// `document` the manifest lists there with `docid` and paragraph `count`, if any.
+fn document_difference(
+    docid: &str,
+    count: &Json,
+    document: &Json,
+    group: &[RulingRow],
+    run_date: &str,
+) -> Option<String> {
+    let row_docid = &group[0].docid;
+    if docid != row_docid {
+        return Some(format!(
+            "manifest.json lists {docid} where rulings.jsonl holds {row_docid}"
+        ));
+    }
+    if *count != Json::Int(group.len().into()) {
+        return Some(format!(
+            "manifest.json counts {} paragraphs of {docid} but rulings.jsonl holds {}",
+            pyvalue::py_str(count),
+            group.len()
+        ));
+    }
+    for row in group {
+        let fields = [
+            ("title", &row.title),
+            ("source_url", &row.source_url),
+            ("sha256", &row.source_sha256),
+            ("fetched_on", &row.fetched_on),
+            ("withdrawal_status", &row.withdrawal_status),
+        ];
+        for (key, value) in fields {
+            let Some(recorded) = document.get(key) else {
+                return Some(format!("manifest.json's record of {docid} has no {key}"));
+            };
+            if recorded.as_str() != Some(value.as_str()) {
+                return Some(format!(
+                    "rulings.jsonl gives paragraph {} of {docid} a {key} its manifest.json record does not",
+                    row.paragraph
+                ));
+            }
+        }
+    }
+    if document.get("fetched_on").and_then(Json::as_str) != Some(run_date) {
+        return Some(format!(
+            "manifest.json's record of {docid} has a different capture date from the run"
+        ));
+    }
+    None
+}
+
 /// How `sqlite3` binds one parameter (1-based `index`).
 fn bind(value: &Json, index: usize) -> Result<Sql, Exc> {
     Ok(match value {
@@ -672,10 +1004,24 @@ struct Counts {
     rows: usize,
     definitions: usize,
     refs: usize,
+    ruling_paragraphs: usize,
+    ruling_refs: usize,
 }
 
 /// Check the corpus at `root` and write a new index file at `out`.
 pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
+    build_with_rulings(root, out, &[]).map(|(counts, _)| counts)
+}
+
+/// `build`, also reading the section references in each `rulings` run directory in
+/// `rulings`. Returns the corpus counts, then the ruling paragraphs read, the
+/// references stored and the distinct documents the runs' manifests list as excluded
+/// that no run holds.
+pub fn build_with_rulings(
+    root: &str,
+    out: &str,
+    rulings: &[String],
+) -> Result<([usize; 4], [usize; 3]), Exc> {
     let destination = PyPath::new(out);
     if std::fs::symlink_metadata(destination.fs()).is_ok() {
         return Err(refused("the index destination must not already exist"));
@@ -686,6 +1032,10 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
         ));
     }
     let (sources_bytes, sources, read) = read_corpus(root)?;
+    let runs = rulings
+        .iter()
+        .map(|dir| read_rulings_run(dir))
+        .collect::<Result<Vec<_>, _>>()?;
     // Two titles sharing a name leave a citation of that name unresolved.
     let mut names: Vec<(pyvalue::Key, Option<String>)> = Vec::new();
     for entry in &read {
@@ -704,6 +1054,25 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
             None => names.push((key, Some(entry.rid.clone()))),
         }
     }
+    let counts = publish(&destination, |temporary| {
+        write_index(temporary, &read, &sources, &sources_bytes, &names, &runs)
+    })?;
+    Ok((
+        [read.len(), counts.rows, counts.definitions, counts.refs],
+        [
+            counts.ruling_paragraphs,
+            counts.ruling_refs,
+            uncaptured_exclusions(&runs),
+        ],
+    ))
+}
+
+/// Write the index with `write` to a temporary file beside `destination`, then link it
+/// there.
+fn publish(
+    destination: &PyPath,
+    write: impl FnOnce(&str) -> Result<Counts, Exc>,
+) -> Result<Counts, Exc> {
     let temporary = destination
         .parent()
         .join(&format!(
@@ -712,7 +1081,7 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
             crate::pyos::random_hex(32)
         ))
         .display();
-    let result = write_index(&temporary, &read, &sources, &sources_bytes, &names);
+    let result = write(&temporary);
     let cleanup = |path: &str| {
         let _ = std::fs::remove_file(path);
     };
@@ -728,7 +1097,103 @@ pub fn build(root: &str, out: &str) -> Result<[usize; 4], Exc> {
         return Err(Exc::Os(error));
     }
     crate::pyos::unlink(&temporary)?;
-    Ok([read.len(), counts.rows, counts.definitions, counts.refs])
+    Ok(counts)
+}
+
+/// The distinct documents the runs' manifests list as excluded that no run holds. A
+/// document excluded by one run but captured by another is indexed, and one excluded by
+/// several runs is one document.
+fn uncaptured_exclusions(runs: &[RulingsRun]) -> usize {
+    let captured: BTreeSet<_> = runs
+        .iter()
+        .flat_map(|run| &run.rows)
+        .map(|row| canonical_docid(&row.docid))
+        .collect();
+    let excluded: BTreeSet<_> = runs
+        .iter()
+        .flat_map(|run| &run.excluded)
+        .map(|docid| canonical_docid(docid))
+        .collect();
+    excluded.difference(&captured).count()
+}
+
+/// The register ID a cited name stands for, if exactly one title has it.
+fn named(names: &[(pyvalue::Key, Option<String>)], name: &str) -> Option<String> {
+    names
+        .iter()
+        .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
+        .and_then(|(_, v)| v.clone())
+}
+
+/// Store each run and the section references in its paragraphs. A paragraph names no
+/// title of its own, so a bare citation stays unresolved. A document with a withdrawal
+/// notice in any run is stored as `NOTICE_PRESENT` in every run.
+fn insert_rulings(
+    connection: &Connection,
+    runs: &[RulingsRun],
+    names: &[(pyvalue::Key, Option<String>)],
+    counts: &mut Counts,
+) -> Result<(), Exc> {
+    let withdrawn: BTreeSet<_> = runs
+        .iter()
+        .flat_map(|run| &run.rows)
+        .filter(|row| row.withdrawal_status == "NOTICE_PRESENT")
+        .map(|row| canonical_docid(&row.docid))
+        .collect();
+    for (number, capture) in runs.iter().enumerate() {
+        let number = number as i64 + 1;
+        run(
+            connection,
+            "INSERT INTO ruling_runs VALUES (?,?,?)",
+            rusqlite::params![number, capture.rulings_sha256, capture.notice],
+        )
+        .map_err(|e| sqlite_error(&e))?;
+        for row in &capture.rows {
+            let status = if withdrawn.contains(&canonical_docid(&row.docid)) {
+                "NOTICE_PRESENT"
+            } else {
+                "UNKNOWN"
+            };
+            counts.ruling_paragraphs += 1;
+            insert_ruling_refs(connection, number, row, status, names, counts)?;
+        }
+    }
+    Ok(())
+}
+
+/// Store the section references in one paragraph of run `number`.
+fn insert_ruling_refs(
+    connection: &Connection,
+    number: i64,
+    row: &RulingRow,
+    status: &str,
+    names: &[(pyvalue::Key, Option<String>)],
+    counts: &mut Counts,
+) -> Result<(), Exc> {
+    for (kind, key, act, citation, end) in citations(&row.text) {
+        let target = cited_title(&row.text, end, act.as_deref(), None, |n| named(names, n));
+        run(
+            connection,
+            "INSERT INTO ruling_refs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            rusqlite::params![
+                number,
+                row.docid,
+                row.title,
+                row.paragraph,
+                row.source_url,
+                row.fetched_on,
+                status,
+                kind,
+                target,
+                key,
+                act,
+                citation
+            ],
+        )
+        .map_err(|e| sqlite_error(&e))?;
+        counts.ruling_refs += 1;
+    }
+    Ok(())
 }
 
 fn write_index(
@@ -737,11 +1202,18 @@ fn write_index(
     sources: &Json,
     sources_bytes: &[u8],
     names: &[(pyvalue::Key, Option<String>)],
+    runs: &[RulingsRun],
 ) -> Result<Counts, Exc> {
     let connection = Connection::open(temporary).map_err(|e| sqlite_error(&e))?;
     connection
         .execute_batch(SCHEMA_SQL)
         .map_err(|e| sqlite_error(&e))?;
+    let holds_rulings = runs.iter().any(|run| !run.rows.is_empty());
+    if holds_rulings {
+        connection
+            .execute_batch(RULINGS_SQL)
+            .map_err(|e| sqlite_error(&e))?;
+    }
     connection
         .execute_batch("BEGIN")
         .map_err(|e| sqlite_error(&e))?;
@@ -780,6 +1252,9 @@ fn write_index(
                 insert_row(&connection, &entry.rid, row, place, names, &mut counts)?;
             }
         }
+        if holds_rulings {
+            insert_rulings(&connection, runs, names, &mut counts)?;
+        }
         let mut meta = vec![
             ("schema".to_string(), Json::str(SCHEMA)),
             (
@@ -798,6 +1273,14 @@ fn write_index(
             ("refs", counts.refs),
         ] {
             meta.push((format!("{name}_count"), Json::str(&value.to_string())));
+        }
+        if holds_rulings {
+            for (name, value) in [
+                ("ruling_paragraphs", counts.ruling_paragraphs),
+                ("ruling_refs", counts.ruling_refs),
+            ] {
+                meta.push((format!("{name}_count"), Json::str(&value.to_string())));
+            }
         }
         for (key, value) in meta {
             run(
@@ -898,12 +1381,7 @@ fn insert_row(
             counts.definitions += 1;
         }
     }
-    let lookup = |name: &str| {
-        names
-            .iter()
-            .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
-            .and_then(|(_, v)| v.clone())
-    };
+    let lookup = |name: &str| named(names, name);
     for (kind, cited, act, citation, end) in citations(&text) {
         let target = cited_title(&text, end, act.as_deref(), Some(rid), lookup);
         run(
@@ -1520,7 +1998,7 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
     .into_iter()
     .map(object)
     .collect();
-    Ok(object(vec![
+    let mut report = vec![
         ("row_id".into(), Json::str(row_id)),
         ("register_id".into(), field(&row, "register_id").clone()),
         ("section".into(), field(&row, "section").clone()),
@@ -1529,7 +2007,31 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
         ("heading".into(), field(&row, "heading").clone()),
         ("cites".into(), Json::Array(outbound)),
         ("cited_by".into(), Json::Array(inbound)),
-    ]))
+    ];
+    if holds_rulings(connection)? {
+        let rulings = rows_of(
+            connection,
+            "SELECT DISTINCT docid, title, paragraph, withdrawal_status, fetched_on, \
+source_url, kind, citation FROM ruling_refs WHERE to_register_id = ? \
+AND ((kind = 'section' AND to_key = ?) OR (kind = 'division' AND to_key = ?) \
+OR (kind = 'subdivision' AND to_key = ?)) ORDER BY rowid",
+            &[
+                sql_value(field(&row, "register_id")),
+                sql_value(field(&row, "section_key")),
+                sql_value(field(&row, "division_key")),
+                sql_value(field(&row, "subdivision_key")),
+            ],
+        )?;
+        let rulings = rulings.into_iter().map(object).collect();
+        report.push(("cited_by_rulings".into(), Json::Array(rulings)));
+    }
+    Ok(object(report))
+}
+
+/// Whether the index was built with a rulings run.
+fn holds_rulings(connection: &Connection) -> Result<bool, Exc> {
+    let sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ruling_refs'";
+    Ok(!rows_of(connection, sql, &[])?.is_empty())
 }
 
 /// What `cite-check` calls a citation, in the order its summary lists them.
@@ -1603,16 +2105,32 @@ fn sentence_names_a_source(draft: &str, end: usize) -> bool {
         .any(|found| found.name("source").is_some())
 }
 
-const CITE_CHECK_NOTICE: &str = "A resolved citation names its Act and a provision this build holds. An \
+/// What a grade shows, in both `cite-check`'s and `quote`'s notices.
+macro_rules! grade_meaning {
+    () => {
+        "Exact and normalised show those words are in that row of this build, not that they \
+are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source."
+    };
+}
+
+const CITE_CHECK_NOTICE: &str = concat!(
+    "A resolved citation names its Act and a provision this build holds. An \
 assumed citation names no Act in its sentence, so it shows only that --title holds the \
 provision, not that the author meant that title. Neither shows \
 that the provision says what the draft claims or applied at any date. A quotation is read \
 only in quotation marks in the citation's sentence, and only against a resolved or assumed \
-section. Exact and normalised show those words are in that row of this build, not that they \
-are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source. Current and \
+section. ",
+    grade_meaning!(),
+    " Current and \
 superseded are this build's record from the Register, not a check today; a later amendment can \
 outdate them. Forms refs does \
-not read, such as s 8-1, are not counted.";
+not read, such as s 8-1, are not counted."
+);
+
+const QUOTE_NOTICE: &str = concat!(
+    grade_meaning!(),
+    " Partial and none are not matches. A section's row is compared whole, whatever subsection is quoted."
+);
 
 /// The register ID `title` gives, refused unless the index holds it.
 fn given_title(connection: &Connection, title: Option<&str>) -> Result<Option<String>, Exc> {
@@ -1716,6 +2234,42 @@ fn citation_outcome(
     }
 }
 
+/// A section label as it sorts: each hyphen-separated part by its number, then by
+/// the letters after it, so `8-5` comes before `8-10` and `82` before `82A`.
+fn label_order(key: &str) -> Vec<(usize, String, String)> {
+    key.split('-')
+        .map(|part| {
+            let digits = part.len() - part.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            let number = part[..digits].trim_start_matches('0');
+            (number.len(), number.to_string(), part[digits..].to_string())
+        })
+        .collect()
+}
+
+/// The sections `rid` holds either side of `key`, which it does not hold: the nearest
+/// valid range, to show a mistyped number. Neither is a guess at what the author meant.
+fn nearest_sections(connection: &Connection, rid: &str, key: &str) -> Result<Vec<Json>, Exc> {
+    let sql =
+        "SELECT DISTINCT section_key FROM rows WHERE register_id = ? AND section_key IS NOT NULL";
+    let target = label_order(key);
+    let found = rows_of(connection, sql, &[Sql::Text(rid.to_string())])?;
+    let held = found
+        .iter()
+        .map(|row| field(row, "section_key").as_str().unwrap_or_default());
+    let below = held
+        .clone()
+        .filter(|h| label_order(h) < target)
+        .max_by_key(|h| label_order(h));
+    let above = held
+        .filter(|h| label_order(h) > target)
+        .min_by_key(|h| label_order(h));
+    Ok([below, above]
+        .into_iter()
+        .flatten()
+        .map(Json::str)
+        .collect())
+}
+
 /// The columns of the cited title that pin a result to the build.
 const TITLE_FIELDS: [&str; 4] = [
     "compilation_number",
@@ -1741,6 +2295,75 @@ fn other_rows(connection: &Connection, quote: &str, row_id: &str) -> Result<usiz
             && quotes::grade(quote, field(row, "text").as_str().unwrap_or_default()).held()
     };
     Ok(found.iter().filter(other).count())
+}
+
+/// `quote` graded against the row `row_id`, which holds `text`, and, when that row holds
+/// it whole, how many other rows do.
+fn grade_row(
+    connection: &Connection,
+    quote: &str,
+    row_id: &str,
+    text: &str,
+) -> Result<(quotes::Grade, Option<usize>), Exc> {
+    let found = quotes::grade(quote, text);
+    let others = if found.held() {
+        Some(other_rows(connection, quote, row_id)?)
+    } else {
+        None
+    };
+    Ok((found, others))
+}
+
+/// `distinct`: held by no other row and at least `DISTINCT_FLOOR_WORDS` long; `null`
+/// for a quotation the row does not hold.
+fn distinct_of(found: &quotes::Grade, others: Option<usize>) -> Json {
+    others.map_or(Json::Null, |n| {
+        Json::Bool(n == 0 && found.quote_words >= DISTINCT_FLOOR_WORDS)
+    })
+}
+
+/// The digest of the build's `sources.json`, which ties a result to its build.
+fn sources_digest(connection: &Connection) -> Result<Json, Exc> {
+    let sql = "SELECT value FROM meta WHERE key = 'sources_sha256'";
+    Ok(rows_of(connection, sql, &[])?
+        .first()
+        .map_or(Json::Null, |row| field(row, "value").clone()))
+}
+
+/// `quote` graded against the row `row_id`, pinned to the row's title in this build.
+pub fn quote(connection: &Connection, row_id: &str, quote: &str) -> Result<Json, Exc> {
+    let sql = "SELECT r.row_id, r.register_id, r.text, t.compilation_number, \
+               t.compilation_date, t.retrieved, t.sections_sha256, t.version_is_current \
+               FROM rows r JOIN titles t ON t.register_id = r.register_id WHERE r.row_id = ?";
+    let found = rows_of(connection, sql, &[Sql::Text(row_id.to_string())])?;
+    let Some(row) = found.into_iter().next() else {
+        return Err(refused(format!("{row_id} is not in the index")));
+    };
+    let text = field(&row, "text").as_str().unwrap_or_default();
+    // The test `quotes::quotations` applies to a draft: punctuation alone, such as `.`,
+    // is in almost every row and would grade `exact`.
+    if !quote.chars().any(char::is_alphanumeric) {
+        return Err(refused("the quotation has no letters or digits"));
+    }
+    let (graded, others) = grade_row(connection, quote, row_id, text)?;
+    let count = |n: Option<usize>| n.map_or(Json::Null, |n| Json::Int(n.into()));
+    let mut report = vec![
+        ("row_id".into(), Json::str(row_id)),
+        ("register_id".into(), field(&row, "register_id").clone()),
+        ("quote".into(), Json::str(quote)),
+        ("grade".into(), Json::str(graded.grade)),
+        ("matched_words".into(), count(graded.matched_words)),
+        ("quote_words".into(), count(Some(graded.quote_words))),
+        ("other_rows".into(), count(others)),
+        ("distinct".into(), distinct_of(&graded, others)),
+    ];
+    for name in TITLE_FIELDS {
+        report.push((name.into(), field(&row, name).clone()));
+    }
+    let current = field(&row, "version_is_current").truthy();
+    report.push(("version_is_current".into(), Json::Bool(current)));
+    report.push(("sources_sha256".into(), sources_digest(connection)?));
+    Ok(object(report))
 }
 
 /// Why a quotation was not compared, or `None` if it can be.
@@ -1777,15 +2400,16 @@ fn quotation_report(
         let sql = "SELECT text FROM rows WHERE row_id = ?";
         let held = rows_of(connection, sql, &[Sql::Text(row_id.to_string())])?;
         let text = held.first().and_then(|r| field(r, "text").as_str());
-        let found = quotes::grade(&quotation.text, text.unwrap_or_default());
+        let (found, others_found) = grade_row(
+            connection,
+            &quotation.text,
+            row_id,
+            text.unwrap_or_default(),
+        )?;
         grade = Json::str(found.grade);
         (matched, words) = (found.matched_words, Some(found.quote_words));
-        if found.held() {
-            let others_found = other_rows(connection, &quotation.text, row_id)?;
-            others = Some(others_found);
-            let long_enough = found.quote_words >= DISTINCT_FLOOR_WORDS;
-            distinct = Json::Bool(others_found == 0 && long_enough);
-        }
+        others = others_found;
+        distinct = distinct_of(&found, others_found);
     }
     report.extend([
         ("grade".into(), grade),
@@ -1862,6 +2486,12 @@ fn citation_report(
     let graded = matches!(outcome, "resolved" | "assumed") && kind == "section";
     let row = row_ids.first().filter(|_| graded);
     let quotations = sentence_quotations(connection, draft, end, quotes, row)?;
+    let nearest = match &target {
+        Some(rid) if outcome == "not_held" && kind == "section" => {
+            Json::Array(nearest_sections(connection, rid, &key)?)
+        }
+        _ => Json::Null,
+    };
     let mut fields = vec![
         ("line".into(), Json::Int((newlines.count() + 1).into())),
         ("citation".into(), Json::str(&citation)),
@@ -1872,6 +2502,7 @@ fn citation_report(
         ("reason".into(), text_or_null(reason.map(str::to_string))),
         ("register_id".into(), text_or_null(target)),
         ("rows".into(), Json::Array(row_ids)),
+        ("nearest".into(), nearest),
         ("quotations".into(), quotations),
     ];
     for name in TITLE_FIELDS {
@@ -1891,10 +2522,7 @@ pub fn cite_check(
 ) -> Result<Vec<Json>, Exc> {
     let own = given_title(connection, title)?;
     let names = title_names(connection)?;
-    let sql = "SELECT value FROM meta WHERE key = 'sources_sha256'";
-    let digest = rows_of(connection, sql, &[])?
-        .first()
-        .map_or(Json::Null, |row| field(row, "value").clone());
+    let digest = sources_digest(connection)?;
     let found = citations(draft);
     let all = quotes::quotations(draft);
     let spans = |item: &FoundCitation| (item.4, sentence_around(draft, item.4));
@@ -1953,15 +2581,22 @@ fn parser() -> Parser {
     Parser::new("python -m fadden search")
         .description(
             "Build and query a local full-text, definitions and reference index. \
-             search cite-check INDEX DRAFT checks a draft's citations against one.",
+             search cite-check INDEX DRAFT checks a draft's citations against one, and \
+             search quote INDEX ROW_ID QUOTATION grades a quotation against one row.",
         )
         .subcommands("command")
         .sub("build", Some("index a finished corpus root"), |p| {
-            p.arg(Action::positional("corpus_root")).arg(
-                Action::option("--out")
-                    .required()
-                    .help("new index file; must not exist"),
-            )
+            p.arg(Action::positional("corpus_root"))
+                .arg(
+                    Action::option("--out")
+                        .required()
+                        .help("new index file; must not exist"),
+                )
+                .arg(
+                    Action::append("--rulings", crate::argparse::Value::None)
+                        .metavar("RUN_DIR")
+                        .help("a rulings run directory whose section references refs lists; repeat for each run"),
+                )
         })
         .sub(
             "query",
@@ -2020,6 +2655,20 @@ fn cite_check_parser() -> Parser {
         .arg(Action::flag("--json").help("print one object per citation"))
 }
 
+/// Apart from `parser` for the same reason as `cite_check_parser`.
+fn quote_parser() -> Parser {
+    Parser::new("python -m fadden search quote")
+        .description(
+            "Grade a quotation against one row of an index: exact, normalised, partial or none.",
+        )
+        .arg(Action::positional("index"))
+        .arg(Action::positional("row_id").help("the row the quotation is said to come from"))
+        .arg(
+            Action::positional("quotation").help("the quoted words, without their quotation marks"),
+        )
+        .arg(Action::flag("--json").help("print the result as one object"))
+}
+
 fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
     match args.get(key) {
         Some(crate::argparse::Value::List(items)) => items.clone(),
@@ -2028,10 +2677,10 @@ fn list(args: &crate::argparse::Namespace, key: &str) -> Vec<String> {
 }
 
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
-    let outcome = if argv.first().is_some_and(|word| word == "cite-check") {
-        execute_cite_check(&cite_check_parser().parse(&argv[1..])?, run)
-    } else {
-        execute(&parser().parse(argv)?, run)
+    let outcome = match argv.first().map(String::as_str) {
+        Some("cite-check") => execute_cite_check(&cite_check_parser().parse(&argv[1..])?, run),
+        Some("quote") => execute_quote(&quote_parser().parse(&argv[1..])?, run),
+        _ => execute(&parser().parse(argv)?, run),
     };
     Ok(match outcome {
         Ok(code) => code,
@@ -2162,6 +2811,12 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
             s("citation"),
             format!("{} {why}", shown_rows(&rows)).trim()
         ));
+        if let Json::Array(nearest) = item.at("nearest")
+            && !nearest.is_empty()
+        {
+            let held: Vec<String> = nearest.iter().map(pyvalue::py_str).collect();
+            run.print(&format!("  nearest held sections: {}", held.join(", ")));
+        }
         if let Some(line) = standing_line(item.at("as_at")) {
             run.print(&line);
         }
@@ -2221,6 +2876,41 @@ fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Resul
             })
     });
     Ok(i32::from(!clean || !refusals.is_empty()))
+}
+
+/// Exits 0 only if the row holds the quotation, `exact` or `normalised`.
+fn execute_quote(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
+    let connection = open_index(&args.str("index").unwrap_or_default())?;
+    let row_id = args.str("row_id").unwrap_or_default();
+    let report = quote(
+        &connection,
+        &row_id,
+        &args.str("quotation").unwrap_or_default(),
+    )?;
+    let held = report
+        .at("grade")
+        .as_str()
+        .is_some_and(|grade| CLEAN_GRADES.contains(&grade));
+    if args.flag("json") {
+        run.print_points(&dumps_line(&report, false))?;
+    } else {
+        let s = |key: &str| pyvalue::py_str(report.at(key));
+        let state = if report.at("version_is_current").truthy() {
+            "current"
+        } else {
+            "not current"
+        };
+        run.print(&format!(
+            "{row_id}: compilation {} ({}), {state}, retrieved {}",
+            s("compilation_number"),
+            s("compilation_date"),
+            s("retrieved")
+        ));
+        print_quotation(&report, run);
+        run.print(QUOTE_NOTICE);
+        run.print(&source_line(&connection)?);
+    }
+    Ok(i32::from(!held))
 }
 
 fn print_refusals(refusals: &[Json], json: bool, run: &mut Run) -> Result<(), Exc> {
@@ -2438,20 +3128,66 @@ fn execute_refs(
             ));
         }
     }
+    // Text output tells an index holding no rulings from one where none cites the row.
+    match report.at("cited_by_rulings") {
+        Json::Array(rulings) if rulings.is_empty() => {
+            run.print("  no captured ruling cites this by its Act");
+            run.print(RULINGS_NOTICE);
+        }
+        Json::Array(rulings) => {
+            for ruling in rulings {
+                let withdrawn = if ruling.at("withdrawal_status").as_str() == Some("NOTICE_PRESENT")
+                {
+                    ", withdrawal notice captured"
+                } else {
+                    ""
+                };
+                run.print(&format!(
+                    "  cited by ruling {}, paragraph {} ({}): captured {}{withdrawn}, {}",
+                    s(ruling.at("title")),
+                    s(ruling.at("paragraph")),
+                    s(ruling.at("citation")),
+                    s(ruling.at("fetched_on")),
+                    s(ruling.at("source_url"))
+                ));
+            }
+            run.print(RULINGS_NOTICE);
+        }
+        _ => run.print("  this index holds no rulings; build with --rulings to list them"),
+    }
     run.print(&source_line(connection)?);
     Ok(0)
 }
 
+const RULINGS_NOTICE: &str = "Ruling paragraphs come from the ATO Legal Database under the ATO \
+copyright notice, kept in this index; neither the ATO nor the Commonwealth endorses it. A ruling \
+listed cited this provision in the capture shown. Without a captured withdrawal notice its status \
+is unknown, not current: check the ruling and its period on the live Legal Database before \
+reliance. A citation naming no Act is not read.";
+
 fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let command = args.str("command").unwrap_or_default();
     if command == "build" {
-        let [titles, rows, definitions, refs] = build(
-            &args.str("corpus_root").unwrap_or_default(),
-            &args.str("out").unwrap_or_default(),
-        )?;
+        let rulings = args.list("rulings");
+        let ([titles, rows, definitions, refs], [paragraphs, ruling_refs, excluded]) =
+            build_with_rulings(
+                &args.str("corpus_root").unwrap_or_default(),
+                &args.str("out").unwrap_or_default(),
+                &rulings,
+            )?;
         run.print(&format!(
             "indexed {titles} titles, {rows} rows, {definitions} definitions and {refs} section references"
         ));
+        if !rulings.is_empty() {
+            run.print(&format!(
+                "indexed {paragraphs} ruling paragraphs from {} runs with {ruling_refs} section references",
+                rulings.len()
+            ));
+            // An excluded document's citations are absent, which is not the same as none.
+            run.print(&format!(
+                "excluded by the rulings stage and not indexed: {excluded} documents"
+            ));
+        }
         return Ok(0);
     }
     let connection = open_index(&args.str("index").unwrap_or_default())?;

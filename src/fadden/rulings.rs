@@ -119,6 +119,10 @@ fn canonical(points: &[u32]) -> Vec<u32> {
     out
 }
 
+pub(super) fn canonical_docid(docid: &str) -> Vec<u32> {
+    canonical(&points(docid))
+}
+
 fn is_space(cp: u32) -> bool {
     char::from_u32(cp).is_some_and(py::is_space)
 }

@@ -96,13 +96,17 @@ Run these cases with fabricated questions and retained public source text.
 Record the source identifier, compilation or retrieval date, exact passage,
 question date and coverage limitation beside each result. These are proposed
 evaluation cases; no commercial product has passed them in this comparison.
+This builder's own commands answer cases 1, 2 and 4 on fabricated text in
+`tests/fadden_consumer_case.rs`, which runs on every test run; cases 3, 5 and 6
+are not run there.
 
 1. A quotation is absent from the cited row. The consumer must reject the
    quotation even if the source title and citation look plausible.
 2. A quotation matches a row, but the question concerns a date outside its
    compilation window. Preserve the quotation result and the date limitation
-   separately. `quote_in_text` (in the Rust crate's `fadden::as_at` module) and `as_at` already provide these
-   distinct checks; neither establishes historical provision applicability.
+   separately. `search cite-check --as-at` reports the quotation's grade and the
+   title's status on the date as separate fields; neither establishes historical
+   provision applicability.
 3. The question needs a court decision, state legislation or editorial
    commentary. Declare that material outside this builder's coverage instead
    of presenting a Commonwealth section as a complete answer.

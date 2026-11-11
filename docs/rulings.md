@@ -10,7 +10,7 @@ a statement of the Commissioner's current view. Read the source document at its
 
 The ATO copyright notice at
 <https://www.ato.gov.au/about-ato/using-our-website/copyright-notice> (last updated
-27 August 2012, read 24 September 2026) says:
+27 August 2012, read 24 September 2026 and again, unchanged, on 8 November 2026) says:
 
 > You are free to copy, adapt, modify, transmit and distribute this material as you
 > wish (but not in any way that suggests the ATO or the Commonwealth endorses you or
@@ -105,7 +105,12 @@ fields carry no withdrawal observation.
 
 A run prints each captured notice beside its docid, with that warning. Rows with a
 notice stay in `rulings.jsonl`; `authorities` leaves them out of the closed list and
-says so. The search index holds no rulings rows, so `search` reports none of this.
+says so. `search build --rulings` keeps each paragraph's withdrawal status beside its
+section references, and `search refs` prints it with the warning above. The build
+refuses a run whose `rulings.jsonl` differs from its `manifest.json` in row count,
+documents or paragraphs per document, or in a row's title, source URL, capture date or
+withdrawal status against its document's record, and refuses a capture date that is not
+an ISO date. It prints how many distinct documents the runs excluded and no run holds.
 
 ### How paragraphs are found
 

@@ -38,7 +38,7 @@ The example below is fabricated and offline: it searches a fictional Act, then c
 
 **Input:** the fabricated [Sample Consumption Tax Act 2099](samples/search-demo/sources.json) and a [draft](samples/search-demo/draft.md) that cites it.
 
-**Commands and output:** `search query` prints each row with its `row_id`, compilation and Register page. `cite-check` finds the quotation in the section cited, reports section 9 as not held and exits 1.
+**Commands and output:** `search query` prints each row with its `row_id`, compilation and Register page. `cite-check` finds the quotation in the section cited, reports section 9 as not held, names the nearest section the build holds and exits 1.
 
 ```console
 $ python -m fadden search build samples/search-demo --out ../search-demo.sqlite
@@ -59,6 +59,7 @@ $ python -m fadden search cite-check ../search-demo.sqlite samples/search-demo/d
 line 1: resolved: Section 3 of the Sample Consumption Tax Act 2099: C2099A00001:0003:3
   quotation exact, not distinct, 0 other rows hold it: A seller is liable for sample consumption tax
 line 3: not_held: Section 9 of the Sample Consumption Tax Act 2099: 
+  nearest held sections: 3
 1 quotations, 1 comparisons with citations: 1 exact.
 2 citations: 1 resolved, 1 not_held. A resolved citation names its Act and a provision this build holds. An assumed citation names no Act in its sentence, so it shows only that --title holds the provision, not that the author meant that title. Neither shows that the provision says what the draft claims or applied at any date. A quotation is read only in quotation marks in the citation's sentence, and only against a resolved or assumed section. Exact and normalised show those words are in that row of this build, not that they are fairly quoted, authorised text or the law at any date. Distinct means no other row of this build holds at least 10 such words, and shows no more about any other source. Current and superseded are this build's record from the Register, not a check today; a later amendment can outdate them. Forms refs does not read, such as s 8-1, are not counted.
 Index of the corpus retrieved 2099-08-01, sources.json sha256 73d95db611177211. Finding aid derived from the Register's EPUB reading view, not authorised legislation or tax advice. Read the authorised compilation on the Register before relying on a row.
