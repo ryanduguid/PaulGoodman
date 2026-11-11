@@ -1189,6 +1189,68 @@ fn word_count(text: &Json) -> Result<usize, Exc> {
         .count())
 }
 
+/// Sections of finalize's README that describe what the distribution leaves
+/// out (the staleness checker, `build/` and the EPUBs), each with the text that
+/// replaces it here. finalize's tests check the headings are in its template.
+pub(super) const README_SECTIONS: [(&str, &str); 3] = [
+    (
+        "## Checking staleness",
+        "## Checking staleness\n\n\
+         This distribution does not include the staleness checker. To run it, copy\n\
+         `check_current.py`, `corpus_paths.py` and `http_fetch.py` from the `fadden/`\n\
+         folder of the builder repository beside this `sources.json` and run\n\
+         `python check_current.py`. It asks the Register API for each title's current\n\
+         compilation and changes nothing.\n\n",
+    ),
+    ("## Build record", ""),
+    (
+        "## Licence and attribution",
+        "## Licence and attribution\n\n\
+         Licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Full statement in LICENCE-NOTICE.md. Every JSONL row\n\
+         carries its own attribution, because rows travel independently of this file.\n\n\
+         The markdown is CHANGED content (converted from EPUB, contents pages removed,\n\
+         endnotes separated), so it uses the Register's \"Based on content from\" wording.\n\n\
+         The Commonwealth Coat of Arms is not covered by CC BY.\n\
+         This distribution contains no images; the markdown keeps only their alt text.\n\n",
+    ),
+];
+
+/// The same for finalize's LICENCE-NOTICE.md.
+pub(super) const NOTICE_SECTIONS: [(&str, &str); 2] = [
+    ("## Attribution for the raw EPUBs under `epub/`", ""),
+    (
+        "## Not covered by CC BY",
+        "## Not covered by CC BY\n\n\
+         The Commonwealth Coat of Arms and any third-party copyright material are\n\
+         excluded from the licence.\n\
+         This distribution contains no EPUBs and no images; the markdown keeps only\n\
+         their descriptive alt text.\n\n",
+    ),
+];
+
+/// Replace the section headed `heading`, up to the next `## ` heading or the
+/// end, with `replacement`. Text without that heading comes back unchanged.
+fn replace_section(text: &str, heading: &str, replacement: &str) -> String {
+    let Some(at) = text.find(&format!("\n{heading}\n")) else {
+        return text.to_string();
+    };
+    let start = at + 1;
+    let body = start + heading.len();
+    let end = text[body..]
+        .find("\n## ")
+        .map_or(text.len(), |i| body + i + 1);
+    format!("{}{replacement}{}", &text[..start], &text[end..])
+}
+
+/// Every section in `sections` replaced in turn.
+fn replace_sections(text: &str, sections: &[(&str, &str)]) -> String {
+    sections
+        .iter()
+        .fold(text.to_string(), |text, (heading, replacement)| {
+            replace_section(&text, heading, replacement)
+        })
+}
+
 /// Python `re.sub(pattern, replacement, text, count=1, flags=re.M)` with a
 /// literal replacement.
 fn sub_once(pattern: &str, flags: u8, replacement: &str, text: &str) -> String {
@@ -1533,8 +1595,15 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
 
     let licence_src = child(&paths.root, &["LICENCE-NOTICE.md"])?;
     let licence_dst = child(staging, &["LICENCE-NOTICE.md"])?;
-    // `shutil.copy`: the data, then the permission bits.
+    // `shutil.copy`: the data, then the permission bits. copyfile refuses a
+    // special file before opening it, so the copy is read, not the source. A
+    // notice describing the EPUBs is rewritten, since none ship here.
     copyfile(&licence_src, &licence_dst, &py::repr_str(&licence_src))?;
+    let notice = crate::pyio::read_text(&licence_dst)?;
+    let rewritten = replace_sections(&notice, &NOTICE_SECTIONS);
+    if rewritten != notice {
+        write_text(&licence_dst, &pts(&rewritten))?;
+    }
     let mode = std::fs::metadata(&licence_src)
         .map_err(|e| OsError::new(&e, Some(&licence_src), Style::Native))?
         .permissions();
@@ -1630,6 +1699,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         &rd,
     );
     rd = replace_readme_table_block_paragraph(&rd, table_block);
+    rd = replace_sections(&rd, &README_SECTIONS);
     rd = format!(
         "> **This is the redistributable subset.** The EPUBs, {} titles that name private individuals and {} \
          accounting standards under restrictive copyright notices are not included. See REMOVED.md for what \
@@ -1743,9 +1813,9 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     lines.push(pts(&format!(
         "Detection did not rely on the titles being recognisable. Every row in all {} titles was tested for \
          personal names appearing alongside agent registration numbers; these {} were what came back, and a \
-         second pass at a lower threshold found nothing outside them. The only contact details the second pass \
-         approved are {} unique organisational identifiers. Each is bound to a reviewed Register title in the \
-         hashed allowlist; a new or moved contact fails publication.",
+         second pass at a lower threshold found nothing outside them. The hashed contact allowlist holds {} \
+         unique organisational identifiers, each bound to a reviewed Register title; a new or moved contact \
+         fails publication.",
         thousands(source_titles.len()),
         drop.len(),
         unique.len()

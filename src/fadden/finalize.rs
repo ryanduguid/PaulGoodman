@@ -40,6 +40,41 @@ const ATTR_CHANGED: &str = r#"Based on content from the Federal Register of Legi
 const CORPUS: &str = r#"Commonwealth tax statutes and legislative instruments"#;
 const LICENCE_NOTE: &str = r#"Excludes the Commonwealth Coat of Arms and any third-party material. The EPUBs under epub/ embed the Coat of Arms as an image; it is NOT licensed under CC BY and must not be reused. The markdown omits it. Authorised versions are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view used here is NOT the authorised text."#;
 const SELECTION: &str = r#"In-force principal titles in the Act, LegislativeInstrument and NotifiableInstrument collections whose name contains Tax, Excise, Superannuation, Customs Tariff or Medicare Levy. isPrincipal could not be applied server-side (the API returns 400 for any filter containing it), so it was applied client-side. Selection is by title keyword, so a tax-relevant title without one of those words in its name is absent, and some collected titles (notably Commonwealth employee superannuation schemes) are not tax law. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
+/// `selection` for a build of the `python -m fadden quick` preset, which picks
+/// its Acts by register id rather than by keyword.
+const PRESET_SELECTION: &str = r#"The principal Acts of the `python -m fadden quick` preset, chosen by register id rather than by title keyword, so every other title is absent. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
+/// The README's description of a keyword selection, and its preset replacement.
+const KEYWORD_SCOPE: &str =
+    "{n} in-force principal titles covering tax, excise, superannuation, customs
+tariff and Medicare levy: ";
+const PRESET_SCOPE: &str =
+    "{n} in-force principal titles named by the `python -m fadden quick` preset:
+";
+const KEYWORD_LIMITS: &str = r#"**Selection is by title keyword.** A tax-relevant title without Tax, Excise,
+Superannuation, Customs Tariff or Medicare Levy in its name is absent: the
+Customs Act 1901 and Charities Act 2013 among them.
+
+**Some collected titles are not tax law.** Three ways they got in:
+
+- The Commonwealth employee superannuation schemes match "Superannuation".
+- The Register matches more than the current name. That is mostly a benefit:
+  the Passenger Movement Charge Act 1978 came in on its former title, the
+  Departure Tax Act 1978. `keywords_in_name` in `sources.json` is empty for
+  these, so they can be reviewed rather than guessed at.
+- A substring match pulled in roughly 35 documents that have nothing to do with
+  tax: about 24 aviation airworthiness directives, because "Rotax" and "Britax"
+  contain "tax", and around 10 social security instruments about taxi licence
+  buybacks, because "taxi" starts with it. Every one is named `AD/...` or
+  `Social Security (Exempt Lump Sum ...)`. Filter on `keywords_in_name` plus the
+  name to drop them; nothing was deleted, because the same rule strict enough to
+  catch Rotax also throws away the Departure Tax Act.
+"#;
+const PRESET_LIMITS: &str = r#"**Selection is a fixed list.** This build holds only the titles in
+`sources.json`, chosen by register id for the `python -m fadden quick` preset,
+not every title matching the tax keywords. Other tax Acts, and every regulation
+and instrument, are absent, so a search that finds nothing here says nothing
+about them.
+"#;
 const LICENCE_NOTICE: &str = r#"# Licence notice
 
 Commonwealth legislation from the Federal Register of Legislation, licensed
@@ -108,7 +143,7 @@ disallowed or sunset while its enabling Act stands.
 It asks the Register API for each title's current compilation and reports four
 things separately: superseded compilations, titles whose in-force version has no
 published compilation, titles no longer in force, and lookups that failed.
-Read-only, about {mins} minutes for everything.
+Read-only, about {mins} for everything.
 
 No run's counts are repeated here: it is a separate command, run after this
 README is written, and its report goes to stdout. Its four buckets are not
@@ -764,8 +799,9 @@ fn int(n: usize) -> Json {
     Json::Int(n.into())
 }
 
-/// `build_sources_document(inventory, retrieved)`.
-fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
+/// `build_sources_document(inventory, retrieved)`, recording the preset's
+/// selection when `preset` is set.
+fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Json, Exc> {
     let ok = &inv.titles;
     let by_collection = Json::Object(
         inv.by_collection
@@ -912,7 +948,10 @@ fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
             Json::str(&percent_s(ATTR_CHANGED, &[retrieved])),
         ),
         ("licence_note", Json::str(LICENCE_NOTE)),
-        ("selection", Json::str(SELECTION)),
+        (
+            "selection",
+            Json::str(if preset { PRESET_SELECTION } else { SELECTION }),
+        ),
         ("counts", counts),
         ("titles_not_current_version", Json::Array(not_current)),
         ("titles", Json::Array(titles)),
@@ -1155,8 +1194,14 @@ fn index_document(inv: &Inventory, retrieved: &str) -> Result<P, Exc> {
     Ok(out)
 }
 
-/// `build_readme_document(inventory, retrieved, pii_titles, pii_names)`.
-fn readme_document(inv: &Inventory, retrieved: &str, pii: &(usize, BigInt)) -> Result<P, Exc> {
+/// `build_readme_document(inventory, retrieved, pii_titles, pii_names)`, for a
+/// keyword build or, with `preset`, the `quick` preset.
+fn readme_document(
+    inv: &Inventory,
+    retrieved: &str,
+    pii: &(usize, BigInt),
+    preset: bool,
+) -> Result<P, Exc> {
     let ok = &inv.titles;
     let mins = ((ok.len() as f64 * 1.5 / 60.0).round_ties_even() as u64).max(1);
     let fields = [
@@ -1168,7 +1213,10 @@ fn readme_document(inv: &Inventory, retrieved: &str, pii: &(usize, BigInt)) -> R
         ("{words}", comma(&inv.total_words.json())?),
         ("{lic}", LICENCE.into()),
         ("{lic_url}", LICENCE_URL.into()),
-        ("{mins}", mins.to_string()),
+        (
+            "{mins}",
+            format!("{mins} minute{}", if mins == 1 { "" } else { "s" }),
+        ),
         ("{pii_titles}", pii.0.to_string()),
         ("{pii_names}", comma(&Json::Int(pii.1.clone()))?),
         (
@@ -1182,6 +1230,11 @@ fn readme_document(inv: &Inventory, retrieved: &str, pii: &(usize, BigInt)) -> R
         ("{notcurrent}", inv.count(Title::not_current).to_string()),
     ];
     let mut text = README.to_string();
+    if preset {
+        text = text
+            .replace(KEYWORD_SCOPE, PRESET_SCOPE)
+            .replace(KEYWORD_LIMITS, PRESET_LIMITS);
+    }
     for (field, value) in fields {
         text = text.replace(field, &value);
     }
@@ -1229,18 +1282,18 @@ fn copy_if_different(src: &str, dst: &str) -> Result<String, Exc> {
     Ok(dst.to_string())
 }
 
-/// `finish_corpus_publication(inventory, retrieved, pii_counts)`.
+/// `finish_corpus_publication(inventory, retrieved, pii_counts)`, given the
+/// README built from the last 2.
 fn finish(
     inv: &Inventory,
     root: &str,
     scratch: &str,
-    retrieved: &str,
-    pii: &(usize, BigInt),
+    readme: Result<P, Exc>,
     inputs: Vec<Input>,
     run: &mut Run,
 ) -> Result<(), Exc> {
     let path = child(root, &["README.md"])?;
-    write_document(&path, readme_document(inv, retrieved, pii))?;
+    write_document(&path, readme)?;
 
     let build = child(root, &["build"])?;
     pyos::makedirs(&PyPath::new(&build))?;
@@ -1292,8 +1345,13 @@ fn finish(
     Ok(())
 }
 
-/// `main(retrieved)` with the module in `scratch`.
+/// `main(retrieved)` with the module in `scratch`, for a keyword build.
 pub fn run(scratch: &str, retrieved: &str, run: &mut Run) -> Result<(), Exc> {
+    run_selected(scratch, retrieved, false, run)
+}
+
+/// `run`, describing the `quick` preset's named titles when `preset` is set.
+fn run_selected(scratch: &str, retrieved: &str, preset: bool, run: &mut Run) -> Result<(), Exc> {
     let directory = script_dir_in(scratch, "finalize.py")?;
     let root = corpus_root(&directory);
     require_builder_layout(&directory)?;
@@ -1328,7 +1386,7 @@ pub fn run(scratch: &str, retrieved: &str, run: &mut Run) -> Result<(), Exc> {
     refuse_legacy_build(&build)?;
     discard_record(&child(&build, &[RECORD])?)?;
 
-    let sources = sources_document(&inv, retrieved)?;
+    let sources = sources_document(&inv, retrieved, preset)?;
     let path = child(&root, &["sources.json"])?;
     let mut chunks = Vec::new();
     let failure = encode(&sources, 0, &mut chunks).err();
@@ -1343,7 +1401,8 @@ pub fn run(scratch: &str, retrieved: &str, run: &mut Run) -> Result<(), Exc> {
         .replacen("%s", &percent_s(ATTR_CHANGED, &[retrieved]), 1);
     write_document(&path, Ok(points(&notice)))?;
 
-    finish(&inv, &root, scratch, retrieved, &pii, inputs, run)
+    let readme = readme_document(&inv, retrieved, &pii, preset);
+    finish(&inv, &root, scratch, readme, inputs, run)
 }
 
 /// The checker shipped at the corpus root, with the 2 modules it imports.
@@ -1553,9 +1612,12 @@ fn today() -> Result<String, Exc> {
     Ok(super::extract::local_date(now)?.isoformat())
 }
 
-/// `python -m fadden finalize`: the dispatcher passes today's date and no arguments.
-pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
-    let outcome = today().and_then(|day| self::run(&module_dir(), &day, run));
+/// `python -m fadden finalize`: the dispatcher passes today's date. `--preset`
+/// marks a build of the `quick` preset; other arguments are ignored, as Python
+/// ignored them.
+pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
+    let preset = argv.iter().any(|a| a == "--preset");
+    let outcome = today().and_then(|day| run_selected(&module_dir(), &day, preset, run));
     Ok(match outcome {
         Ok(()) => 0,
         Err(error) => run.uncaught(&error),
@@ -1699,6 +1761,23 @@ mod tests {
         assert_eq!(comma(&Json::Float(f64::NAN)).unwrap(), "nan");
         assert_eq!(percent_1f(0.25), "0.2");
         assert_eq!(percent_d(&Num::Float(-2.7)).unwrap(), "-2");
+    }
+
+    /// The preset rewrite and dist's section rewrites edit this template by
+    /// its text; a reworded template must fail here, not silently skip them.
+    #[test]
+    fn the_rewritten_readme_text_is_in_the_template() {
+        assert!(README.contains(KEYWORD_SCOPE));
+        assert!(README.contains(KEYWORD_LIMITS));
+        for (heading, _) in super::super::dist::README_SECTIONS {
+            assert!(README.contains(&format!("\n{heading}\n")), "{heading}");
+        }
+        for (heading, _) in super::super::dist::NOTICE_SECTIONS {
+            assert!(
+                LICENCE_NOTICE.contains(&format!("\n{heading}\n")),
+                "{heading}"
+            );
+        }
     }
 
     #[test]

@@ -40,6 +40,12 @@
 //! feature: `cargo test --features fake-http --test fadden_golden`. That build
 //! leaves out the other cases, which the default run covers and which never
 //! reach the script. How hard can it be? (Top Gear)
+//!
+//! 2 wording fixes depart from Python on purpose, and `departed` maps each
+//! back to Python's text before hashing, so every other byte stays frozen:
+//! finalize's README says "about 1 minute" where Python said "1 minutes", and
+//! dist's REMOVED.md names the contact allowlist's size as that, where Python
+//! called it the contacts the second pass approved.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -62,6 +68,13 @@ static TEMP_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.[0-9a-f]{32}
 // The fake-http log: Python logs time.sleep(3) as 3, the binary's f64 as 3.0.
 static WHOLE_SLEEP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^sleep (\d+)\.0$").unwrap());
+static ALLOWLIST_SIZE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        "The hashed contact allowlist holds (\\d+) unique organisational identifiers, each bound to a \
+         reviewed Register title; a new or moved contact fails publication\\.",
+    )
+    .unwrap()
+});
 static CONTACT_DETAIL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(no unapproved contact identifiers +FAIL  ).*").unwrap());
 // dist_verify tallies file extensions in directory-listing order, which the
@@ -214,7 +227,7 @@ fn snapshot(
             if rel == "http.log" && matches!(family, "discover" | "versions") {
                 sha256(&WHOLE_SLEEP.replace_all(&text, "sleep $1"))
             } else {
-                sha256(&text)
+                sha256(&departed(family, &rel, &text))
             }
         });
         found.insert(
@@ -223,6 +236,26 @@ fn snapshot(
         );
     }
     found
+}
+
+/// A file's text as Python wrote it, where this binary words it differently on
+/// purpose (see the module comment).
+fn departed(family: &str, rel: &str, text: &str) -> String {
+    match family {
+        "finalize" if rel.ends_with("/README.md") => text.replace(
+            "about 1 minute for everything",
+            "about 1 minutes for everything",
+        ),
+        "dist" if rel.ends_with("/REMOVED.md") => ALLOWLIST_SIZE
+            .replace_all(
+                text,
+                "The only contact details the second pass approved are $1 unique organisational \
+                 identifiers. Each is bound to a reviewed Register title in the hashed allowlist; a new or \
+                 moved contact fails publication.",
+            )
+            .into_owned(),
+        _ => text.to_string(),
+    }
 }
 
 fn content(value: &Value) -> Option<Vec<u8>> {

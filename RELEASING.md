@@ -2,7 +2,17 @@
 
 The repository's [GitHub Releases](https://github.com/ryanduguid/PaulGoodman/releases) page is the canonical release history. A separate changelog is intentionally not maintained.
 
-The repository releases the build code only. A GitHub release must never be described as a current or validated corpus, and must not attach a locally generated `corpus/`, `epub/`, `markdown/`, `rates/` or `dist/` tree.
+The repository releases the build code. A GitHub release must never be described as a current or validated corpus, and must not attach a locally generated `corpus/`, `epub/`, `markdown/` or `rates/` tree.
+
+The one exception is a corpus snapshot: a `dist/` tree built by `python -m fadden dist` may be published as a data asset in its own release, tagged `corpus-<retrieval date>`, never in a `v*` builder release (that workflow publishes the builder's assets and the verification below expects only those). It may be published when all of these hold:
+
+- `python -m fadden dist_verify` exits 0 on that tree, and again on a tree unpacked from the archive being attached.
+- The archive's SHA-256 is in the release notes and in a `SHA256SUMS` asset beside it.
+- The release notes say the asset is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) by the Federal Register of Legislation, not under this repository's licence, and carry the Register's attribution for changed content: "Based on content from the Federal Register of Legislation at [full date of download]. For the latest information on Australian Government legislation please go to https://www.legislation.gov.au." They name each title with its Register link and compilation date, say it is not the authorised text and imply no endorsement by the Register.
+- Every source in the snapshot has had its licence terms read at the publisher's site for that release.
+- A human has authorised that release, as for any other.
+
+Releases are immutable, so create the snapshot release as a draft, attach the archive and `SHA256SUMS`, check them, and only then publish it.
 
 Before tagging:
 

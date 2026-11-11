@@ -26,7 +26,7 @@ const BUILDER: [&str; 5] = [
     "finalize.py",
 ];
 /// `OUTPUT_HASHES` in the removed test_finalize_phases.py; README.md now has its
-/// "Build record" section.
+/// "Build record" section and says "about 1 minute".
 const OUTPUT_HASHES: [(&str, &str); 4] = [
     (
         "INDEX.md",
@@ -38,7 +38,7 @@ const OUTPUT_HASHES: [(&str, &str); 4] = [
     ),
     (
         "README.md",
-        "e407a8238190af5d3846b7a14b32d6461b4fe0ea98334c1f6e85bae97b9d65fb",
+        "69cc497d82e2abeae72cb4bb3f3a817edc538c9e1e6205838348a2626f4f1f31",
     ),
     (
         "sources.json",
@@ -632,4 +632,84 @@ fn a_missing_title_reports_its_recorded_reason() {
         "{index}"
     );
     assert!(!index.contains("| None | None |"), "{index}");
+}
+
+/// One title takes about a minute to check, so the README must not say
+/// "about 1 minutes".
+#[test]
+fn the_staleness_estimate_says_one_minute() {
+    let tree = phase_fixture();
+    tree.run(DATE).0.unwrap();
+    let readme = read(&tree.root.join("README.md"));
+    assert!(
+        readme.contains("Read-only, about 1 minute for everything."),
+        "{readme}"
+    );
+    assert!(!readme.contains("1 minutes"), "{readme}");
+}
+
+/// `fadden finalize`, run as the dispatcher runs it, with its arguments.
+fn finalize_command(tree: &Tree, args: &[&str]) -> (i32, String) {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_fadden"))
+        .arg("finalize")
+        .args(args)
+        .env("FADDEN_MODULE_DIR", &tree.scratch)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// `python -m fadden quick` picks its Acts by register id, so a build it
+/// finalises must not describe a keyword search or the stray titles one
+/// collects. A plain finalize keeps the keyword description.
+#[test]
+fn a_preset_build_describes_its_named_selection() {
+    let keyword = phase_fixture();
+    let (code, err) = finalize_command(&keyword, &[]);
+    assert_eq!(code, 0, "{err}");
+    let readme = read(&keyword.root.join("README.md"));
+    assert!(
+        readme.contains("**Selection is by title keyword.**"),
+        "{readme}"
+    );
+    assert!(readme.contains("Rotax"), "{readme}");
+    assert!(
+        keyword.sources()["selection"]
+            .as_str()
+            .unwrap()
+            .contains("Selection is by title keyword")
+    );
+
+    let preset = phase_fixture();
+    let (code, err) = finalize_command(&preset, &["--preset"]);
+    assert_eq!(code, 0, "{err}");
+    let readme = read(&preset.root.join("README.md"));
+    for claim in [
+        "Selection is by title keyword",
+        "Rotax",
+        "airworthiness",
+        "covering tax, excise, superannuation, customs",
+    ] {
+        assert!(!readme.contains(claim), "{claim}\n{readme}");
+    }
+    assert!(
+        readme.contains("**Selection is a fixed list.**"),
+        "{readme}"
+    );
+    assert!(
+        readme.contains("2 in-force principal titles named by the `python -m fadden quick` preset"),
+        "{readme}"
+    );
+    let selection = preset.sources()["selection"].as_str().unwrap().to_string();
+    assert!(
+        selection.contains("`python -m fadden quick` preset"),
+        "{selection}"
+    );
+    assert!(
+        !selection.contains("Selection is by title keyword"),
+        "{selection}"
+    );
 }

@@ -689,6 +689,9 @@ pub fn verify_distribution(
         "",
     );
     let rd = read_text(&child(dist_root, &["README.md"])?)?;
+    // finalize wraps its licence paragraph, so match its EPUB sentences on
+    // collapsed whitespace.
+    let flat = rd.split_whitespace().collect::<Vec<_>>().join(" ");
     check(
         run,
         "README states the real title count",
@@ -710,7 +713,9 @@ pub fn verify_distribution(
     check(
         run,
         "README does not promise EPUB files",
-        !rd.contains("epub/<register_id>.epub"),
+        !rd.contains("epub/<register_id>.epub")
+            && !flat.contains("The EPUBs are unchanged")
+            && !flat.contains("It is embedded in the EPUBs"),
         "",
     );
     check(

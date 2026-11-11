@@ -1895,3 +1895,106 @@ fn copied_files_keep_their_extended_attributes() {
     };
     assert_eq!(&value[..usize::try_from(got).unwrap()], b"kept");
 }
+
+/// The finalised corpus README and licence notice describe files the
+/// distribution leaves out: the EPUBs, `build/build-record.json` and the
+/// staleness checker at the corpus root. dist must not repeat those claims.
+#[test]
+fn the_distribution_describes_only_what_it_ships() {
+    let f = fixture();
+    let readme = std::fs::read_to_string(f.root.join("README.md")).unwrap();
+    write(
+        &f.root.join("README.md"),
+        &format!(
+            "{readme}\n## Checking staleness\n\n    python check_current.py\n\n\
+             Read-only, about 1 minute for everything.\n\n\
+             ## Build record\n\n`build/build-record.json` records this finalisation.\n\n\
+             ## Licence and attribution\n\nLicensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).\n\n\
+             The markdown is CHANGED content, so it uses the Register's \"Based on content from\" wording.\n\
+             The EPUBs are unchanged and use \"Sourced from\".\n\n\
+             The Commonwealth Coat of Arms is not covered by CC BY. It is embedded in the\n\
+             EPUBs; the markdown omits all images and keeps only their alt text.\n\n\
+             ## Limits\n\n**Sunsetting.** `check_current.py` reports these.\n"
+        ),
+    );
+    write(
+        &f.root.join("LICENCE-NOTICE.md"),
+        "# Licence notice\n\nCommonwealth legislation, licensed CC BY 4.0.\n\n\
+         ## Attribution for the raw EPUBs under `epub/`\n\n> Sourced from the Federal Register.\n\n\
+         ## Attribution for the markdown, JSONL and index (changed content)\n\n> Based on content.\n\n\
+         ## Not covered by CC BY\n\nThe Commonwealth Coat of Arms and any third-party copyright material are\n\
+         excluded from the licence. The EPUBs under `epub/` embed the Coat of Arms as an\n\
+         image. Do not reuse it.\n\n## Not the authorised text\n\nAuthorised versions are PDF only.\n",
+    );
+    let output = publish(&f);
+    let readme = std::fs::read_to_string(output.join("README.md")).unwrap();
+    for claim in [
+        "build/build-record.json",
+        "## Build record",
+        "    python check_current.py",
+        "The EPUBs are unchanged",
+        "embedded in the",
+    ] {
+        assert!(!readme.contains(claim), "{claim}\n{readme}");
+    }
+    assert!(readme.contains("## Checking staleness"), "{readme}");
+    assert!(
+        readme.contains("This distribution does not include the staleness checker."),
+        "{readme}"
+    );
+    assert!(readme.contains("## Licence and attribution"), "{readme}");
+    assert!(
+        readme.contains("This distribution contains no images"),
+        "{readme}"
+    );
+    assert!(readme.contains("## Limits"), "{readme}");
+    let notice = std::fs::read_to_string(output.join("LICENCE-NOTICE.md")).unwrap();
+    assert!(!notice.contains("epub/"), "{notice}");
+    assert!(!notice.contains("raw EPUBs"), "{notice}");
+    assert!(
+        notice.contains("## Attribution for the markdown, JSONL and index"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("This distribution contains no EPUBs and no images"),
+        "{notice}"
+    );
+    assert!(notice.contains("## Not the authorised text"), "{notice}");
+    assert_eq!(verify(&f).0, 0);
+}
+
+/// The allowlist size is not a count of contacts found in these titles.
+#[test]
+fn removed_md_names_the_contact_count_as_the_allowlist_size() {
+    let f = fixture();
+    let removed = std::fs::read_to_string(publish(&f).join("REMOVED.md")).unwrap();
+    assert!(!removed.contains("the second pass approved"), "{removed}");
+    assert!(
+        removed.contains("The hashed contact allowlist holds 4 unique organisational identifiers"),
+        "{removed}"
+    );
+}
+
+/// dist_verify already refuses a README promising EPUB files; the licence
+/// paragraph describing them is the same false promise.
+#[test]
+fn the_verifier_refuses_a_readme_describing_epubs() {
+    let f = fixture();
+    let output = publish(&f);
+    let label = "README does not promise EPUB files";
+    assert_eq!(status(&verify(&f).1, label), "PASS");
+    let readme = output.join("README.md");
+    let text = std::fs::read_to_string(&readme).unwrap();
+    for claim in [
+        "The EPUBs are unchanged and use \"Sourced from\".",
+        "It is embedded in the\nEPUBs; the markdown omits all images.",
+    ] {
+        std::fs::write(&readme, format!("{text}\n{claim}\n")).unwrap();
+        let (code, out) = verify(&f);
+        assert_eq!(
+            (code, status(&out, label)),
+            (1, "FAIL".to_string()),
+            "{claim}\n{out}"
+        );
+    }
+}
