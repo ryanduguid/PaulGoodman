@@ -73,6 +73,15 @@ hashes before export. The logical oracle preserves original data and FTS posting
 adds independently generated native SQLite Porter postings and permits only the
 documented version and captured-window column changes. Other file hashes remain
 frozen. Search query usage also includes the new `--stem` flag.
+The `compare_builds` cases follow its stricter behaviour instead (the module doc of
+`tests/fadden_golden.rs` says what changed), so regenerating them from the base revision
+would undo it. One input departs from that stricter Python too: a lone surrogate in a
+container, section, heading, compilation number or compilation date, which it admits and
+then crashes printing, is refused.
+
+No Python search stage remains, so the search cases were edited by hand where search
+changed: #284 (0ee6bc4) re-recorded index digests and usage text, and 17f1d15 added the
+`refs` line saying an index holds no rulings.
 
 The fenced list records the unique single-line commands. The multiline binary-smoke gate
 is reproduced exactly in the next section.

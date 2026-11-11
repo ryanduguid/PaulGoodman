@@ -460,12 +460,14 @@ makes no request.
 
 ```bash
 python -m fadden search build corpus --out search.sqlite
+python -m fadden search build corpus --out search.sqlite --rulings rulings-run
 python -m fadden search query search.sqlite general deductions --limit 5
 python -m fadden search query search.sqlite losses outgoings incurred deductible --stem --limit 5
 python -m fadden search query search.sqlite 8-1 --title C2004A05138
 python -m fadden search define search.sqlite assessable income
 python -m fadden search refs search.sqlite C2004A05138:0035:8-1
 python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
+python -m fadden search quote search.sqlite C2004A05138:0035:8-1 'You can deduct from your assessable income'
 python -m fadden search query search.sqlite general deductions --as-at 2026-07-15
 python -m fadden search define search.sqlite assessable income --as-at 2026-07-15
 python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
@@ -517,6 +519,30 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   reads only `8-1`. A range such as `sections 8-1 to 8-10` reads only its
   first item. A Subdivision named by letter alone (`Subdivision B`) is not
   read, because the same letter recurs across Divisions of one title.
+- `build --rulings RUN_DIR`, repeated for each `rulings` run, also reads the section,
+  Division and Subdivision references in each run's paragraphs, and `refs` then lists
+  under `cited_by_rulings` each ruling paragraph that cites the row's section, Division
+  or Subdivision, with its title, paragraph number, citation, capture date and source
+  URL. A ruling paragraph names no Act of its own, so only a citation naming the Act
+  (`section 8-1 of the ITAA 1997`) is read; a bare `section 8-1` is not. The run
+  directory must hold the stage's `rulings.jsonl`, `LICENCE-NOTICE.md` and
+  `manifest.json`, and the index keeps the notice with the rows; a row the stage could
+  not have written, such as one with no `withdrawal_status` or a `fetched_on` that is
+  not a date, or rows other than the documents and paragraph counts the manifest lists,
+  or a row whose title, source URL, digest, capture date or withdrawal status differs
+  from its document's record in the manifest, stops the build. Each document's
+  capture date must also match the run's. The build prints how many
+  distinct documents the stage excluded and no run holds, whose citations are therefore absent. A
+  document with a withdrawal notice in any run is `NOTICE_PRESENT` in every run. `UNKNOWN` does not show the ruling is
+  current, and a listed ruling shows only that it cited the provision when captured:
+  read [the rulings stage](docs/rulings.md) before relying on one. The index stores
+  references, not ruling text. In text, `refs` says `no captured ruling cites this by
+  its Act` when the index holds rulings and none cites the row, and `this index holds no
+  rulings` when no run contributed any paragraphs or it was built without
+  `--rulings`. Without `--rulings`, the index is byte
+  for byte what an earlier build wrote and `refs --json` has no `cited_by_rulings`
+  field. So the schema version stays the same: a reader finds the ruling tables in the
+  index or does without them.
 - `cite-check` reads a UTF-8 draft with the patterns `refs` uses and reports
   every citation with its line, one outcome and the rows it reached. `--json`
   prints one object per citation with the title's compilation, its
@@ -540,8 +566,12 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   | `container_level` | A Division or Subdivision of a named current title, which is not a pinpoint |
   | `ambiguous` | No title is named and `--title` was not given, 2 titles share the cited name, several rows share the number, or `--title` was given and the citation's sentence may name another source |
   | `multi_section` | A range such as `sections 8-1 to 8-10`, of which only the first item is read |
-  | `not_held` | The name is not a title or listed abbreviation in the index, or the title has no such row |
+  | `not_held` | The name is not a title or listed abbreviation in the index, or the title has no such row. For a section of a held title, `nearest` lists the sections it holds either side of the number |
   | `superseded` | The rows exist, but `sources.json` marks the title's captured compilation as not current |
+
+  `nearest` is `null` for every other citation. It orders labels by each part's number,
+  then its letters, so `8-5` comes before `8-10`, and it shows only what the title
+  holds near a missing number: not that the author meant either section.
 
   `resolved` means the draft names the title and the build holds a provision with that number. It does not
   show that the provision says what the draft claims or applied at any date.
@@ -621,6 +651,16 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   provision or a numbered provision. That check is a net, not a proof. It also
   catches harmless phrases such as `as the Commissioner allows`, and whatever it
   misses, such as `of Éire`, is what the `assumed` label is for.
+- `quote INDEX ROW_ID QUOTATION` grades one quotation against one row by the rules
+  `cite-check` uses, for a quotation whose citation `cite-check` does not read, such as
+  `s 8-1`, or whose row you chose yourself. Give the quoted words without their
+  quotation marks. It reports the grade, `matched_words`, `quote_words`, `other_rows`
+  and `distinct` as `cite-check` does, with the row's compilation, current status,
+  retrieval date, `sections.jsonl` digest and the digest of `sources.json`, and exits 1
+  unless the grade is `exact` or `normalised`. It refuses a quotation with no letter or
+  digit, such as `.`, which `cite-check` does not read as a quotation either. The limits
+  listed for `cite-check` apply, and a row of a section is compared whole whatever
+  subsection is quoted.
 - A row's Division and Subdivision come from the headings in the title's
   `<register_id>.md`, because a row's `container` names only its innermost
   heading. A row with no matching heading, such as `Introductory material`,
@@ -744,12 +784,47 @@ Know these limits before relying on a result:
   notice (`UNKNOWN`) is not thereby current. A withdrawn document's ids come from its
   captures' titles, so a document with no readable title in any capture cannot take
   another document's listing of its id out.
-- The gate compares citations exactly, and the list holds whole sections, so `s 8-1(1)`
-  is not `s 8-1` and goes to review. So does `s 8-1 ITAA 1997`: the gate reads an Act
-  named in full only.
+- The list holds whole sections. At llm-tax-guardrails f745aa1 the gate compares
+  citations exactly, so `s 8-1(1)` is not `s 8-1` and goes to review, and so does
+  `s 8-1 ITAA 1997`: that gate reads an Act named in full only. A later gate may differ;
+  see [Checking a draft end to end](#checking-a-draft-end-to-end).
 - A section is listed by its label in the title. A provision in a Schedule with its own
   Divisions, such as Schedule 1 to the *Taxation Administration Act 1953*, is listed as
   a section of the Act, and `container` cannot show which Schedule it sits in.
+
+## Checking a draft end to end
+
+These commands check one draft against your own build and the rulings you captured.
+None makes a request, and none of their output belongs in git.
+
+```bash
+python -m fadden search build corpus --out search.sqlite --rulings rulings-run
+python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
+python -m fadden search quote search.sqlite C2004A05138:0035:8-1 'You can deduct from your assessable income'
+python -m fadden search refs search.sqlite C2004A05138:0035:8-1
+python -m fadden authorities search.sqlite --out authorities.json --rulings rulings-run/rulings.jsonl
+```
+
+Then, in a checkout of [llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails),
+give the same draft and the list to its gate:
+
+```bash
+cargo run --manifest-path tools/drdebits_build/Cargo.toml --locked --release -- gate draft.md --authorities authorities.json
+```
+
+The interface between the 2 is the file `authorities` writes: one key, `authorities`,
+listing `s <label> of the <Act>` for each section and each ruling id, as
+[above](#exporting-an-authorities-list). `cite-check` reads `section 8-1 of the Income
+Tax Assessment Act 1997` and `subsection 8-1(1) of` that Act, not `s 8-1`, and grades
+the quotation beside it. At llm-tax-guardrails f745aa1 the 2 tools read different
+citation forms: that gate reads `s 8-1` or `section 8-1` of an Act named in full and
+ruling ids such as `TR 2022/1`, matches each with the list exactly, and does not read
+`subsection 8-1(1)`. So there `s 8-1(1)` goes to review even when `s 8-1` is listed, and
+a draft citing only `subsection 8-1(1)` passes the gate unchecked. A later gate may read
+more forms; its own pass note says which. A citation in a form only one tool reads is
+checked by that tool alone. `search quote` grades a
+quotation whose citation `cite-check` does not read. `tests/fadden_consumer_case.rs`
+runs the commands above, apart from the gate, on the fabricated search demo.
 
 ## Witnessing section structure
 

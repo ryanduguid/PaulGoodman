@@ -6,7 +6,20 @@
 //! replaced (the base revision, 43b5e0c) on Windows and on Linux. Every input
 //! is fabricated. For each case the binary must exit as Python did, print what
 //! Python printed (the last line of a traceback where Python printed one), and
-//! leave every file with the recorded SHA-256 of its normalised text.
+//! leave every file with the recorded SHA-256 of its normalised text. The
+//! `compare_builds` cases depart from 43b5e0c on purpose: they were re-recorded
+//! against a stricter `compare_builds.py` that refuses repeated JSON members,
+//! rows naming another title, section metadata that is not text and rows from
+//! two compilations, and lists each title found in only one build. Where that
+//! Python admits a lone surrogate in a container, section, heading, compilation
+//! number or compilation date and then fails while printing it, the binary
+//! refuses the row before printing anything (`tests/fadden_compare_builds.rs`);
+//! no golden case holds that input.
+//!
+//! No Python search stage remains, so the search cases were edited by hand where
+//! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
+//! 17f1d15 added the `refs` line saying an index holds no rulings.
+//!
 //! The finalize fixtures refresh the shipped http_fetch.py digest for the
 //! PaulGoodman contact URL.
 //!
@@ -483,7 +496,7 @@ fn os_today() -> String {
     today
 }
 
-/// Run one case and return what differs from Python, if anything.
+/// Run one case and return what differs from the recording, if anything.
 fn run_case(family: &str, case: &Value, shared_module: &Path, dates: &[String]) -> Option<String> {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join("work");
@@ -544,10 +557,10 @@ fn run_case(family: &str, case: &Value, shared_module: &Path, dates: &[String]) 
         let want = &expected["steps"][n];
         let code = out.status.code().unwrap_or(-1);
         if i64::from(code) != want[0].as_i64().unwrap() {
-            problems.push(format!("step {n}: exit {code}, Python {}", want[0]));
+            problems.push(format!("step {n}: exit {code}, recorded {}", want[0]));
         }
         if !same_text(&stdout, &want[1]) {
-            problems.push(format!("step {n}: stdout\n{stdout}\nPython\n{}", want[1]));
+            problems.push(format!("step {n}: stdout\n{stdout}\nrecorded\n{}", want[1]));
         }
         let stderr = unordered(family, &stderr);
         let want_err = match want[2].as_str() {
@@ -565,7 +578,7 @@ fn run_case(family: &str, case: &Value, shared_module: &Path, dates: &[String]) 
             None => want[2].clone(),
         };
         if !same_text(&stderr, &want_err) {
-            problems.push(format!("step {n}: stderr\n{stderr}\nPython\n{want_err}"));
+            problems.push(format!("step {n}: stderr\n{stderr}\nrecorded\n{want_err}"));
         }
     }
     let mut left = snapshot(family, &work, &module, dates);
