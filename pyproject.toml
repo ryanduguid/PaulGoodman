@@ -18,9 +18,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
 ]
 [project.urls]
-Homepage = "https://github.com/ryanduguid/au-tax-legislation-corpus"
-Repository = "https://github.com/ryanduguid/au-tax-legislation-corpus.git"
-Issues = "https://github.com/ryanduguid/au-tax-legislation-corpus/issues"
+Homepage = "https://github.com/ryanduguid/PaulGoodman"
+Repository = "https://github.com/ryanduguid/PaulGoodman.git"
+Issues = "https://github.com/ryanduguid/PaulGoodman/issues"
 
 [project.optional-dependencies]
 dev = [

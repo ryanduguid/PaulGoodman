@@ -20,6 +20,9 @@
 //! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
 //! 17f1d15 added the `refs` line saying an index holds no rulings.
 //!
+//! The finalize fixtures refresh the shipped http_fetch.py digest for the
+//! PaulGoodman contact URL.
+//!
 //! Outputs are normalised as the harness normalised them: the case directory
 //! reads `ROOT`, the module directory `MODULE`, generated stage, backup and
 //! temporary names `HEX`, whole-second sleeps in the discover and versions

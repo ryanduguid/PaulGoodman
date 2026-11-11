@@ -255,7 +255,7 @@ fn the_build_record_describes_the_finalisation() {
     assert_eq!(
         record["source"],
         json!({
-            "repository": "https://github.com/ryanduguid/au-tax-legislation-corpus",
+            "repository": "https://github.com/ryanduguid/PaulGoodman",
             "revision": null, "dirty": null,
             "reason": "the binary carries no verified record of the source it was built from",
         })

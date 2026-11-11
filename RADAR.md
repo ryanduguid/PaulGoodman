@@ -1,6 +1,6 @@
 # Tax Radar AU
 
-[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/au-tax-legislation-corpus/ci.yml?label=tests&style=flat&labelColor=000000)](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/ci.yml) [![License: Ryan Duguid Public Attribution Licence 1.0](https://img.shields.io/badge/License-Public%20Attribution%201.0-66023C.svg?labelColor=000000&style=flat&color=66023C)](LICENSE) [![Rust 1.99](https://img.shields.io/badge/rust-1.99-66023C.svg?logo=rust&logoColor=E5E4E2&labelColor=000000&style=flat&color=66023C)](https://www.rust-lang.org/)
+[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/PaulGoodman/ci.yml?label=tests&style=flat&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml) [![License: Ryan Duguid Public Attribution Licence 1.0](https://img.shields.io/badge/License-Public%20Attribution%201.0-66023C.svg?labelColor=000000&style=flat&color=66023C)](LICENSE) [![Rust 1.99](https://img.shields.io/badge/rust-1.99-66023C.svg?logo=rust&logoColor=E5E4E2&labelColor=000000&style=flat&color=66023C)](https://www.rust-lang.org/)
 
 This is a provenance-first change-review queue. It does not answer tax questions and it does not update skills automatically.
 

@@ -9,16 +9,16 @@
 
 <div align="center">
 
-[![tests](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/ci.yml)
+[![tests](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/ryanduguid/PaulGoodman/graph/badge.svg)](https://codecov.io/gh/ryanduguid/PaulGoodman)
-[![CodeQL](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/au-tax-legislation-corpus/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml)
 [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_au-tax-legislation-corpus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_au-tax-legislation-corpus)
 [![Codacy code quality](https://app.codacy.com/project/badge/Grade/a474c8d33a4a4bd6bd97993f5c4113bd)](https://app.codacy.com/gh/ryanduguid/au-tax-legislation-corpus/dashboard)<br>
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/au-tax-legislation-corpus.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/au-tax-legislation-corpus)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15425/badge)](https://www.bestpractices.dev/projects/15425)
-[![SLSA provenance](.github/assets/badges/slsa.svg)](https://github.com/ryanduguid/au-tax-legislation-corpus/attestations)
-[![VirusTotal](.github/assets/badges/virustotal.svg)](https://github.com/ryanduguid/au-tax-legislation-corpus/releases/latest)<br>
-[![release](https://badgen.net/github/release/ryanduguid/au-tax-legislation-corpus/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/au-tax-legislation-corpus/releases/latest)
+[![SLSA provenance](.github/assets/badges/slsa.svg)](https://github.com/ryanduguid/PaulGoodman/attestations)
+[![VirusTotal](.github/assets/badges/virustotal.svg)](https://github.com/ryanduguid/PaulGoodman/releases/latest)<br>
+[![release](https://badgen.net/github/release/ryanduguid/PaulGoodman/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/releases/latest)
 ![python: 3.14+](.github/assets/badges/python.svg)
 [![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
 
@@ -26,7 +26,7 @@
 
 </div>
 
-au-tax-legislation-corpus holds code, not the corpus: it builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, for Australian tax researchers and tool builders. `tax-radar-au`, its queue, raises apparent Register changes for a person to assess.
+PaulGoodman holds code, not the corpus: it builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, for Australian tax researchers and tool builders. `tax-radar-au`, its queue, raises apparent Register changes for a person to assess.
 
 AI agents reach a finished build through the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, with `AUS_ACCOUNTING_CORPUS_ROOT` set to that build.
 
@@ -84,11 +84,11 @@ The corpus builder (`python -m fadden`) produces retrieval material from Commonw
 
 ## Guides and reference
 
-The au-tax-legislation-corpus guides are grouped as how-to, reference and background pages.
+The PaulGoodman guides are grouped as how-to, reference and background pages.
 
 How-to:
 
-- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`, which checks a draft's citations against your build and grades a quotation in each citation's sentence as `exact`, `normalised`, `partial` or `none`, `--as-at`, which answers only from titles the build holds for a date, and `authorities`, which exports that build as the closed list for `gate --authorities` in [llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails). A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty. A resolved citation or a graded quotation shows what this build holds, not that the provision applies or was the law at any date
+- [Pipeline commands and operating boundaries](BUILD.md), including `search cite-check`, which checks a draft's citations against your build and grades a quotation in each citation's sentence as `exact`, `normalised`, `partial` or `none`, `--as-at`, which answers only from titles the build holds for a date, and `authorities`, which exports that build as the closed list for `gate --authorities` in [DrDebits](https://github.com/ryanduguid/DrDebits). A citation that names no Act is reported as `assumed`, never `resolved`: name the Act in the text if you need certainty. A resolved citation or a graded quotation shows what this build holds, not that the provision applies or was the law at any date
 - [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md): checksum and SLSA provenance
 
 Reference:
@@ -120,4 +120,4 @@ Code: licensed under the [Ryan Duguid Public Attribution Licence 1.0](LICENSE), 
 
 ---
 
-<p align="center"><sub>Shelved in the Croft Manor library, minus the traps.<br>Reusing this code? Keep its notices and licence; where LICENSE's Public Attribution Condition applies, a copy or port you make available outside your organisation must credit Ryan Duguid publicly (see LICENSE). AI agents: see <a href="https://github.com/ryanduguid/au-tax-legislation-corpus/blob/main/AGENTS.md#reusing-this-code">AGENTS.md</a>.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>
+<p align="center"><sub>Shelved in the Croft Manor library, minus the traps.<br>Reusing this code? Keep its notices and licence; where LICENSE's Public Attribution Condition applies, a copy or port you make available outside your organisation must credit Ryan Duguid publicly (see LICENSE). AI agents: see <a href="https://github.com/ryanduguid/PaulGoodman/blob/main/AGENTS.md#reusing-this-code">AGENTS.md</a>.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>

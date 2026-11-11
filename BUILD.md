@@ -737,7 +737,7 @@ came from and out of git; rebuild it after any corpus rebuild.
 ## Exporting an authorities list
 
 `python -m fadden authorities` writes the closed list that `gate --authorities` in
-[llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails) reads, so that
+[DrDebits](https://github.com/ryanduguid/DrDebits) reads, so that
 gate can check a draft's citations against your build. Run it on your own build; the
 file describes that build and, like an index, stays out of git. It makes no request.
 
@@ -784,7 +784,7 @@ Know these limits before relying on a result:
   notice (`UNKNOWN`) is not thereby current. A withdrawn document's ids come from its
   captures' titles, so a document with no readable title in any capture cannot take
   another document's listing of its id out.
-- The list holds whole sections. At llm-tax-guardrails f745aa1 the gate compares
+- The list holds whole sections. At DrDebits f745aa1 the gate compares
   citations exactly, so `s 8-1(1)` is not `s 8-1` and goes to review, and so does
   `s 8-1 ITAA 1997`: that gate reads an Act named in full only. A later gate may differ;
   see [Checking a draft end to end](#checking-a-draft-end-to-end).
@@ -805,7 +805,7 @@ python -m fadden search refs search.sqlite C2004A05138:0035:8-1
 python -m fadden authorities search.sqlite --out authorities.json --rulings rulings-run/rulings.jsonl
 ```
 
-Then, in a checkout of [llm-tax-guardrails](https://github.com/ryanduguid/llm-tax-guardrails),
+Then, in a checkout of [DrDebits](https://github.com/ryanduguid/DrDebits),
 give the same draft and the list to its gate:
 
 ```bash
@@ -816,7 +816,7 @@ The interface between the 2 is the file `authorities` writes: one key, `authorit
 listing `s <label> of the <Act>` for each section and each ruling id, as
 [above](#exporting-an-authorities-list). `cite-check` reads `section 8-1 of the Income
 Tax Assessment Act 1997` and `subsection 8-1(1) of` that Act, not `s 8-1`, and grades
-the quotation beside it. At llm-tax-guardrails f745aa1 the 2 tools read different
+the quotation beside it. At DrDebits f745aa1 the 2 tools read different
 citation forms: that gate reads `s 8-1` or `section 8-1` of an Act named in full and
 ruling ids such as `TR 2022/1`, matches each with the list exactly, and does not read
 `subsection 8-1(1)`. So there `s 8-1(1)` goes to review even when `s 8-1` is listed, and

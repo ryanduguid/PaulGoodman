@@ -42,8 +42,7 @@ use super::Exc;
 use crate::py;
 use crate::pyjson::{self, DecodeError, Json};
 
-pub const UA: &str =
-    "au-tax-legislation-corpus (+https://github.com/ryanduguid/au-tax-legislation-corpus)";
+pub const UA: &str = "au-tax-legislation-corpus (+https://github.com/ryanduguid/PaulGoodman)";
 const TIMEOUT: Duration = Duration::from_secs(90);
 /// One attempt budget for every Register caller.
 pub const TRIES: u32 = 3;
