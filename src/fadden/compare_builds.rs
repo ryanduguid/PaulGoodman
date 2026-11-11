@@ -6,7 +6,7 @@
 //! Reads two corpus roots, each holding `markdown/<register_id>/sections.jsonl`,
 //! and compares every title present in both. Rows match on their container and
 //! section label (a repeated label in order of appearance, a row without one by
-//! its heading). The comparison covers the derived reading view, not the
+//! its heading). Titles present in only one build are listed. The comparison covers the derived reading view, not the
 //! authorised text, and is no finding about an amendment's legal effect.
 use std::collections::{BTreeSet, HashMap};
 
@@ -14,7 +14,7 @@ use super::corpus_paths::{child, register_id, register_id_str};
 use super::{Exc, Run, json_error};
 use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyio::Lines;
-use crate::pyjson::{self, Json};
+use crate::pyjson::{self, DecodeError, Json, PyStr};
 use crate::pyos::{OsError, Style};
 use crate::pyvalue::{self, Key, dumps_line, py_eq, str_points, type_name};
 
@@ -37,7 +37,11 @@ pub fn titles(root: &str) -> Result<BTreeSet<String>, Exc> {
     Ok(found)
 }
 
-/// `load_rows(root, rid)`: the rows of one title's sections.jsonl.
+/// `load_rows(root, rid)`: the rows of one title's sections.jsonl. A row
+/// repeating a JSON member, naming another title, holding a container, section
+/// or heading that is not text (a lone surrogate included), holding a lone
+/// surrogate anywhere in its compilation number or date, or giving another
+/// compilation than the first row is refused.
 pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
     let path = child(
         root,
@@ -52,15 +56,60 @@ pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
         if crate::py::strip(&line).is_empty() {
             continue;
         }
-        let row = pyjson::loads_standard(&line).map_err(json_error)?;
-        if !matches!(row.get("text"), Some(Json::Str(_))) {
+        let row = pyjson::loads(&line).map_err(|error| match error {
+            DecodeError::Duplicate => {
+                Exc::value(format!("{path}:{number} contains duplicate JSON members"))
+            }
+            other => json_error(other),
+        })?;
+        // A lone surrogate is refused here, where the stricter Python admitted
+        // it and then failed part way through printing the report.
+        let text_or_none = |name| {
+            matches!(
+                row.get(name),
+                None | Some(Json::Null | Json::Str(PyStr::Text(_)))
+            )
+        };
+        if !matches!(row.get("text"), Some(Json::Str(_)))
+            || !row
+                .get("register_id")
+                .is_none_or(|id| py_eq(id, &Json::str(rid)))
+            || !["container", "section", "heading"]
+                .into_iter()
+                .all(text_or_none)
+            || ["compilation_number", "compilation_date"]
+                .into_iter()
+                .any(|name| row.get(name).is_some_and(has_lone_surrogate))
+        {
             return Err(Exc::value(format!(
                 "{path}:{number} is not a sections.jsonl row"
+            )));
+        }
+        if let Some(first) = rows.first()
+            && ["compilation_number", "compilation_date"]
+                .into_iter()
+                .any(|name| !py_eq(field(&row, name), field(first, name)))
+        {
+            return Err(Exc::value(format!(
+                "{path}:{number} has inconsistent compilation metadata"
             )));
         }
         rows.push(row);
     }
     Ok(rows)
+}
+
+/// Whether a lone surrogate appears anywhere in `value`, member names included:
+/// the report prints the compilation fields, and such text cannot be printed.
+fn has_lone_surrogate(value: &Json) -> bool {
+    match value {
+        Json::Str(PyStr::Lone(_)) => true,
+        Json::Array(items) => items.iter().any(has_lone_surrogate),
+        Json::Object(pairs) => pairs
+            .iter()
+            .any(|(key, item)| matches!(key, PyStr::Lone(_)) || has_lone_surrogate(item)),
+        _ => false,
+    }
 }
 
 /// `row.get(field)`, None when absent.
@@ -351,6 +400,11 @@ fn report(
                     run.print_points(&line)?;
                 }
             }
+        }
+    }
+    for (rids, side) in [(&only_old, "old"), (&only_new, "new")] {
+        for rid in rids {
+            run.print(&format!("{rid}: only in the {side} build"));
         }
     }
     run.print(&format!(

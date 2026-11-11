@@ -1,3 +1,7 @@
+# Unreleased
+
+- `compare_builds` refuses a sections.jsonl row that repeats a JSON member at any depth, names another title, holds a container, section or heading that is neither text nor null (a lone surrogate counts as neither), holds a lone surrogate anywhere in its compilation number or date, or comes from a different compilation from the title's first row, and its text report lists the titles present in only one build. For such inputs it departs on purpose from the output of the Python stage at 43b5e0c.
+
 # v0.4.0
 
 This candidate contains the corpus builder source. It excludes generated legislation and live evidence.

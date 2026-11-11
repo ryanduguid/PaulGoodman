@@ -6,7 +6,15 @@
 //! replaced (the base revision, 43b5e0c) on Windows and on Linux. Every input
 //! is fabricated. For each case the binary must exit as Python did, print what
 //! Python printed (the last line of a traceback where Python printed one), and
-//! leave every file with the recorded SHA-256 of its normalised text.
+//! leave every file with the recorded SHA-256 of its normalised text. The
+//! `compare_builds` cases depart from 43b5e0c on purpose: they were re-recorded
+//! against a stricter `compare_builds.py` that refuses repeated JSON members,
+//! rows naming another title, section metadata that is not text and rows from
+//! two compilations, and lists each title found in only one build. Where that
+//! Python admits a lone surrogate in a container, section, heading, compilation
+//! number or compilation date and then fails while printing it, the binary
+//! refuses the row before printing anything (`tests/fadden_compare_builds.rs`);
+//! no golden case holds that input.
 //!
 //! No Python search stage remains, so the search cases were edited by hand where
 //! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
