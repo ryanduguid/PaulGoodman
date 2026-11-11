@@ -26,7 +26,8 @@ const BUILDER: [&str; 5] = [
     "finalize.py",
 ];
 /// `OUTPUT_HASHES` in the removed test_finalize_phases.py; README.md now has its
-/// "Build record" section and says "about 1 minute".
+/// "Build record" section, says "about 1 minute" and says retrieval dates "can
+/// vary".
 const OUTPUT_HASHES: [(&str, &str); 4] = [
     (
         "INDEX.md",
@@ -38,7 +39,7 @@ const OUTPUT_HASHES: [(&str, &str); 4] = [
     ),
     (
         "README.md",
-        "69cc497d82e2abeae72cb4bb3f3a817edc538c9e1e6205838348a2626f4f1f31",
+        "7ba539cf05fd041e57a5422800cfef65347fa0f31fcc7b0187e70ac449170320",
     ),
     (
         "sources.json",
@@ -646,6 +647,19 @@ fn the_staleness_estimate_says_one_minute() {
         "{readme}"
     );
     assert!(!readme.contains("1 minutes"), "{readme}");
+}
+
+/// A build whose titles were all downloaded on one day must not be told its
+/// retrieval dates vary.
+#[test]
+fn the_readme_says_retrieval_dates_can_vary() {
+    let tree = phase_fixture();
+    tree.run(DATE).0.unwrap();
+    let readme = read(&tree.root.join("README.md"));
+    assert!(
+        readme.contains("**Per-Act retrieval dates can vary.**"),
+        "{readme}"
+    );
 }
 
 /// `fadden finalize`, run as the dispatcher runs it, with its arguments.

@@ -1250,28 +1250,39 @@ fn replace_section(text: &str, heading: &str, replacement: &str) -> Option<Strin
     Some(format!("{}{replacement}{}", &text[..start], &text[end..]))
 }
 
-/// Every section in `sections` replaced in turn. A `file` that opens with
-/// finalize's `title` must hold each heading, or it would ship text about
-/// files dist leaves out. Other text, such as the golden cases' stand-ins, has
-/// none of them and is kept as Python kept it.
+/// Every section in `sections` replaced in turn, in a `file` that opens with
+/// finalize's `title`. Such a file must hold each heading, or it would ship
+/// text about files dist leaves out. Any other text is kept as given, as Python
+/// kept it, and reported if it holds one of the headings anyway.
 fn replace_sections(
     text: &str,
     title: &str,
     sections: &[(&str, &str)],
     file: &str,
+    run: &mut Run,
 ) -> Result<String, Exc> {
+    if !text.starts_with(title) {
+        let held: Vec<&str> = sections
+            .iter()
+            .map(|(heading, _)| *heading)
+            .filter(|heading| text.contains(&format!("\n{heading}\n")))
+            .collect();
+        if !held.is_empty() {
+            run.print(&format!(
+                "{file}: left as given, since it does not open as finalize writes it ({})",
+                held.join(", ")
+            ));
+        }
+        return Ok(text.to_string());
+    }
     let mut text = text.to_string();
     for (heading, replacement) in sections {
-        match replace_section(&text, heading, replacement) {
-            Some(replaced) => text = replaced,
-            None if text.starts_with(title) => {
-                return Err(Exc::Runtime(format!(
-                    "{file} opens as finalize writes it but has no `{heading}` section; \
-                     rerun finalize with this fadden, then dist"
-                )));
-            }
-            None => {}
-        }
+        text = replace_section(&text, heading, replacement).ok_or_else(|| {
+            Exc::Runtime(format!(
+                "{file} opens as finalize writes it but has no `{heading}` section; \
+                 rerun finalize with this fadden, then dist"
+            ))
+        })?;
     }
     Ok(text)
 }
@@ -1616,8 +1627,14 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         "excluded_titles",
         Json::Array(excluded.into_iter().map(|(_, e)| e).collect()),
     );
-    if get(&src, "licence_note")?.is_some() {
-        set(&mut out, "licence_note", Json::str(DIST_LICENCE_NOTE));
+    match get(&src, "licence_note")? {
+        Some(note) if note.as_str() == Some(super::finalize::LICENCE_NOTE) => {
+            set(&mut out, "licence_note", Json::str(DIST_LICENCE_NOTE));
+        }
+        Some(_) => run.print(
+            "sources.json: licence_note left as given, since it is not the note finalize writes",
+        ),
+        None => {}
     }
     dump_json(&child(staging, &["sources.json"])?, &out)?;
 
@@ -1628,7 +1645,13 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     // notice describing the EPUBs is rewritten, since none ship here.
     copyfile(&licence_src, &licence_dst, &py::repr_str(&licence_src))?;
     let notice = crate::pyio::read_text(&licence_dst)?;
-    let rewritten = replace_sections(&notice, NOTICE_TITLE, &NOTICE_SECTIONS, "LICENCE-NOTICE.md")?;
+    let rewritten = replace_sections(
+        &notice,
+        NOTICE_TITLE,
+        &NOTICE_SECTIONS,
+        "LICENCE-NOTICE.md",
+        run,
+    )?;
     if rewritten != notice {
         write_text(&licence_dst, &pts(&rewritten))?;
     }
@@ -1727,7 +1750,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         &rd,
     );
     rd = replace_readme_table_block_paragraph(&rd, table_block);
-    rd = replace_sections(&rd, README_TITLE, &README_SECTIONS, "README.md")?;
+    rd = replace_sections(&rd, README_TITLE, &README_SECTIONS, "README.md", run)?;
     rd = format!(
         "> **This is the redistributable subset.** The EPUBs, {} titles that name private individuals and {} \
          accounting standards under restrictive copyright notices are not included. See REMOVED.md for what \
@@ -1752,8 +1775,8 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         pts("## The EPUBs"),
         Vec::new(),
         pts(
-            "Not included. The Register serves them with the Commonwealth Coat of Arms embedded, and the Coat of \
-             Arms is excluded from the CC BY 4.0 grant covering everything else. Stripping it would also destroy \
+            "Not included. The Register serves them with the Commonwealth Coat of Arms embedded, and the Register's \
+             CC BY 4.0 licence excludes the Coat of Arms and any content noted otherwise. Stripping it would also destroy \
              the only reason to ship them, which is that they are byte-identical to what legislation.gov.au \
              served. Run `download.py` to fetch your own.",
         ),

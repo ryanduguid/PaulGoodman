@@ -38,7 +38,7 @@ const REGISTER: &str = "https://www.legislation.gov.au";
 const ATTR_UNCHANGED: &str = r#"Sourced from the Federal Register of Legislation at %s. For the latest information on Australian Government law please go to https://www.legislation.gov.au"#;
 const ATTR_CHANGED: &str = r#"Based on content from the Federal Register of Legislation at %s. For the latest information on Australian Government legislation please go to https://www.legislation.gov.au. Changes: converted from EPUB to markdown, contents pages removed, endnotes separated, images replaced by their descriptive alt text, compilation cover pages and running headers omitted."#;
 const CORPUS: &str = r#"Commonwealth tax statutes and legislative instruments"#;
-const LICENCE_NOTE: &str = r#"Excludes the Commonwealth Coat of Arms and any third-party material. The EPUBs under epub/ embed the Coat of Arms as an image; it is NOT licensed under CC BY and must not be reused. The markdown omits it. Authorised versions are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view used here is NOT the authorised text."#;
+pub(super) const LICENCE_NOTE: &str = r#"Excludes the Commonwealth Coat of Arms and any third-party material. The EPUBs under epub/ embed the Coat of Arms as an image; it is NOT licensed under CC BY and must not be reused. The markdown omits it. Authorised versions are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view used here is NOT the authorised text."#;
 const SELECTION: &str = r#"In-force principal titles in the Act, LegislativeInstrument and NotifiableInstrument collections whose name contains Tax, Excise, Superannuation, Customs Tariff or Medicare Levy. isPrincipal could not be applied server-side (the API returns 400 for any filter containing it), so it was applied client-side. Selection is by title keyword, so a tax-relevant title without one of those words in its name is absent, and some collected titles (notably Commonwealth employee superannuation schemes) are not tax law. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
 /// `selection` for a build of the `python -m fadden quick` preset, which picks
 /// its Acts by register id rather than by keyword.
@@ -254,7 +254,7 @@ structure to split on, and `table_block` where it was split on its tables. Its
 `heading` names the container or passage. Schedules in particular hold large
 bodies of text that belong to no section number.
 
-**Per-Act retrieval dates vary.** Each Act's `retrieved` field and attribution
+**Per-Act retrieval dates can vary.** Each Act's `retrieved` field and attribution
 carry the date that Act's EPUB was actually downloaded, not the build date.
 
 ## Parser notes

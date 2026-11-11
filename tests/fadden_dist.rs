@@ -1906,7 +1906,8 @@ fn the_distribution_describes_only_what_it_ships() {
     write(
         &f.root.join("README.md"),
         &format!(
-            "{readme}\n## Checking staleness\n\n    python check_current.py\n\n\
+            "# Commonwealth tax legislation knowledge base\n\n{readme}\n\
+             ## Checking staleness\n\n    python check_current.py\n\n\
              Read-only, about 1 minute for everything.\n\n\
              ## Build record\n\n`build/build-record.json` records this finalisation.\n\n\
              ## Licence and attribution\n\nLicensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).\n\n\
@@ -1963,15 +1964,19 @@ fn the_distribution_describes_only_what_it_ships() {
     assert_eq!(verify(&f).0, 0);
 }
 
+/// finalize's sources.json note, copied from src/fadden/finalize.rs.
+const FINALIZE_LICENCE_NOTE: &str = "Excludes the Commonwealth Coat of Arms and any third-party material. \
+     The EPUBs under epub/ embed the Coat of Arms as an image; it is NOT licensed under CC BY and must not be \
+     reused. The markdown omits it. Authorised versions are PDF only, stamped under sections 15ZA and 15ZB of \
+     the Legislation Act 2003; the EPUB reading view used here is NOT the authorised text.";
+
 /// finalize's sources.json note describes EPUBs under `epub/`; dist ships none.
 #[test]
 fn the_distributed_licence_note_describes_no_epubs() {
     let f = fixture();
     let path = f.root.join("sources.json");
     let mut sources = read_json(&path);
-    sources["licence_note"] = json!(
-        "Excludes the Coat of Arms. The EPUBs under epub/ embed the Coat of Arms as an image."
-    );
+    sources["licence_note"] = json!(FINALIZE_LICENCE_NOTE);
     write(&path, &sources.to_string());
     let shipped = read_json(&publish(&f).join("sources.json"));
     let note = shipped["licence_note"].as_str().unwrap();
@@ -2037,6 +2042,72 @@ fn removed_md_names_the_contact_count_as_the_allowlist_size() {
     assert!(
         removed.contains("The hashed contact allowlist holds 4 unique organisational identifiers"),
         "{removed}"
+    );
+}
+
+/// The EPUBs' licence leaves out more than the Coat of Arms: the Register's
+/// terms also exclude content noted otherwise, so REMOVED.md must not say the
+/// grant covers everything else.
+#[test]
+fn removed_md_names_the_licence_exclusions() {
+    let f = fixture();
+    let removed = std::fs::read_to_string(publish(&f).join("REMOVED.md")).unwrap();
+    assert!(!removed.contains("covering everything else"), "{removed}");
+    assert!(
+        removed.contains(
+            "the Register's CC BY 4.0 licence excludes the Coat of Arms and any content noted otherwise."
+        ),
+        "{removed}"
+    );
+}
+
+/// A README or notice finalize did not write keeps every section, even one
+/// headed as finalize heads a section dist rewrites, and dist says so.
+#[test]
+fn text_finalize_did_not_write_is_left_as_given() {
+    let f = fixture();
+    let readme = std::fs::read_to_string(f.root.join("README.md")).unwrap();
+    let readme = format!("{readme}\n## Build record\n\nCustom provenance kept by hand.\n");
+    write(&f.root.join("README.md"), &readme);
+    let notice = "# Notice\n\n## Not covered by CC BY\n\nCustom exclusions kept by hand.\n";
+    write(&f.root.join("LICENCE-NOTICE.md"), notice);
+    let (code, out, err) = stage(&f, "dist");
+    assert_eq!(code, 0, "{err}");
+    let shipped = std::fs::read_to_string(f.dist().join("README.md")).unwrap();
+    assert!(
+        shipped.contains("\n## Build record\n\nCustom provenance kept by hand.\n"),
+        "{shipped}"
+    );
+    let shipped = std::fs::read_to_string(f.dist().join("LICENCE-NOTICE.md")).unwrap();
+    assert_eq!(shipped, notice);
+    for line in [
+        "README.md: left as given, since it does not open as finalize writes it (## Build record)",
+        "LICENCE-NOTICE.md: left as given, since it does not open as finalize writes it \
+         (## Not covered by CC BY)",
+    ] {
+        assert!(out.contains(line), "{line}\n{out}");
+    }
+}
+
+/// A licence_note finalize did not write is shipped as given, and dist says so.
+#[test]
+fn a_licence_note_finalize_did_not_write_is_left_as_given() {
+    let f = fixture();
+    let path = f.root.join("sources.json");
+    let mut sources = read_json(&path);
+    let note =
+        "Excludes the Coat of Arms and the maps in Schedule 3, which are third-party material.";
+    sources["licence_note"] = json!(note);
+    write(&path, &sources.to_string());
+    let (code, out, err) = stage(&f, "dist");
+    assert_eq!(code, 0, "{err}");
+    let shipped = read_json(&f.dist().join("sources.json"));
+    assert_eq!(shipped["licence_note"], json!(note));
+    assert!(
+        out.contains(
+            "sources.json: licence_note left as given, since it is not the note finalize writes"
+        ),
+        "{out}"
     );
 }
 

@@ -41,14 +41,16 @@
 //! leaves out the other cases, which the default run covers and which never
 //! reach the script. How hard can it be? (Top Gear)
 //!
-//! 2 wording fixes depart from Python on purpose, and `departed` maps each
+//! 4 wording fixes depart from Python on purpose, and `departed` maps each
 //! back to Python's text before hashing: finalize's README says "about 1
-//! minute" where Python said "1 minutes", and dist's REMOVED.md names the
-//! contact allowlist's size as that, where Python called it the contacts the
-//! second pass approved. dist's other departures never reach these cases: its
-//! README and LICENCE-NOTICE.md section rewrites and its `licence_note` apply
-//! only to finalize's headings and field, which no dist input holds, so those
-//! are covered by tests/fadden_dist.rs alone.
+//! minute" where Python said "1 minutes" and "retrieval dates can vary" where
+//! Python said they "vary"; dist's REMOVED.md names the contact allowlist's
+//! size as that, where Python called it the contacts the second pass approved,
+//! and names the licence's exclusions, where Python said the grant covered
+//! everything but the Coat of Arms. dist's other departures never reach these
+//! cases: its README and LICENCE-NOTICE.md section rewrites and its
+//! `licence_note` apply only to finalize's title, headings and note, which no
+//! dist input holds, so those are covered by tests/fadden_dist.rs alone.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -245,10 +247,15 @@ fn snapshot(
 /// purpose (see the module comment).
 fn departed(family: &str, rel: &str, text: &str) -> String {
     match family {
-        "finalize" if rel.ends_with("/README.md") => text.replace(
-            "about 1 minute for everything",
-            "about 1 minutes for everything",
-        ),
+        "finalize" if rel.ends_with("/README.md") => text
+            .replace(
+                "about 1 minute for everything",
+                "about 1 minutes for everything",
+            )
+            .replace(
+                "**Per-Act retrieval dates can vary.**",
+                "**Per-Act retrieval dates vary.**",
+            ),
         "dist" if rel.ends_with("/REMOVED.md") => ALLOWLIST_SIZE
             .replace_all(
                 text,
@@ -256,7 +263,10 @@ fn departed(family: &str, rel: &str, text: &str) -> String {
                  identifiers. Each is bound to a reviewed Register title in the hashed allowlist; a new or \
                  moved contact fails publication.",
             )
-            .into_owned(),
+            .replace(
+                "the Register's CC BY 4.0 licence excludes the Coat of Arms and any content noted otherwise.",
+                "the Coat of Arms is excluded from the CC BY 4.0 grant covering everything else.",
+            ),
         _ => text.to_string(),
     }
 }
