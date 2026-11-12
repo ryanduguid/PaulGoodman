@@ -90,3 +90,13 @@ def test_repository_declares_its_source_only_package_lifecycle() -> None:
     assert "**Package lifecycle:** source-only." in readme
     assert "not published to PyPI" in readme
     assert "plain `pip install`" not in radar
+
+
+def test_readme_routes_agents_to_the_published_corpus_snapshot() -> None:
+    # A corpus- release ships a verified 9-Act snapshot; the README once said
+    # releases carry no ready-made corpus, sending agents to build one instead.
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+
+    assert "not a ready-made corpus" not in readme
+    assert "releases/tag/corpus-" in readme
+    assert "AUS_ACCOUNTING_CORPUS_ROOT" in readme

@@ -74,9 +74,9 @@ installed or run.
 
 ## Commercial research tools
 
-The vendor pages below were read on 5 November 2026, and those for Ask Nugget
-and TimeBase on 4 November 2026. They describe advertised capabilities; no
-product was used in a trial or tested against this corpus.
+The vendor pages below were read on 5 November 2026, those for Ask Nugget
+and TimeBase on 4 November 2026 and The Tax Institute's on 12 November 2026.
+They describe advertised capabilities; no product was used in a trial or tested against this corpus.
 
 | Product and primary source | Advertised capability | Comparison with this builder |
 | --- | --- | --- |
@@ -89,6 +89,7 @@ product was used in a trial or tested against this corpus.
 | [Cassandra](https://www.cassandraresearch.com/) | Tax and legal research drafts across 23 jurisdictions, with linked authorities, 32 Australian engines and 34 Australian specialist tools. Tax products are restricted to registered agents, Australian legal practitioners and other approved professionals | It produces a draft for professional review. This builder generates no answer and covers one jurisdiction. |
 | [Praxio AI](https://www.praxio-ai.com.au/) | Cited Australian tax research from a client scenario, grounded in legislation and ATO guidance, with clarifying questions, a client-ready draft and a saved history | It runs from client scenario to draft. This builder stops at source rows and a review queue, which a consumer can use to check a citation against a compilation. |
 | [Tax Guru AI](https://www.tax-guru.ai/) | Source-linked tax research across 17 specialised modes over a proprietary database of expert-verified articles; the page gives both 20,000+ and 18,000+ articles | It answers from curated articles. This builder holds no commentary, and its rows are derived from the Register's reading view, not selected or verified by experts. |
+| [Tax Knowledge Exchange, powered by SavvyWise](https://www.taxinstitute.com.au/tke/powered-by-savvywise) (The Tax Institute) | The Tax Institute's subscription library of its papers is moving to SavvyWise's platform 'over the coming months', with keyword, topic and faceted search and an optional AI search add-on, not yet available, through a SavvyWise subscription. The Institute remains 'the sole owner and custodian' of the database and the papers' authors keep copyright | It is copyright professional commentary. This builder holds no commentary, only Register compilations; a consumer that needs the Institute's papers must subscribe to them. |
 
 ### Cases for evaluating a research consumer
 
