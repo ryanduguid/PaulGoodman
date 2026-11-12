@@ -28,9 +28,26 @@
 
 PaulGoodman holds code, not the corpus: it builds retrieval material from in-force Commonwealth tax legislation on the [Federal Register of Legislation](https://www.legislation.gov.au/), with source and provenance records, for Australian tax researchers and tool builders. `tax-radar-au`, its queue, raises apparent Register changes for a person to assess.
 
-AI agents reach a finished build through the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, with `AUS_ACCOUNTING_CORPUS_ROOT` set to that build.
+AI agents reach a finished build through the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, with `AUS_ACCOUNTING_CORPUS_ROOT` set to that build. The quickest is the [published snapshot](#give-an-agent-the-law-from-the-published-snapshot), which needs no build.
 
 ## Install and try it
+
+### Give an agent the law from the published snapshot
+
+Release [`corpus-2026-11-11`](https://github.com/ryanduguid/PaulGoodman/releases/tag/corpus-2026-11-11) carries 9 principal tax Acts as one 6.2 MB archive with a `SHA256SUMS` file: 9,439 section rows and 1,664 rate rows, each Act at its current compilation on 11 November 2026. Download, verify and unpack it outside any checkout:
+
+```bash
+curl -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/au-tax-legislation-corpus-dist-2026-11-11.tar.gz
+curl -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/SHA256SUMS
+sha256sum -c SHA256SUMS
+tar -xzf au-tax-legislation-corpus-dist-2026-11-11.tar.gz
+```
+
+Then set `AUS_ACCOUNTING_CORPUS_ROOT` to the absolute path of the unpacked `dist` folder in the `env` block of the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server's entry, and restart it. `search_tax_legislation`, `read_tax_legislation_section`, `define_tax_term` and `search_tax_rates` answer from that folder ([evidence](docs/build-evidence.md#published-snapshot-as-an-mcp-corpus)).
+
+The snapshot is a finding aid derived from the Register's EPUB reading view, not authorised text or tax advice. It holds no instruments, rulings or cases, and a later amendment can outdate it; [`quick`](#search-real-law-from-an-empty-folder) builds the current compilations instead. Its legislative content is licensed CC BY 4.0 by the Federal Register of Legislation, with the attribution in the release notes.
+
+### Build from source
 
 From a source clone, install the builder with `python -m pip install -e .`, which puts `python -m fadden` on the path, and build the Rust binaries with `cargo build --locked --release`: `fadden`, which runs the example below and most other stages, and the `tax-radar-au` review queue. The builder still reads and writes beside its own stage modules, so run its stages from the checkout.
 
@@ -80,7 +97,7 @@ default. See [BUILD.md](BUILD.md) for index rebuilding and the measured ranking 
 
 The corpus builder (`python -m fadden`) produces retrieval material from Commonwealth legislation. Its `rulings` stage derives paragraph JSONL from named ATO rulings and related documents under the ATO's reuse notice ([docs/rulings.md](docs/rulings.md)). The change-review queue (`tax-radar-au`) consumes a reviewed observation contract and raises items for a person to assess. Documented network access is 7 builder stages that reach the Federal Register, `quick`, which runs some of them, and `rulings`, which reaches the ATO Legal Database; the review queue itself makes no network request.
 
-**Package lifecycle:** source-only. The builder is not published to PyPI; releases carry source archives, not a ready-made corpus or a builder wheel. The queue has its own package identity; this source install does not download legislation.
+**Package lifecycle:** source-only. The builder is not published to PyPI; code releases carry source archives, not a builder wheel. Corpus snapshots are separate `corpus-` releases, such as [`corpus-2026-11-11`](#give-an-agent-the-law-from-the-published-snapshot). The queue has its own package identity; this source install does not download legislation.
 
 ## Guides and reference
 

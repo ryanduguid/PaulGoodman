@@ -96,6 +96,10 @@ One run of `python -m fadden quick` on 6 November 2026 took an empty folder to a
 
 The folder held 9 titles, 9,439 rows, 3,678 definitions and 32,463 references, from 9.1 MB of EPUBs, in 82 MB. All 9 Acts had a published document for their current version, so `probe13` and `retry13` did not run. With `AUS_ACCOUNTING_CORPUS_ROOT` set to that folder, `search_tax_legislation` in the published `aus-accounting-mcp` 0.7.1 returned `C2004A05138:0035:8-1`, section 8-1 of the ITAA 1997, first for 'general deductions', 1.03 seconds after the script started, including the server's import.
 
+## Published snapshot as an MCP corpus
+
+On 12 November 2026 the `corpus-2026-11-11` archive matched its `SHA256SUMS`, and its unpacked `dist` folder (34 files) served as `AUS_ACCOUNTING_CORPUS_ROOT` for `aus-accounting-mcp` 0.7.1 from PyPI and for australian-accounting `main` at `166333f`. In both, `search_tax_legislation` returned `C2004A05138:0035:8-1`, section 8-1 of the ITAA 1997, first for 'general deductions'; `read_tax_legislation_section` read that row; `search_tax_rates` and `define_tax_term` returned rows from the folder. `aus-accounting-mcp doctor` on `main` reported the folder OK with 9,439 section rows in 9 title indexes and 1,664 rate rows. These show the folder loads and answers, not that any answer is complete or current.
+
 ## Retrieval baseline on real law
 
 Measured on 5 November 2026 over `tests/fixtures/retrieval_real_law.tsv`: 46 queries
