@@ -1,5 +1,13 @@
 # Unreleased
 
+- `search cite-check INDEX DRAFT` checks a draft's citations against a build: each is `resolved`, `assumed` or `not_held`, with the nearest held sections for a provision the build lacks. It grades a quotation in a citation's sentence as `exact`, `normalised`, `partial` or `none`, and checks citations of rulings against a captured rulings run (#270, #286). `docs/build-evidence.md` adds a 46-query retrieval baseline on real law (#270).
+- `authorities` exports a build, and optionally a rulings run, as the closed list for DrDebits' `gate --authorities` (`BUILD.md`, 'Exporting an authorities list').
+- `--as-at DATE` on `search query`, `define` and `cite-check` answers only from titles whose status on that date is `captured` and refuses the rest by name. No superseded text is held (#284).
+- `quick --out FOLDER` fetches, builds and indexes 9 principal Acts from the Register in one command and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting (#284).
+- `search query --stem` adds English word-form matches, marked as stemmed; exact search stays the default (#285).
+- `witness` compares a fixed sample of titles' EPUB sections with the Register's Word rendition (#256). `search refs` resolves ITAA 1997, ITAA 1936, TAA 1953, GST Act and FBTAA 1986 through a closed table (#264), and `query` ranks current titles above superseded ones (#246).
+- `dist` keeps custom distribution notices and supports verified corpus snapshots; the first, `corpus-2026-11-11`, is a separate release (#292).
+- Licence: versions made available from 4 November 2026 are under the Ryan Duguid Public Attribution Licence 1.0, the FSL-1.1-ALv2 text with a public attribution condition; earlier releases keep their licences (#267).
 - `compare_builds` refuses a sections.jsonl row that repeats a JSON member at any depth, names another title, holds a container, section or heading that is neither text nor null (a lone surrogate counts as neither), holds a lone surrogate anywhere in its compilation number or date, or comes from a different compilation from the title's first row, and its text report lists the titles present in only one build. For such inputs it departs on purpose from the output of the Python stage at 43b5e0c.
 
 # v0.4.0
