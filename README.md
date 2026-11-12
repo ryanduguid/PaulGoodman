@@ -13,12 +13,12 @@
 [![Codecov](https://codecov.io/gh/ryanduguid/PaulGoodman/graph/badge.svg)](https://codecov.io/gh/ryanduguid/PaulGoodman)
 [![CodeQL](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml)
 [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_au-tax-legislation-corpus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_au-tax-legislation-corpus)
-[![Codacy code quality](https://app.codacy.com/project/badge/Grade/a474c8d33a4a4bd6bd97993f5c4113bd)](https://app.codacy.com/gh/ryanduguid/au-tax-legislation-corpus/dashboard)<br>
+[![Codacy code quality](https://app.codacy.com/project/badge/Grade/a474c8d33a4a4bd6bd97993f5c4113bd)](https://app.codacy.com/gh/ryanduguid/PaulGoodman/dashboard)<br>
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/au-tax-legislation-corpus.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/au-tax-legislation-corpus)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15425/badge)](https://www.bestpractices.dev/projects/15425)
 [![SLSA provenance](.github/assets/badges/slsa.svg)](https://github.com/ryanduguid/PaulGoodman/attestations)
 [![VirusTotal](.github/assets/badges/virustotal.svg)](https://github.com/ryanduguid/PaulGoodman/releases/latest)<br>
-[![release](https://badgen.net/github/release/ryanduguid/PaulGoodman/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/releases/latest)
+[![release](https://badgen.net/github/release/ryanduguid/PaulGoodman/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/releases)
 ![python: 3.14+](.github/assets/badges/python.svg)
 [![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
 
@@ -34,7 +34,7 @@ AI agents reach a finished build through the [`aus-accounting-mcp`](https://gith
 
 ### Give an agent the law from the published snapshot
 
-Release [`corpus-2026-11-11`](https://github.com/ryanduguid/PaulGoodman/releases/tag/corpus-2026-11-11) carries 9 principal tax Acts as one 6.2 MB archive with a `SHA256SUMS` file: 9,439 section rows and 1,664 rate rows, each Act at its current compilation on 11 November 2026. Download, verify and unpack it outside any checkout:
+Release [`corpus-2026-11-11`](https://github.com/ryanduguid/PaulGoodman/releases/tag/corpus-2026-11-11) carries 9 principal tax Acts as one 6.2 MB archive with a `SHA256SUMS` file: 9,439 section rows and 1,664 rate rows, each Act at its current compilation on 11 November 2026. Download, verify and unpack it outside any checkout. On Linux (on macOS, use `shasum -a 256 -c SHA256SUMS` for the third line):
 
 ```bash
 curl -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/au-tax-legislation-corpus-dist-2026-11-11.tar.gz
@@ -43,7 +43,38 @@ sha256sum -c SHA256SUMS
 tar -xzf au-tax-legislation-corpus-dist-2026-11-11.tar.gz
 ```
 
-Then set `AUS_ACCOUNTING_CORPUS_ROOT` to the absolute path of the unpacked `dist` folder in the `env` block of the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server's entry, and restart it. `search_tax_legislation`, `read_tax_legislation_section`, `define_tax_term` and `search_tax_rates` answer from that folder ([evidence](docs/build-evidence.md#published-snapshot-as-an-mcp-corpus)).
+In PowerShell on Windows, with the `curl.exe` and `tar.exe` that Windows 10 and 11 include:
+
+```powershell
+curl.exe -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/au-tax-legislation-corpus-dist-2026-11-11.tar.gz
+curl.exe -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/SHA256SUMS
+$expected = (Get-Content SHA256SUMS).Split(' ')[0]
+if ((Get-FileHash au-tax-legislation-corpus-dist-2026-11-11.tar.gz -Algorithm SHA256).Hash -ne $expected) { throw 'checksum mismatch' }
+tar.exe -xzf au-tax-legislation-corpus-dist-2026-11-11.tar.gz
+```
+
+Then add the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, which needs Python 3.14+ and [uv](https://docs.astral.sh/uv/), with `AUS_ACCOUNTING_CORPUS_ROOT` set to the unpacked `dist` folder. Run one of these from the folder that holds `dist` (in PowerShell, write `"$PWD\dist"`):
+
+```bash
+claude mcp add --scope user aus-accounting -e AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.8.0' aus-accounting-mcp
+codex mcp add aus-accounting --env AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.8.0' aus-accounting-mcp
+```
+
+For Claude Desktop and other hosts that read a JSON file, add this entry with the absolute path of `dist`, then restart the host:
+
+```json
+{
+  "mcpServers": {
+    "aus-accounting": {
+      "command": "uvx",
+      "args": ["--from", "aus-accounting-mcp==0.8.0", "aus-accounting-mcp"],
+      "env": { "AUS_ACCOUNTING_CORPUS_ROOT": "/absolute/path/to/dist" }
+    }
+  }
+}
+```
+
+To check the folder before asking anything, run the server's `doctor` with the same setting: `AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" uvx --from 'aus-accounting-mcp==0.8.0' aus-accounting-mcp doctor` (in PowerShell, set `$env:AUS_ACCOUNTING_CORPUS_ROOT = "$PWD\dist"` first). It reports `9439 section rows in 9 title indexes, 1664 rate rows`. `search_tax_legislation`, `read_tax_legislation_section`, `define_tax_term` and `search_tax_rates` then answer from that folder ([evidence](docs/build-evidence.md#published-snapshot-as-an-mcp-corpus)).
 
 The snapshot is a finding aid derived from the Register's EPUB reading view, not authorised text or tax advice. It holds no instruments, rulings or cases, and a later amendment can outdate it; [`quick`](#search-real-law-from-an-empty-folder) builds the current compilations instead. Its legislative content is licensed CC BY 4.0 by the Federal Register of Legislation, with the attribution in the release notes.
 

@@ -100,3 +100,22 @@ def test_readme_routes_agents_to_the_published_corpus_snapshot() -> None:
     assert "not a ready-made corpus" not in readme
     assert "releases/tag/corpus-" in readme
     assert "AUS_ACCOUNTING_CORPUS_ROOT" in readme
+    # The server's setup lived only in another repository's README; each host's
+    # line, the Windows and macOS checksum commands and the check stay here.
+    assert "claude mcp add --scope user aus-accounting -e AUS_ACCOUNTING_CORPUS_ROOT=" in readme
+    assert "codex mcp add aus-accounting --env AUS_ACCOUNTING_CORPUS_ROOT=" in readme
+    assert '"env": { "AUS_ACCOUNTING_CORPUS_ROOT":' in readme
+    assert "aus-accounting-mcp==0.8.0" in readme
+    assert "Get-FileHash" in readme
+    assert "shasum -a 256 -c SHA256SUMS" in readme
+    assert "aus-accounting-mcp doctor" in readme
+
+
+def test_comparison_names_the_published_corpus_snapshot() -> None:
+    # docs/comparison.md said this builder "needs a local build" after a
+    # corpus- release made the 9-Act snapshot downloadable.
+    comparison = " ".join((ROOT / "docs" / "comparison.md").read_text(encoding="utf-8").split())
+
+    assert "needs a local build," not in comparison
+    assert "you build the corpus yourself" not in comparison
+    assert "releases/tag/corpus-" in comparison
