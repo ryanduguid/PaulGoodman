@@ -799,11 +799,8 @@ fn int(n: usize) -> Json {
     Json::Int(n.into())
 }
 
-/// `build_sources_document(inventory, retrieved)`, recording the preset's
-/// selection when `preset` is set.
-fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Json, Exc> {
-    let ok = &inv.titles;
-    let by_collection = Json::Object(
+fn source_collection_counts(inv: &Inventory) -> Json {
+    Json::Object(
         inv.by_collection
             .iter()
             .map(|(_, c)| {
@@ -815,18 +812,24 @@ fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Js
                 (json_key(&c.key), counts)
             })
             .collect(),
-    );
+    )
+}
+
+fn source_counts(inv: &Inventory) -> Result<Json, Exc> {
     let mut no_keyword = 0;
-    for a in ok {
+    for a in &inv.titles {
         if keywords_in_name(getitem(&a.entry, "name")?)?.is_empty() {
             no_keyword += 1;
         }
     }
-    let counts = obj(vec![
-        ("titles", int(ok.len())),
+    let whole_act = inv.count(|t| t.granularity_is("whole_act"));
+    let table_block = inv.count(|t| t.granularity_is("table_block"));
+    let with_endnotes = inv.count(|t| t.truthy("endnotes"));
+    Ok(obj(vec![
+        ("titles", int(inv.titles.len())),
         ("acts", int(inv.acts)),
         ("instruments", int(inv.instruments)),
-        ("by_collection", by_collection),
+        ("by_collection", source_collection_counts(inv)),
         ("titles_without_epub", int(inv.missing.len())),
         ("jsonl_rows", int(inv.total_rows)),
         ("words_body_only", inv.total_words.json()),
@@ -836,25 +839,19 @@ fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Js
         ("rows_unnumbered", int(inv.kind("unnumbered"))),
         ("rows_introductory", int(inv.kind("introductory"))),
         ("titles_no_keyword_in_current_name", int(no_keyword)),
-        (
-            "titles_whole_act_chunk",
-            int(inv.count(|t| t.granularity_is("whole_act"))),
-        ),
-        (
-            "titles_table_block_chunk",
-            int(inv.count(|t| t.granularity_is("table_block"))),
-        ),
-        (
-            "titles_with_endnotes",
-            int(inv.count(|t| t.truthy("endnotes"))),
-        ),
+        ("titles_whole_act_chunk", int(whole_act)),
+        ("titles_table_block_chunk", int(table_block)),
+        ("titles_with_endnotes", int(with_endnotes)),
         (
             "titles_not_current_version",
             int(inv.count(Title::not_current)),
         ),
-    ]);
+    ]))
+}
+
+fn noncurrent_source_titles(inv: &Inventory) -> Result<Vec<Json>, Exc> {
     let mut not_current = Vec::new();
-    for a in ok.iter().filter(|t| t.not_current()) {
+    for a in inv.titles.iter().filter(|t| t.not_current()) {
         not_current.push(obj(vec![
             ("register_id", getitem(&a.entry, "id")?.clone()),
             ("name", getitem(&a.entry, "name")?.clone()),
@@ -868,55 +865,66 @@ fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Js
             ),
         ]));
     }
-    let mut titles = Vec::new();
-    for a in ok {
-        let id = getitem(&a.entry, "id")?;
-        let name = getitem(&a.entry, "name")?;
-        let keywords = keywords_in_name(name)?;
-        titles.push(obj(vec![
-            ("register_id", id.clone()),
-            ("name", name.clone()),
-            ("collection", a.or_null("collection")),
-            (
-                "keywords_in_name",
-                Json::Array(keywords.into_iter().map(Json::str).collect()),
-            ),
-            ("long_title", a.or_null("long_title")),
-            ("compilation_number", a.or_null("compilationNumber")),
-            ("compilation_date", a.or_null("versionStart")),
-            (
-                "version_is_current",
-                a.get("version_is_current")
-                    .cloned()
-                    .unwrap_or(Json::Bool(true)),
-            ),
-            ("current_version_start", a.or_null("current_version_start")),
-            ("retrieved", a.or_null("retrieved")),
-            ("jsonl_rows", int(a.rows)),
-            ("granularity", a.or_null("granularity")),
-            ("words", a.or_null("words")),
-            ("epub_bytes", a.or_null("bytes")),
-            ("epub", with_str("epub/%s", getitem(&a.entry, "epub")?)),
-            (
-                "markdown",
-                with_str("markdown/%s", getitem(&a.entry, "markdown")?),
-            ),
-            ("sections_jsonl", with_str("markdown/%s/sections.jsonl", id)),
-            (
-                "endnotes",
-                if a.truthy("endnotes") {
-                    with_str("markdown/%s/endnotes.md", id)
-                } else {
-                    Json::Null
-                },
-            ),
-            ("source_url", a.or_null("sourceUrl")),
-            (
-                "register_page",
-                with_str(&format!("{REGISTER}/%s/latest/text"), id),
-            ),
-        ]));
-    }
+    Ok(not_current)
+}
+
+fn source_title(a: &Title) -> Result<Json, Exc> {
+    let id = getitem(&a.entry, "id")?;
+    let name = getitem(&a.entry, "name")?;
+    let keywords = keywords_in_name(name)?;
+    let mut fields = vec![
+        ("register_id", id.clone()),
+        ("name", name.clone()),
+        ("collection", a.or_null("collection")),
+        (
+            "keywords_in_name",
+            Json::Array(keywords.into_iter().map(Json::str).collect()),
+        ),
+        ("long_title", a.or_null("long_title")),
+        ("compilation_number", a.or_null("compilationNumber")),
+        ("compilation_date", a.or_null("versionStart")),
+        (
+            "version_is_current",
+            a.get("version_is_current")
+                .cloned()
+                .unwrap_or(Json::Bool(true)),
+        ),
+        ("current_version_start", a.or_null("current_version_start")),
+        ("retrieved", a.or_null("retrieved")),
+        ("jsonl_rows", int(a.rows)),
+        ("granularity", a.or_null("granularity")),
+        ("words", a.or_null("words")),
+        ("epub_bytes", a.or_null("bytes")),
+    ];
+    fields.extend(source_title_paths(a, id)?);
+    Ok(obj(fields))
+}
+
+fn source_title_paths(a: &Title, id: &Json) -> Result<Vec<(&'static str, Json)>, Exc> {
+    Ok(vec![
+        ("epub", with_str("epub/%s", getitem(&a.entry, "epub")?)),
+        (
+            "markdown",
+            with_str("markdown/%s", getitem(&a.entry, "markdown")?),
+        ),
+        ("sections_jsonl", with_str("markdown/%s/sections.jsonl", id)),
+        (
+            "endnotes",
+            if a.truthy("endnotes") {
+                with_str("markdown/%s/endnotes.md", id)
+            } else {
+                Json::Null
+            },
+        ),
+        ("source_url", a.or_null("sourceUrl")),
+        (
+            "register_page",
+            with_str(&format!("{REGISTER}/%s/latest/text"), id),
+        ),
+    ])
+}
+
+fn sources_without_epub(inv: &Inventory) -> Result<Vec<Json>, Exc> {
     let mut without_epub = Vec::new();
     for a in &inv.missing {
         without_epub.push(obj(vec![
@@ -929,6 +937,21 @@ fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Js
             ("reason", a.get("reason").cloned().unwrap_or(Json::Null)),
         ]));
     }
+    Ok(without_epub)
+}
+
+/// `build_sources_document(inventory, retrieved)`, recording the preset's
+/// selection when `preset` is set. Keep the fallible projections in their
+/// Python evaluation order before assembling the document.
+fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Json, Exc> {
+    let counts = source_counts(inv)?;
+    let not_current = noncurrent_source_titles(inv)?;
+    let titles = inv
+        .titles
+        .iter()
+        .map(source_title)
+        .collect::<Result<_, _>>()?;
+    let without_epub = sources_without_epub(inv)?;
     Ok(obj(vec![
         ("corpus", Json::str(CORPUS)),
         ("retrieved", Json::str(retrieved)),

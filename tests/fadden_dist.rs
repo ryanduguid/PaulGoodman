@@ -2144,12 +2144,16 @@ fn text_finalize_did_not_write_is_left_as_given() {
     write(&f.root.join("LICENCE-NOTICE.md"), notice);
     let (code, out, err) = stage(&f, "dist");
     assert_eq!(code, 0, "{err}");
-    let shipped = std::fs::read_to_string(f.dist().join("README.md")).unwrap();
+    let shipped = std::fs::read_to_string(f.dist().join("README.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
     assert!(
         shipped.contains("\n## Build record\n\nCustom provenance kept by hand.\n"),
         "{shipped}"
     );
-    let shipped = std::fs::read_to_string(f.dist().join("LICENCE-NOTICE.md")).unwrap();
+    let shipped = std::fs::read_to_string(f.dist().join("LICENCE-NOTICE.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
     assert_eq!(shipped, notice);
     for line in [
         "README.md: left as given, since it does not open as finalize writes it (## Build record)",
