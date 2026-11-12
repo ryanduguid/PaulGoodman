@@ -1194,6 +1194,27 @@ fn index_document(inv: &Inventory, retrieved: &str) -> Result<P, Exc> {
     Ok(out)
 }
 
+fn staleness_duration(titles: usize) -> String {
+    let minutes = ((titles as f64 * 1.5 / 60.0).round_ties_even() as u64).max(1);
+    format!("{minutes} minute{}", if minutes == 1 { "" } else { "s" })
+}
+
+/// Canonical source sections that dist may rewrite, before its subset counts.
+pub(super) fn distribution_readme_source(titles: usize, not_current: usize) -> String {
+    README
+        .replace("{mins}", &staleness_duration(titles))
+        .replace("{notcurrent}", &not_current.to_string())
+        .replace("{lic}", LICENCE)
+        .replace("{lic_url}", LICENCE_URL)
+}
+
+pub(super) fn licence_notice(retrieved: &str) -> String {
+    LICENCE_NOTICE
+        .replacen("%s", LICENCE_URL, 1)
+        .replacen("%s", &percent_s(ATTR_UNCHANGED, &[retrieved]), 1)
+        .replacen("%s", &percent_s(ATTR_CHANGED, &[retrieved]), 1)
+}
+
 /// `build_readme_document(inventory, retrieved, pii_titles, pii_names)`, for a
 /// keyword build or, with `preset`, the `quick` preset.
 fn readme_document(
@@ -1203,7 +1224,6 @@ fn readme_document(
     preset: bool,
 ) -> Result<P, Exc> {
     let ok = &inv.titles;
-    let mins = ((ok.len() as f64 * 1.5 / 60.0).round_ties_even() as u64).max(1);
     let fields = [
         ("{retrieved}", retrieved.to_string()),
         ("{n}", ok.len().to_string()),
@@ -1213,10 +1233,7 @@ fn readme_document(
         ("{words}", comma(&inv.total_words.json())?),
         ("{lic}", LICENCE.into()),
         ("{lic_url}", LICENCE_URL.into()),
-        (
-            "{mins}",
-            format!("{mins} minute{}", if mins == 1 { "" } else { "s" }),
-        ),
+        ("{mins}", staleness_duration(ok.len())),
         ("{pii_titles}", pii.0.to_string()),
         ("{pii_names}", comma(&Json::Int(pii.1.clone()))?),
         (
@@ -1395,10 +1412,7 @@ fn run_selected(scratch: &str, retrieved: &str, preset: bool, run: &mut Run) -> 
     let path = child(&root, &["INDEX.md"])?;
     write_document(&path, index_document(&inv, retrieved))?;
     let path = child(&root, &["LICENCE-NOTICE.md"])?;
-    let notice = LICENCE_NOTICE
-        .replacen("%s", LICENCE_URL, 1)
-        .replacen("%s", &percent_s(ATTR_UNCHANGED, &[retrieved]), 1)
-        .replacen("%s", &percent_s(ATTR_CHANGED, &[retrieved]), 1);
+    let notice = licence_notice(retrieved);
     write_document(&path, Ok(points(&notice)))?;
 
     let readme = readme_document(&inv, retrieved, &pii, preset);

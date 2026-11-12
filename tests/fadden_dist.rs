@@ -1899,34 +1899,31 @@ fn copied_files_keep_their_extended_attributes() {
 /// The finalised corpus README and licence notice describe files the
 /// distribution leaves out: the EPUBs, `build/build-record.json` and the
 /// staleness checker at the corpus root. dist must not repeat those claims.
-#[test]
-fn the_distribution_describes_only_what_it_ships() {
-    let f = fixture();
+fn finalized_documents(f: &Fixture) {
+    // Captured canonical sections for 2 titles, no noncurrent titles and this
+    // retrieval date. Custom text outside the rewritten sections must survive.
     let readme = std::fs::read_to_string(f.root.join("README.md")).unwrap();
     write(
         &f.root.join("README.md"),
         &format!(
-            "# Commonwealth tax legislation knowledge base\n\n{readme}\n\
-             ## Checking staleness\n\n    python check_current.py\n\n\
-             Read-only, about 1 minute for everything.\n\n\
-             ## Build record\n\n`build/build-record.json` records this finalisation.\n\n\
-             ## Licence and attribution\n\nLicensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).\n\n\
-             The markdown is CHANGED content, so it uses the Register's \"Based on content from\" wording.\n\
-             The EPUBs are unchanged and use \"Sourced from\".\n\n\
-             The Commonwealth Coat of Arms is not covered by CC BY. It is embedded in the\n\
-             EPUBs; the markdown omits all images and keeps only their alt text.\n\n\
-             ## Limits\n\n**Sunsetting.** `check_current.py` reports these.\n"
+            "# Commonwealth tax legislation knowledge base\n\n{readme}\n{}## Limits\n\nCustom limit retained.\n",
+            include_str!("data/dist-finalize/readme-sections.md")
         ),
     );
     write(
         &f.root.join("LICENCE-NOTICE.md"),
-        "# Licence notice\n\nCommonwealth legislation, licensed CC BY 4.0.\n\n\
-         ## Attribution for the raw EPUBs under `epub/`\n\n> Sourced from the Federal Register.\n\n\
-         ## Attribution for the markdown, JSONL and index (changed content)\n\n> Based on content.\n\n\
-         ## Not covered by CC BY\n\nThe Commonwealth Coat of Arms and any third-party copyright material are\n\
-         excluded from the licence. The EPUBs under `epub/` embed the Coat of Arms as an\n\
-         image. Do not reuse it.\n\n## Not the authorised text\n\nAuthorised versions are PDF only.\n",
+        include_str!("data/dist-finalize/notice.md"),
     );
+    let path = f.root.join("sources.json");
+    let mut sources = read_json(&path);
+    sources["retrieved"] = json!("2026-11-11");
+    write(&path, &sources.to_string());
+}
+
+#[test]
+fn the_distribution_describes_only_what_it_ships() {
+    let f = fixture();
+    finalized_documents(&f);
     let output = publish(&f);
     let readme = std::fs::read_to_string(output.join("README.md")).unwrap();
     for claim in [
@@ -1949,6 +1946,7 @@ fn the_distribution_describes_only_what_it_ships() {
         "{readme}"
     );
     assert!(readme.contains("## Limits"), "{readme}");
+    assert!(readme.contains("Custom limit retained."), "{readme}");
     let notice = std::fs::read_to_string(output.join("LICENCE-NOTICE.md")).unwrap();
     assert!(!notice.contains("epub/"), "{notice}");
     assert!(!notice.contains("raw EPUBs"), "{notice}");
@@ -1989,32 +1987,27 @@ fn the_distributed_licence_note_describes_no_epubs() {
 #[test]
 fn a_finalized_file_missing_a_rewritten_section_stops_dist() {
     // Each file is otherwise publishable, so only the missing section stops it.
-    let readme = std::fs::read_to_string(fixture().root.join("README.md")).unwrap();
     let cases = [
-        (
-            "README.md",
-            format!(
-                "# Commonwealth tax legislation knowledge base\n\n{readme}\n\
-                 ## Checking staleness\n\nRun check_current.py.\n\n\
-                 ## Licence and attribution\n\nThe EPUBs are unchanged.\n"
-            ),
-            "`## Build record`",
-        ),
+        ("README.md", "## Build record"),
         (
             "LICENCE-NOTICE.md",
-            "# Licence notice\n\nCC BY 4.0.\n\n## Not covered by CC BY\n\n\
-             The EPUBs under `epub/` embed the Coat of Arms.\n"
-                .to_string(),
-            "`## Attribution for the raw EPUBs under `epub/``",
+            "## Attribution for the raw EPUBs under `epub/`",
         ),
     ];
     // Both cases run before any assertion, so each shows its own outcome.
     let outcomes: Vec<_> = cases
         .iter()
-        .map(|(file, text, heading)| {
+        .map(|(file, heading)| {
             let f = fixture();
+            finalized_documents(&f);
             let marker = with_existing_dist(&f);
-            write(&f.root.join(file), text);
+            let path = f.root.join(file);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let start = text.find(&format!("{heading}\n")).unwrap();
+            let end = text[start + heading.len()..]
+                .find("\n## ")
+                .map_or(text.len(), |offset| start + heading.len() + offset + 1);
+            write(&path, &format!("{}{}", &text[..start], &text[end..]));
             let (code, _, err) = stage(&f, "dist");
             // A dist that succeeds replaces the old tree, marker and all.
             let kept = std::fs::read_to_string(&marker).is_ok_and(|t| t == "keep me")
@@ -2030,6 +2023,80 @@ fn a_finalized_file_missing_a_rewritten_section_stops_dist() {
         .collect();
     for (file, code, named, kept, err) in &outcomes {
         assert_eq!((*code, *named, *kept), (1, true, true), "{file}\n{err}");
+    }
+}
+
+/// A generated title and heading do not authorise deleting hand-edited notices.
+#[test]
+fn custom_or_duplicate_finalized_sections_stop_dist_without_losing_files() {
+    let sections = [
+        ("README.md", "## Checking staleness"),
+        ("README.md", "## Build record"),
+        ("README.md", "## Licence and attribution"),
+        (
+            "LICENCE-NOTICE.md",
+            "## Attribution for the raw EPUBs under `epub/`",
+        ),
+        ("LICENCE-NOTICE.md", "## Not covered by CC BY"),
+    ];
+    for (file, heading) in sections {
+        for duplicate in [false, true] {
+            let f = fixture();
+            finalized_documents(&f);
+            let marker = with_existing_dist(&f);
+            let path = f.root.join(file);
+            let mut text = std::fs::read_to_string(&path).unwrap();
+            if duplicate {
+                text.push_str(&format!("\n{heading}\n\nCustom notice must survive.\n"));
+            } else {
+                text = text.replacen(
+                    &format!("{heading}\n\n"),
+                    &format!("{heading}\n\nCustom notice must survive.\n\n"),
+                    1,
+                );
+            }
+            write(&path, &text);
+            let before = std::fs::read(&path).unwrap();
+            let (code, _, err) = stage(&f, "dist");
+            assert_eq!(code, 1, "{file}: {heading}, duplicate={duplicate}\n{err}");
+            assert!(err.contains(file) && err.contains(heading), "{err}");
+            assert!(err.contains("reconcile it manually"), "{err}");
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me");
+            assert!(managed_paths(&f).is_empty());
+        }
+    }
+}
+
+#[test]
+fn a_custom_epub_notice_is_not_erased_before_readme_validation() {
+    for heading in [
+        "## Checking staleness",
+        "## Build record",
+        "## Licence and attribution",
+    ] {
+        let f = fixture();
+        finalized_documents(&f);
+        let marker = with_existing_dist(&f);
+        let path = f.root.join("README.md");
+        let original = std::fs::read_to_string(&path).unwrap();
+        // This otherwise canonical section contains a custom line that dist's
+        // old global EPUB-bullet rewrite would erase before checking notices.
+        let text = original.replacen(
+            &format!("{heading}\n\n"),
+            &format!("{heading}\n\n- `epub/<register_id>.epub`: custom reuse restriction\n"),
+            1,
+        );
+        write(&path, &text);
+        let (code, _, err) = stage(&f, "dist");
+        assert_eq!(code, 1, "{heading}\n{err}");
+        assert!(
+            err.contains(heading) && err.contains("reconcile it manually"),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me");
+        assert!(managed_paths(&f).is_empty());
     }
 }
 

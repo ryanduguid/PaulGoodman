@@ -1239,25 +1239,25 @@ pub(super) const NOTICE_SECTIONS: [(&str, &str); 2] = [
     ),
 ];
 
-/// Replace the section headed `heading`, up to the next `## ` heading or the
-/// end, with `replacement`; `None` when the text has no such heading.
-fn replace_section(text: &str, heading: &str, replacement: &str) -> Option<String> {
+/// The section headed `heading`, up to the next `## ` heading or the end.
+fn section_range(text: &str, heading: &str) -> Option<std::ops::Range<usize>> {
     let start = text.find(&format!("\n{heading}\n"))? + 1;
     let body = start + heading.len();
     let end = text[body..]
         .find("\n## ")
         .map_or(text.len(), |i| body + i + 1);
-    Some(format!("{}{replacement}{}", &text[..start], &text[end..]))
+    Some(start..end)
 }
 
 /// Every section in `sections` replaced in turn, in a `file` that opens with
-/// finalize's `title`. Such a file must hold each heading, or it would ship
-/// text about files dist leaves out. Any other text is kept as given, as Python
-/// kept it, and reported if it holds one of the headings anyway.
+/// finalize's `title`. Each section must still equal finalize's canonical text;
+/// custom or duplicated sections are refused rather than losing notices.
+/// Differently titled documents are kept and reported as in Python.
 fn replace_sections(
     text: &str,
     title: &str,
     sections: &[(&str, &str)],
+    expected: &str,
     file: &str,
     run: &mut Run,
 ) -> Result<String, Exc> {
@@ -1277,12 +1277,23 @@ fn replace_sections(
     }
     let mut text = text.to_string();
     for (heading, replacement) in sections {
-        text = replace_section(&text, heading, replacement).ok_or_else(|| {
+        let range = section_range(&text, heading).ok_or_else(|| {
             Exc::Runtime(format!(
                 "{file} opens as finalize writes it but has no `{heading}` section; \
                  rerun finalize with this fadden, then dist"
             ))
         })?;
+        let expected_range = section_range(expected, heading)
+            .expect("dist section must exist in finalize's template");
+        if text.matches(&format!("\n{heading}\n")).count() != 1
+            || text[range.clone()] != expected[expected_range]
+        {
+            return Err(Exc::Runtime(format!(
+                "{file} has custom or unrecognised text in `{heading}`; \
+                 reconcile it manually before distribution"
+            )));
+        }
+        text.replace_range(range, replacement);
     }
     Ok(text)
 }
@@ -1649,6 +1660,9 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         &notice,
         NOTICE_TITLE,
         &NOTICE_SECTIONS,
+        &super::finalize::licence_notice(
+            get(&src, "retrieved")?.and_then(Json::as_str).unwrap_or(""),
+        ),
         "LICENCE-NOTICE.md",
         run,
     )?;
@@ -1717,6 +1731,19 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     write_text(&child(staging, &["INDEX.md"])?, &pts(&txt))?;
 
     let mut rd = crate::pyio::read_text(&child(&paths.root, &["README.md"])?)?;
+    let not_current_count = get(&src, "titles_not_current_version")?
+        .map(iterate)
+        .transpose()?
+        .map_or(0, |titles| titles.len());
+    // Compare original sections before global rewrites can erase custom text.
+    rd = replace_sections(
+        &rd,
+        README_TITLE,
+        &README_SECTIONS,
+        &super::finalize::distribution_readme_source(source_titles.len(), not_current_count),
+        "README.md",
+        run,
+    )?;
     rd = sub_all(
         &format!("{} in-force principal titles", source_titles.len()),
         &format!("{} in-force principal titles", titles.len()),
@@ -1750,7 +1777,6 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         &rd,
     );
     rd = replace_readme_table_block_paragraph(&rd, table_block);
-    rd = replace_sections(&rd, README_TITLE, &README_SECTIONS, "README.md", run)?;
     rd = format!(
         "> **This is the redistributable subset.** The EPUBs, {} titles that name private individuals and {} \
          accounting standards under restrictive copyright notices are not included. See REMOVED.md for what \
@@ -1976,6 +2002,41 @@ pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_sections_match_original_metadata_before_subset_counts() {
+        let readme = super::super::finalize::distribution_readme_source(150, 3);
+        assert!(readme.contains("about 4 minutes"));
+        assert!(readme.contains("The 3 titles listed"));
+        let mut run = Run::default();
+        let rewritten = replace_sections(
+            &readme,
+            README_TITLE,
+            &README_SECTIONS,
+            &readme,
+            "README.md",
+            &mut run,
+        )
+        .unwrap();
+        assert!(!rewritten.contains("## Build record"));
+        assert!(rewritten.contains("This distribution does not include the staleness checker."));
+        let notice = super::super::finalize::licence_notice("2026-10-30");
+        let rewritten = replace_sections(
+            &notice,
+            NOTICE_TITLE,
+            &NOTICE_SECTIONS,
+            &notice,
+            "LICENCE-NOTICE.md",
+            &mut run,
+        )
+        .unwrap();
+        assert!(
+            rewritten.contains(
+                "Based on content from the Federal Register of Legislation at 2026-10-30"
+            )
+        );
+        assert!(!rewritten.contains("raw EPUBs"));
+    }
 
     /// What `json.dump` leaves in the file and raises for a lone surrogate:
     /// the text before the failing chunk, and a position inside that chunk
