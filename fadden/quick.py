@@ -102,8 +102,10 @@ def assemble(binary: str, staging: Path) -> str:
     stage(binary, scratch, "versions")
     download.main(str(scratch), epub_dir)
     recover_missing(binary, scratch, epub_dir)
-    for name in ("extract", "pii_scan", "pii_scan2", "finalize"):
+    for name in ("extract", "pii_scan", "pii_scan2"):
         stage(binary, scratch, name)
+    # The README and sources.json must describe a named preset, not a keyword search.
+    stage(binary, scratch, "finalize", "--preset")
     index = staging / "index.sqlite"
     stage(binary, scratch, "search", "build", str(staging), "--out", str(index))
     check_preset(index)

@@ -96,7 +96,7 @@ faithful to the row, not that the row is the law for the question.
 
 ## What this deliberately does not ship
 
-The corpus itself. It is about 150 MB (the EPUBs, derived markdown and rates,
+The full corpus. It is about 150 MB (the EPUBs, derived markdown and rates,
 measured on 27 September 2026), and this code rebuilds it in an afternoon. Three
 parts of it should not be redistributed at all, and the `dist` stage exists to separate
 them out:
@@ -155,6 +155,11 @@ the distribution, not only the 169.
 A `REMOVED.md` lists every exclusion and its Register link so the omission is
 visible and reversible. `dist_verify` checks the result against its own
 claims and exits non-zero if any check fails.
+
+A `dist/` tree that `dist_verify` passes is the one generated output a release
+may carry. It goes as a data asset under CC BY 4.0 with the Register's
+attribution, on the conditions in [RELEASING.md](../RELEASING.md). The EPUBs,
+the full corpus and every other generated tree stay out of releases.
 
 ## Source intake record
 

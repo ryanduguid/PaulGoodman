@@ -1189,6 +1189,115 @@ fn word_count(text: &Json) -> Result<usize, Exc> {
         .count())
 }
 
+/// Sections of finalize's README that describe what the distribution leaves
+/// out (the staleness checker, `build/` and the EPUBs), each with the text that
+/// replaces it here. finalize's tests check the headings are in its template.
+pub(super) const README_SECTIONS: [(&str, &str); 3] = [
+    (
+        "## Checking staleness",
+        "## Checking staleness\n\n\
+         This distribution does not include the staleness checker. To run it, copy\n\
+         `check_current.py`, `corpus_paths.py` and `http_fetch.py` from the `fadden/`\n\
+         folder of the builder repository beside this `sources.json` and run\n\
+         `python check_current.py`. It asks the Register API for each title's current\n\
+         compilation and changes nothing.\n\n",
+    ),
+    ("## Build record", ""),
+    (
+        "## Licence and attribution",
+        "## Licence and attribution\n\n\
+         Licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Full statement in LICENCE-NOTICE.md. Every JSONL row\n\
+         carries its own attribution, because rows travel independently of this file.\n\n\
+         The markdown is CHANGED content (converted from EPUB, contents pages removed,\n\
+         endnotes separated), so it uses the Register's \"Based on content from\" wording.\n\n\
+         The Commonwealth Coat of Arms is not covered by CC BY.\n\
+         This distribution contains no images; the markdown keeps only their alt text.\n\n",
+    ),
+];
+
+/// The first lines of finalize's README and LICENCE-NOTICE.md.
+pub(super) const README_TITLE: &str = "# Commonwealth tax legislation knowledge base\n";
+pub(super) const NOTICE_TITLE: &str = "# Licence notice\n";
+
+/// sources.json's `licence_note` for a distribution: finalize's describes the
+/// EPUBs under `epub/`, which dist leaves out.
+const DIST_LICENCE_NOTE: &str = "Excludes the Commonwealth Coat of Arms and any third-party material. \
+     This distribution holds no EPUBs and no images; the markdown omits the Coat of Arms. Authorised versions \
+     are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view \
+     the markdown was converted from is NOT the authorised text.";
+
+/// The same for finalize's LICENCE-NOTICE.md.
+pub(super) const NOTICE_SECTIONS: [(&str, &str); 2] = [
+    ("## Attribution for the raw EPUBs under `epub/`", ""),
+    (
+        "## Not covered by CC BY",
+        "## Not covered by CC BY\n\n\
+         The Commonwealth Coat of Arms and any third-party copyright material are\n\
+         excluded from the licence.\n\
+         This distribution contains no EPUBs and no images; the markdown keeps only\n\
+         their descriptive alt text.\n\n",
+    ),
+];
+
+/// The section headed `heading`, up to the next `## ` heading or the end.
+fn section_range(text: &str, heading: &str) -> Option<std::ops::Range<usize>> {
+    let start = text.find(&format!("\n{heading}\n"))? + 1;
+    let body = start + heading.len();
+    let end = text[body..]
+        .find("\n## ")
+        .map_or(text.len(), |i| body + i + 1);
+    Some(start..end)
+}
+
+/// Every section in `sections` replaced in turn, in a `file` that opens with
+/// finalize's `title`. Each section must still equal finalize's canonical text;
+/// custom or duplicated sections are refused rather than losing notices.
+/// Differently titled documents are kept and reported as in Python.
+fn replace_sections(
+    text: &str,
+    title: &str,
+    sections: &[(&str, &str)],
+    expected: &str,
+    file: &str,
+    run: &mut Run,
+) -> Result<String, Exc> {
+    if !text.starts_with(title) {
+        let held: Vec<&str> = sections
+            .iter()
+            .map(|(heading, _)| *heading)
+            .filter(|heading| text.contains(&format!("\n{heading}\n")))
+            .collect();
+        if !held.is_empty() {
+            run.print(&format!(
+                "{file}: left as given, since it does not open as finalize writes it ({})",
+                held.join(", ")
+            ));
+        }
+        return Ok(text.to_string());
+    }
+    let mut text = text.to_string();
+    for (heading, replacement) in sections {
+        let range = section_range(&text, heading).ok_or_else(|| {
+            Exc::Runtime(format!(
+                "{file} opens as finalize writes it but has no `{heading}` section; \
+                 rerun finalize with this fadden, then dist"
+            ))
+        })?;
+        let expected_range = section_range(expected, heading)
+            .expect("dist section must exist in finalize's template");
+        if text.matches(&format!("\n{heading}\n")).count() != 1
+            || text[range.clone()] != expected[expected_range]
+        {
+            return Err(Exc::Runtime(format!(
+                "{file} has custom or unrecognised text in `{heading}`; \
+                 reconcile it manually before distribution"
+            )));
+        }
+        text.replace_range(range, replacement);
+    }
+    Ok(text)
+}
+
 /// Python `re.sub(pattern, replacement, text, count=1, flags=re.M)` with a
 /// literal replacement.
 fn sub_once(pattern: &str, flags: u8, replacement: &str, text: &str) -> String {
@@ -1529,12 +1638,37 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         "excluded_titles",
         Json::Array(excluded.into_iter().map(|(_, e)| e).collect()),
     );
+    match get(&src, "licence_note")? {
+        Some(note) if note.as_str() == Some(super::finalize::LICENCE_NOTE) => {
+            set(&mut out, "licence_note", Json::str(DIST_LICENCE_NOTE));
+        }
+        Some(_) => run.print(
+            "sources.json: licence_note left as given, since it is not the note finalize writes",
+        ),
+        None => {}
+    }
     dump_json(&child(staging, &["sources.json"])?, &out)?;
 
     let licence_src = child(&paths.root, &["LICENCE-NOTICE.md"])?;
     let licence_dst = child(staging, &["LICENCE-NOTICE.md"])?;
-    // `shutil.copy`: the data, then the permission bits.
+    // `shutil.copy`: the data, then the permission bits. copyfile refuses a
+    // special file before opening it, so the copy is read, not the source. A
+    // notice describing the EPUBs is rewritten, since none ship here.
     copyfile(&licence_src, &licence_dst, &py::repr_str(&licence_src))?;
+    let notice = crate::pyio::read_text(&licence_dst)?;
+    let rewritten = replace_sections(
+        &notice,
+        NOTICE_TITLE,
+        &NOTICE_SECTIONS,
+        &super::finalize::licence_notice(
+            get(&src, "retrieved")?.and_then(Json::as_str).unwrap_or(""),
+        ),
+        "LICENCE-NOTICE.md",
+        run,
+    )?;
+    if rewritten != notice {
+        write_text(&licence_dst, &pts(&rewritten))?;
+    }
     let mode = std::fs::metadata(&licence_src)
         .map_err(|e| OsError::new(&e, Some(&licence_src), Style::Native))?
         .permissions();
@@ -1597,6 +1731,19 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     write_text(&child(staging, &["INDEX.md"])?, &pts(&txt))?;
 
     let mut rd = crate::pyio::read_text(&child(&paths.root, &["README.md"])?)?;
+    let not_current_count = get(&src, "titles_not_current_version")?
+        .map(iterate)
+        .transpose()?
+        .map_or(0, |titles| titles.len());
+    // Compare original sections before global rewrites can erase custom text.
+    rd = replace_sections(
+        &rd,
+        README_TITLE,
+        &README_SECTIONS,
+        &super::finalize::distribution_readme_source(source_titles.len(), not_current_count),
+        "README.md",
+        run,
+    )?;
     rd = sub_all(
         &format!("{} in-force principal titles", source_titles.len()),
         &format!("{} in-force principal titles", titles.len()),
@@ -1654,8 +1801,8 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         pts("## The EPUBs"),
         Vec::new(),
         pts(
-            "Not included. The Register serves them with the Commonwealth Coat of Arms embedded, and the Coat of \
-             Arms is excluded from the CC BY 4.0 grant covering everything else. Stripping it would also destroy \
+            "Not included. The Register serves them with the Commonwealth Coat of Arms embedded, and the Register's \
+             CC BY 4.0 licence excludes the Coat of Arms and any content noted otherwise. Stripping it would also destroy \
              the only reason to ship them, which is that they are byte-identical to what legislation.gov.au \
              served. Run `download.py` to fetch your own.",
         ),
@@ -1743,9 +1890,9 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     lines.push(pts(&format!(
         "Detection did not rely on the titles being recognisable. Every row in all {} titles was tested for \
          personal names appearing alongside agent registration numbers; these {} were what came back, and a \
-         second pass at a lower threshold found nothing outside them. The only contact details the second pass \
-         approved are {} unique organisational identifiers. Each is bound to a reviewed Register title in the \
-         hashed allowlist; a new or moved contact fails publication.",
+         second pass at a lower threshold found nothing outside them. The hashed contact allowlist holds {} \
+         unique organisational identifiers, each bound to a reviewed Register title; a new or moved contact \
+         fails publication.",
         thousands(source_titles.len()),
         drop.len(),
         unique.len()
@@ -1855,6 +2002,41 @@ pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_sections_match_original_metadata_before_subset_counts() {
+        let readme = super::super::finalize::distribution_readme_source(150, 3);
+        assert!(readme.contains("about 4 minutes"));
+        assert!(readme.contains("The 3 titles listed"));
+        let mut run = Run::default();
+        let rewritten = replace_sections(
+            &readme,
+            README_TITLE,
+            &README_SECTIONS,
+            &readme,
+            "README.md",
+            &mut run,
+        )
+        .unwrap();
+        assert!(!rewritten.contains("## Build record"));
+        assert!(rewritten.contains("This distribution does not include the staleness checker."));
+        let notice = super::super::finalize::licence_notice("2026-10-30");
+        let rewritten = replace_sections(
+            &notice,
+            NOTICE_TITLE,
+            &NOTICE_SECTIONS,
+            &notice,
+            "LICENCE-NOTICE.md",
+            &mut run,
+        )
+        .unwrap();
+        assert!(
+            rewritten.contains(
+                "Based on content from the Federal Register of Legislation at 2026-10-30"
+            )
+        );
+        assert!(!rewritten.contains("raw EPUBs"));
+    }
 
     /// What `json.dump` leaves in the file and raises for a lone surrogate:
     /// the text before the failing chunk, and a position inside that chunk

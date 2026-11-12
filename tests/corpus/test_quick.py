@@ -23,12 +23,14 @@ class Stages:
     def __init__(self, hit: str = HIT, statuses: tuple[str, ...] = ("ok",),
                  indexed: tuple[str, ...] = quick.PRESET) -> None:
         self.ran: list[str] = []
+        self.calls: list[tuple[str, ...]] = []
         self.hit = hit
         self.statuses = statuses
         self.indexed = indexed
 
     def stage(self, _binary: str, scratch: Path, *args: str, capture: bool = False) -> str:
         self.ran.append(" ".join(args[:2]) if args[0] == "search" else args[0])
+        self.calls.append(args)
         if args[0] == "finalize":
             (scratch.parent / "sources.json").write_text("{}", encoding="utf-8")
         if args[:2] == ("search", "build"):
@@ -117,6 +119,12 @@ class QuickTests(unittest.TestCase):
             "search build", "search query",
         ])
         self.assertEqual(stages.epub_dir, str(self.staging() / "epub"))
+
+    def test_finalize_is_told_the_titles_are_a_named_preset(self) -> None:
+        """A keyword README would describe a search this build never ran."""
+        with Stages().patched() as stages:
+            quick.build("fadden-bin", self.out)
+        self.assertIn(("finalize", "--preset"), stages.calls)
 
     def test_a_title_with_no_published_document_takes_the_recovery_route(self) -> None:
         with Stages(statuses=("ok", "no_epub")).patched() as stages:

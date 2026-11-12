@@ -38,8 +38,43 @@ const REGISTER: &str = "https://www.legislation.gov.au";
 const ATTR_UNCHANGED: &str = r#"Sourced from the Federal Register of Legislation at %s. For the latest information on Australian Government law please go to https://www.legislation.gov.au"#;
 const ATTR_CHANGED: &str = r#"Based on content from the Federal Register of Legislation at %s. For the latest information on Australian Government legislation please go to https://www.legislation.gov.au. Changes: converted from EPUB to markdown, contents pages removed, endnotes separated, images replaced by their descriptive alt text, compilation cover pages and running headers omitted."#;
 const CORPUS: &str = r#"Commonwealth tax statutes and legislative instruments"#;
-const LICENCE_NOTE: &str = r#"Excludes the Commonwealth Coat of Arms and any third-party material. The EPUBs under epub/ embed the Coat of Arms as an image; it is NOT licensed under CC BY and must not be reused. The markdown omits it. Authorised versions are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view used here is NOT the authorised text."#;
+pub(super) const LICENCE_NOTE: &str = r#"Excludes the Commonwealth Coat of Arms and any third-party material. The EPUBs under epub/ embed the Coat of Arms as an image; it is NOT licensed under CC BY and must not be reused. The markdown omits it. Authorised versions are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view used here is NOT the authorised text."#;
 const SELECTION: &str = r#"In-force principal titles in the Act, LegislativeInstrument and NotifiableInstrument collections whose name contains Tax, Excise, Superannuation, Customs Tariff or Medicare Levy. isPrincipal could not be applied server-side (the API returns 400 for any filter containing it), so it was applied client-side. Selection is by title keyword, so a tax-relevant title without one of those words in its name is absent, and some collected titles (notably Commonwealth employee superannuation schemes) are not tax law. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
+/// `selection` for a build of the `python -m fadden quick` preset, which picks
+/// its Acts by register id rather than by keyword.
+const PRESET_SELECTION: &str = r#"The principal Acts of the `python -m fadden quick` preset, chosen by register id rather than by title keyword, so every other title is absent. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
+/// The README's description of a keyword selection, and its preset replacement.
+const KEYWORD_SCOPE: &str =
+    "{n} in-force principal titles covering tax, excise, superannuation, customs
+tariff and Medicare levy: ";
+const PRESET_SCOPE: &str =
+    "{n} in-force principal titles named by the `python -m fadden quick` preset:
+";
+const KEYWORD_LIMITS: &str = r#"**Selection is by title keyword.** A tax-relevant title without Tax, Excise,
+Superannuation, Customs Tariff or Medicare Levy in its name is absent: the
+Customs Act 1901 and Charities Act 2013 among them.
+
+**Some collected titles are not tax law.** Three ways they got in:
+
+- The Commonwealth employee superannuation schemes match "Superannuation".
+- The Register matches more than the current name. That is mostly a benefit:
+  the Passenger Movement Charge Act 1978 came in on its former title, the
+  Departure Tax Act 1978. `keywords_in_name` in `sources.json` is empty for
+  these, so they can be reviewed rather than guessed at.
+- A substring match pulled in roughly 35 documents that have nothing to do with
+  tax: about 24 aviation airworthiness directives, because "Rotax" and "Britax"
+  contain "tax", and around 10 social security instruments about taxi licence
+  buybacks, because "taxi" starts with it. Every one is named `AD/...` or
+  `Social Security (Exempt Lump Sum ...)`. Filter on `keywords_in_name` plus the
+  name to drop them; nothing was deleted, because the same rule strict enough to
+  catch Rotax also throws away the Departure Tax Act.
+"#;
+const PRESET_LIMITS: &str = r#"**Selection is a fixed list.** This build holds only the titles in
+`sources.json`, chosen by register id for the `python -m fadden quick` preset,
+not every title matching the tax keywords. Other tax Acts, and every regulation
+and instrument, are absent, so a search that finds nothing here says nothing
+about them.
+"#;
 const LICENCE_NOTICE: &str = r#"# Licence notice
 
 Commonwealth legislation from the Federal Register of Legislation, licensed
@@ -108,7 +143,7 @@ disallowed or sunset while its enabling Act stands.
 It asks the Register API for each title's current compilation and reports four
 things separately: superseded compilations, titles whose in-force version has no
 published compilation, titles no longer in force, and lookups that failed.
-Read-only, about {mins} minutes for everything.
+Read-only, about {mins} for everything.
 
 No run's counts are repeated here: it is a separate command, run after this
 README is written, and its report goes to stdout. Its four buckets are not
@@ -219,7 +254,7 @@ structure to split on, and `table_block` where it was split on its tables. Its
 `heading` names the container or passage. Schedules in particular hold large
 bodies of text that belong to no section number.
 
-**Per-Act retrieval dates vary.** Each Act's `retrieved` field and attribution
+**Per-Act retrieval dates can vary.** Each Act's `retrieved` field and attribution
 carry the date that Act's EPUB was actually downloaded, not the build date.
 
 ## Parser notes
@@ -764,10 +799,8 @@ fn int(n: usize) -> Json {
     Json::Int(n.into())
 }
 
-/// `build_sources_document(inventory, retrieved)`.
-fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
-    let ok = &inv.titles;
-    let by_collection = Json::Object(
+fn source_collection_counts(inv: &Inventory) -> Json {
+    Json::Object(
         inv.by_collection
             .iter()
             .map(|(_, c)| {
@@ -779,18 +812,24 @@ fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
                 (json_key(&c.key), counts)
             })
             .collect(),
-    );
+    )
+}
+
+fn source_counts(inv: &Inventory) -> Result<Json, Exc> {
     let mut no_keyword = 0;
-    for a in ok {
+    for a in &inv.titles {
         if keywords_in_name(getitem(&a.entry, "name")?)?.is_empty() {
             no_keyword += 1;
         }
     }
-    let counts = obj(vec![
-        ("titles", int(ok.len())),
+    let whole_act = inv.count(|t| t.granularity_is("whole_act"));
+    let table_block = inv.count(|t| t.granularity_is("table_block"));
+    let with_endnotes = inv.count(|t| t.truthy("endnotes"));
+    Ok(obj(vec![
+        ("titles", int(inv.titles.len())),
         ("acts", int(inv.acts)),
         ("instruments", int(inv.instruments)),
-        ("by_collection", by_collection),
+        ("by_collection", source_collection_counts(inv)),
         ("titles_without_epub", int(inv.missing.len())),
         ("jsonl_rows", int(inv.total_rows)),
         ("words_body_only", inv.total_words.json()),
@@ -800,25 +839,19 @@ fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
         ("rows_unnumbered", int(inv.kind("unnumbered"))),
         ("rows_introductory", int(inv.kind("introductory"))),
         ("titles_no_keyword_in_current_name", int(no_keyword)),
-        (
-            "titles_whole_act_chunk",
-            int(inv.count(|t| t.granularity_is("whole_act"))),
-        ),
-        (
-            "titles_table_block_chunk",
-            int(inv.count(|t| t.granularity_is("table_block"))),
-        ),
-        (
-            "titles_with_endnotes",
-            int(inv.count(|t| t.truthy("endnotes"))),
-        ),
+        ("titles_whole_act_chunk", int(whole_act)),
+        ("titles_table_block_chunk", int(table_block)),
+        ("titles_with_endnotes", int(with_endnotes)),
         (
             "titles_not_current_version",
             int(inv.count(Title::not_current)),
         ),
-    ]);
+    ]))
+}
+
+fn noncurrent_source_titles(inv: &Inventory) -> Result<Vec<Json>, Exc> {
     let mut not_current = Vec::new();
-    for a in ok.iter().filter(|t| t.not_current()) {
+    for a in inv.titles.iter().filter(|t| t.not_current()) {
         not_current.push(obj(vec![
             ("register_id", getitem(&a.entry, "id")?.clone()),
             ("name", getitem(&a.entry, "name")?.clone()),
@@ -832,55 +865,66 @@ fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
             ),
         ]));
     }
-    let mut titles = Vec::new();
-    for a in ok {
-        let id = getitem(&a.entry, "id")?;
-        let name = getitem(&a.entry, "name")?;
-        let keywords = keywords_in_name(name)?;
-        titles.push(obj(vec![
-            ("register_id", id.clone()),
-            ("name", name.clone()),
-            ("collection", a.or_null("collection")),
-            (
-                "keywords_in_name",
-                Json::Array(keywords.into_iter().map(Json::str).collect()),
-            ),
-            ("long_title", a.or_null("long_title")),
-            ("compilation_number", a.or_null("compilationNumber")),
-            ("compilation_date", a.or_null("versionStart")),
-            (
-                "version_is_current",
-                a.get("version_is_current")
-                    .cloned()
-                    .unwrap_or(Json::Bool(true)),
-            ),
-            ("current_version_start", a.or_null("current_version_start")),
-            ("retrieved", a.or_null("retrieved")),
-            ("jsonl_rows", int(a.rows)),
-            ("granularity", a.or_null("granularity")),
-            ("words", a.or_null("words")),
-            ("epub_bytes", a.or_null("bytes")),
-            ("epub", with_str("epub/%s", getitem(&a.entry, "epub")?)),
-            (
-                "markdown",
-                with_str("markdown/%s", getitem(&a.entry, "markdown")?),
-            ),
-            ("sections_jsonl", with_str("markdown/%s/sections.jsonl", id)),
-            (
-                "endnotes",
-                if a.truthy("endnotes") {
-                    with_str("markdown/%s/endnotes.md", id)
-                } else {
-                    Json::Null
-                },
-            ),
-            ("source_url", a.or_null("sourceUrl")),
-            (
-                "register_page",
-                with_str(&format!("{REGISTER}/%s/latest/text"), id),
-            ),
-        ]));
-    }
+    Ok(not_current)
+}
+
+fn source_title(a: &Title) -> Result<Json, Exc> {
+    let id = getitem(&a.entry, "id")?;
+    let name = getitem(&a.entry, "name")?;
+    let keywords = keywords_in_name(name)?;
+    let mut fields = vec![
+        ("register_id", id.clone()),
+        ("name", name.clone()),
+        ("collection", a.or_null("collection")),
+        (
+            "keywords_in_name",
+            Json::Array(keywords.into_iter().map(Json::str).collect()),
+        ),
+        ("long_title", a.or_null("long_title")),
+        ("compilation_number", a.or_null("compilationNumber")),
+        ("compilation_date", a.or_null("versionStart")),
+        (
+            "version_is_current",
+            a.get("version_is_current")
+                .cloned()
+                .unwrap_or(Json::Bool(true)),
+        ),
+        ("current_version_start", a.or_null("current_version_start")),
+        ("retrieved", a.or_null("retrieved")),
+        ("jsonl_rows", int(a.rows)),
+        ("granularity", a.or_null("granularity")),
+        ("words", a.or_null("words")),
+        ("epub_bytes", a.or_null("bytes")),
+    ];
+    fields.extend(source_title_paths(a, id)?);
+    Ok(obj(fields))
+}
+
+fn source_title_paths(a: &Title, id: &Json) -> Result<Vec<(&'static str, Json)>, Exc> {
+    Ok(vec![
+        ("epub", with_str("epub/%s", getitem(&a.entry, "epub")?)),
+        (
+            "markdown",
+            with_str("markdown/%s", getitem(&a.entry, "markdown")?),
+        ),
+        ("sections_jsonl", with_str("markdown/%s/sections.jsonl", id)),
+        (
+            "endnotes",
+            if a.truthy("endnotes") {
+                with_str("markdown/%s/endnotes.md", id)
+            } else {
+                Json::Null
+            },
+        ),
+        ("source_url", a.or_null("sourceUrl")),
+        (
+            "register_page",
+            with_str(&format!("{REGISTER}/%s/latest/text"), id),
+        ),
+    ])
+}
+
+fn sources_without_epub(inv: &Inventory) -> Result<Vec<Json>, Exc> {
     let mut without_epub = Vec::new();
     for a in &inv.missing {
         without_epub.push(obj(vec![
@@ -893,6 +937,21 @@ fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
             ("reason", a.get("reason").cloned().unwrap_or(Json::Null)),
         ]));
     }
+    Ok(without_epub)
+}
+
+/// `build_sources_document(inventory, retrieved)`, recording the preset's
+/// selection when `preset` is set. Keep the fallible projections in their
+/// Python evaluation order before assembling the document.
+fn sources_document(inv: &Inventory, retrieved: &str, preset: bool) -> Result<Json, Exc> {
+    let counts = source_counts(inv)?;
+    let not_current = noncurrent_source_titles(inv)?;
+    let titles = inv
+        .titles
+        .iter()
+        .map(source_title)
+        .collect::<Result<_, _>>()?;
+    let without_epub = sources_without_epub(inv)?;
     Ok(obj(vec![
         ("corpus", Json::str(CORPUS)),
         ("retrieved", Json::str(retrieved)),
@@ -912,7 +971,10 @@ fn sources_document(inv: &Inventory, retrieved: &str) -> Result<Json, Exc> {
             Json::str(&percent_s(ATTR_CHANGED, &[retrieved])),
         ),
         ("licence_note", Json::str(LICENCE_NOTE)),
-        ("selection", Json::str(SELECTION)),
+        (
+            "selection",
+            Json::str(if preset { PRESET_SELECTION } else { SELECTION }),
+        ),
         ("counts", counts),
         ("titles_not_current_version", Json::Array(not_current)),
         ("titles", Json::Array(titles)),
@@ -1155,10 +1217,36 @@ fn index_document(inv: &Inventory, retrieved: &str) -> Result<P, Exc> {
     Ok(out)
 }
 
-/// `build_readme_document(inventory, retrieved, pii_titles, pii_names)`.
-fn readme_document(inv: &Inventory, retrieved: &str, pii: &(usize, BigInt)) -> Result<P, Exc> {
+fn staleness_duration(titles: usize) -> String {
+    let minutes = ((titles as f64 * 1.5 / 60.0).round_ties_even() as u64).max(1);
+    format!("{minutes} minute{}", if minutes == 1 { "" } else { "s" })
+}
+
+/// Canonical source sections that dist may rewrite, before its subset counts.
+pub(super) fn distribution_readme_source(titles: usize, not_current: usize) -> String {
+    README
+        .replace("{mins}", &staleness_duration(titles))
+        .replace("{notcurrent}", &not_current.to_string())
+        .replace("{lic}", LICENCE)
+        .replace("{lic_url}", LICENCE_URL)
+}
+
+pub(super) fn licence_notice(retrieved: &str) -> String {
+    LICENCE_NOTICE
+        .replacen("%s", LICENCE_URL, 1)
+        .replacen("%s", &percent_s(ATTR_UNCHANGED, &[retrieved]), 1)
+        .replacen("%s", &percent_s(ATTR_CHANGED, &[retrieved]), 1)
+}
+
+/// `build_readme_document(inventory, retrieved, pii_titles, pii_names)`, for a
+/// keyword build or, with `preset`, the `quick` preset.
+fn readme_document(
+    inv: &Inventory,
+    retrieved: &str,
+    pii: &(usize, BigInt),
+    preset: bool,
+) -> Result<P, Exc> {
     let ok = &inv.titles;
-    let mins = ((ok.len() as f64 * 1.5 / 60.0).round_ties_even() as u64).max(1);
     let fields = [
         ("{retrieved}", retrieved.to_string()),
         ("{n}", ok.len().to_string()),
@@ -1168,7 +1256,7 @@ fn readme_document(inv: &Inventory, retrieved: &str, pii: &(usize, BigInt)) -> R
         ("{words}", comma(&inv.total_words.json())?),
         ("{lic}", LICENCE.into()),
         ("{lic_url}", LICENCE_URL.into()),
-        ("{mins}", mins.to_string()),
+        ("{mins}", staleness_duration(ok.len())),
         ("{pii_titles}", pii.0.to_string()),
         ("{pii_names}", comma(&Json::Int(pii.1.clone()))?),
         (
@@ -1182,6 +1270,11 @@ fn readme_document(inv: &Inventory, retrieved: &str, pii: &(usize, BigInt)) -> R
         ("{notcurrent}", inv.count(Title::not_current).to_string()),
     ];
     let mut text = README.to_string();
+    if preset {
+        text = text
+            .replace(KEYWORD_SCOPE, PRESET_SCOPE)
+            .replace(KEYWORD_LIMITS, PRESET_LIMITS);
+    }
     for (field, value) in fields {
         text = text.replace(field, &value);
     }
@@ -1229,18 +1322,18 @@ fn copy_if_different(src: &str, dst: &str) -> Result<String, Exc> {
     Ok(dst.to_string())
 }
 
-/// `finish_corpus_publication(inventory, retrieved, pii_counts)`.
+/// `finish_corpus_publication(inventory, retrieved, pii_counts)`, given the
+/// README built from the last 2.
 fn finish(
     inv: &Inventory,
     root: &str,
     scratch: &str,
-    retrieved: &str,
-    pii: &(usize, BigInt),
+    readme: Result<P, Exc>,
     inputs: Vec<Input>,
     run: &mut Run,
 ) -> Result<(), Exc> {
     let path = child(root, &["README.md"])?;
-    write_document(&path, readme_document(inv, retrieved, pii))?;
+    write_document(&path, readme)?;
 
     let build = child(root, &["build"])?;
     pyos::makedirs(&PyPath::new(&build))?;
@@ -1292,8 +1385,13 @@ fn finish(
     Ok(())
 }
 
-/// `main(retrieved)` with the module in `scratch`.
+/// `main(retrieved)` with the module in `scratch`, for a keyword build.
 pub fn run(scratch: &str, retrieved: &str, run: &mut Run) -> Result<(), Exc> {
+    run_selected(scratch, retrieved, false, run)
+}
+
+/// `run`, describing the `quick` preset's named titles when `preset` is set.
+fn run_selected(scratch: &str, retrieved: &str, preset: bool, run: &mut Run) -> Result<(), Exc> {
     let directory = script_dir_in(scratch, "finalize.py")?;
     let root = corpus_root(&directory);
     require_builder_layout(&directory)?;
@@ -1328,7 +1426,7 @@ pub fn run(scratch: &str, retrieved: &str, run: &mut Run) -> Result<(), Exc> {
     refuse_legacy_build(&build)?;
     discard_record(&child(&build, &[RECORD])?)?;
 
-    let sources = sources_document(&inv, retrieved)?;
+    let sources = sources_document(&inv, retrieved, preset)?;
     let path = child(&root, &["sources.json"])?;
     let mut chunks = Vec::new();
     let failure = encode(&sources, 0, &mut chunks).err();
@@ -1337,13 +1435,11 @@ pub fn run(scratch: &str, retrieved: &str, run: &mut Run) -> Result<(), Exc> {
     let path = child(&root, &["INDEX.md"])?;
     write_document(&path, index_document(&inv, retrieved))?;
     let path = child(&root, &["LICENCE-NOTICE.md"])?;
-    let notice = LICENCE_NOTICE
-        .replacen("%s", LICENCE_URL, 1)
-        .replacen("%s", &percent_s(ATTR_UNCHANGED, &[retrieved]), 1)
-        .replacen("%s", &percent_s(ATTR_CHANGED, &[retrieved]), 1);
+    let notice = licence_notice(retrieved);
     write_document(&path, Ok(points(&notice)))?;
 
-    finish(&inv, &root, scratch, retrieved, &pii, inputs, run)
+    let readme = readme_document(&inv, retrieved, &pii, preset);
+    finish(&inv, &root, scratch, readme, inputs, run)
 }
 
 /// The checker shipped at the corpus root, with the 2 modules it imports.
@@ -1553,9 +1649,12 @@ fn today() -> Result<String, Exc> {
     Ok(super::extract::local_date(now)?.isoformat())
 }
 
-/// `python -m fadden finalize`: the dispatcher passes today's date and no arguments.
-pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
-    let outcome = today().and_then(|day| self::run(&module_dir(), &day, run));
+/// `python -m fadden finalize`: the dispatcher passes today's date. `--preset`
+/// marks a build of the `quick` preset; other arguments are ignored, as Python
+/// ignored them.
+pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
+    let preset = argv.iter().any(|a| a == "--preset");
+    let outcome = today().and_then(|day| run_selected(&module_dir(), &day, preset, run));
     Ok(match outcome {
         Ok(()) => 0,
         Err(error) => run.uncaught(&error),
@@ -1699,6 +1798,25 @@ mod tests {
         assert_eq!(comma(&Json::Float(f64::NAN)).unwrap(), "nan");
         assert_eq!(percent_1f(0.25), "0.2");
         assert_eq!(percent_d(&Num::Float(-2.7)).unwrap(), "-2");
+    }
+
+    /// The preset rewrite and dist's section rewrites edit this template by
+    /// its text; a reworded template must fail here, not silently skip them.
+    #[test]
+    fn the_rewritten_readme_text_is_in_the_template() {
+        assert!(README.contains(KEYWORD_SCOPE));
+        assert!(README.contains(KEYWORD_LIMITS));
+        assert!(README.starts_with(super::super::dist::README_TITLE));
+        assert!(LICENCE_NOTICE.starts_with(super::super::dist::NOTICE_TITLE));
+        for (heading, _) in super::super::dist::README_SECTIONS {
+            assert!(README.contains(&format!("\n{heading}\n")), "{heading}");
+        }
+        for (heading, _) in super::super::dist::NOTICE_SECTIONS {
+            assert!(
+                LICENCE_NOTICE.contains(&format!("\n{heading}\n")),
+                "{heading}"
+            );
+        }
     }
 
     #[test]
