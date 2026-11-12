@@ -2079,7 +2079,11 @@ fn a_custom_epub_notice_is_not_erased_before_readme_validation() {
         finalized_documents(&f);
         let marker = with_existing_dist(&f);
         let path = f.root.join("README.md");
-        let original = std::fs::read_to_string(&path).unwrap();
+        let original = std::fs::read_to_string(&path).unwrap().replace(
+            "- `epub/<register_id>.epub` - the file exactly as the Register served it\n",
+            "",
+        );
+        assert!(!original.contains("- `epub/<register_id>.epub`"));
         // This otherwise canonical section contains a custom line that dist's
         // old global EPUB-bullet rewrite would erase before checking notices.
         let text = original.replacen(
