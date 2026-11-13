@@ -262,10 +262,12 @@ query `probe13` makes, with the same 1.5-second pause. The version in force is t
 one whose `start` is on or before the date and whose `end`, the next version's
 start, is after it. Its manifest row has `version_is_current: false` and
 `current_version_start` set to that `end`, so `extract` writes the window into every
-row as `superseded_from`. A title whose version on the date is current, has no
-published compilation, did not exist yet, or lies beyond its newest 60 versions is
-listed and left out; a malformed or failed lookup fails the stage without replacing
-the manifest, as for current versions.
+row as `superseded_from`. A title whose version on the date is current, starts after
+the current one, has no published compilation, did not exist yet, or lies beyond its
+newest 60 versions is listed with that reason and left out; a malformed or failed
+lookup fails the stage without replacing the manifest, as for current versions. On
+14 November 2026 the newest 60 versions of the Income Tax Assessment Act 1997 reached
+back to 1 July 2020, so an earlier date leaves that Act out.
 
 For 946 principal titles, a run with no ambiguous groups needs 119 resolution
 requests plus the diagnostic, with 178.5 seconds of fixed pauses. Each ambiguous

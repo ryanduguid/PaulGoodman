@@ -132,8 +132,8 @@ def held(scratch: Path) -> set[tuple[str, str]]:
 def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
     """Each date's earlier compilations under compilations/<date>/, in the root's layout.
 
-    `versions --in-force-on` leaves out a title whose version on the date is the current
-    one; a compilation the root or an earlier date already holds is left out here, so the
+    `versions --in-force-on` leaves out, with its reason, a title whose version on the date
+    is the current one or cannot be fetched; a compilation the root or an earlier date already holds is left out here, so the
     windows of one title never overlap. A date left with nothing to fetch gets no folder.
     """
     scratch = staging / "build"
@@ -149,7 +149,8 @@ def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
         resolved = json.loads(target.read_text(encoding="utf-8"))
         wanted = [row for row in resolved if (row["id"], row["versionStart"]) not in kept]
         print(f"compilations/{on}: {len(wanted)} to fetch, "
-              f"{len(resolved) - len(wanted)} already held")
+              f"{len(resolved) - len(wanted)} already held, "
+              f"{len(titles) - len(resolved)} with none to fetch, listed above")
         if not wanted:
             shutil.rmtree(build)
             continue

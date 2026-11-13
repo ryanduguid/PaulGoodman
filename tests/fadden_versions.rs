@@ -404,11 +404,22 @@ fn a_date_resolves_the_version_whose_window_holds_it() {
 
 #[test]
 fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
-    let co = checkout(&titles(5));
+    let co = checkout(&titles(6));
     let mut s = Script {
         answer: |url: &str| {
             let id = history_of(url);
             let rows = match id.as_str() {
+                // A compilation registered for a version that starts after the current one.
+                "C2099A00005" => vec![
+                    version(&id, "2024-06-01", None, false, Some("C2024C00009")),
+                    version(
+                        &id,
+                        "2024-01-01",
+                        Some("2024-06-01"),
+                        true,
+                        Some("C2024C00008"),
+                    ),
+                ],
                 // In force now: the default build holds it.
                 "C2099A00001" => vec![version(&id, "2024-01-01", None, true, Some("C2024C00001"))],
                 // No compilation was published for the version then in force.
@@ -452,25 +463,20 @@ fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
         "   skipped C2099A00002: the Register published no compilation for the version in force then\n",
         "   skipped C2099A00003: no version was in force then\n",
         "   skipped C2099A00004: its newest 60 versions all start after the date\n",
+        "   skipped C2099A00005: the version then starts after the current one, so is not in force yet\n",
         "\nresolved: 1   failed: 0\n",
     ] {
         assert!(stdout.contains(line), "{line}{stdout}");
     }
     let rows = resolved(&co.module);
     assert_eq!(rows.as_array().unwrap().len(), 1);
-    assert_eq!(rows[0]["id"], rid(5));
+    assert_eq!(rows[0]["id"], rid(6));
     assert_eq!(rows[0]["current_version_start"], "2024-07-01");
 }
 
 #[test]
 fn a_failed_or_malformed_history_fails_the_stage_and_keeps_the_old_manifest() {
-    for bad in [
-        "503",
-        "no end",
-        "no start",
-        "overlap",
-        "open but not current",
-    ] {
+    for bad in ["503", "no end", "no start", "overlap"] {
         let co = checkout(&titles(2));
         std::fs::write(co.module.join("acts_resolved.json"), "old").unwrap();
         let mut s = Script {
@@ -500,11 +506,10 @@ fn a_failed_or_malformed_history_fails_the_stage_and_keeps_the_old_manifest() {
                         row["start"] = json!(null);
                         vec![row]
                     }
-                    "overlap" => vec![
+                    _ => vec![
                         row,
                         version(&id, "2024-03-01", None, true, Some("C2024C00003")),
                     ],
-                    _ => vec![version(&id, "2024-01-01", None, false, Some("C2024C00002"))],
                 };
                 Ok(json!({"value": rows}).to_string())
             },

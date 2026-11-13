@@ -358,6 +358,7 @@ const IN_FORCE_NOW: &str = "in force now, so the default build holds it";
 const NO_DOCUMENT: &str = "the Register published no compilation for the version in force then";
 const NOT_IN_FORCE: &str = "no version was in force then";
 const PAGE_TOO_SHORT: &str = "its newest 60 versions all start after the date";
+const NOT_STARTED: &str = "the version then starts after the current one, so is not in force yet";
 
 /// The version of a title in force on `on`: the one with `start <= on < end`,
 /// the Register's `end` being the next version's start. `Err` names why there
@@ -401,11 +402,13 @@ fn version_on(
     if version.get("isCurrent").is_some_and(Json::truthy) {
         return Ok(Err(IN_FORCE_NOW));
     }
+    // Besides the current version, only one that starts after it is open-ended.
+    let Some(end) = end else {
+        return Ok(Err(NOT_STARTED));
+    };
     if compilation_id(version)?.is_none() {
         return Ok(Err(NO_DOCUMENT));
     }
-    // Only the current version, or one not started yet, is open-ended.
-    let end = end.ok_or_else(|| Exc::value("Register version is not current and has no end"))?;
     Ok(Ok((version.clone(), start, end)))
 }
 

@@ -302,8 +302,8 @@ class QuickTests(unittest.TestCase):
         self.assertEqual(stages.epub_dirs[1:], [
             str(self.staging() / "compilations" / on / "epub") for on in ("2024-07-01", "2025-07-01")
         ])
-        self.assertIn("compilations/2026-07-01: 0 to fetch, 1 already held\n",
-                      printed.getvalue())
+        self.assertIn("compilations/2026-07-01: 0 to fetch, 1 already held, "
+                      "8 with none to fetch, listed above\n", printed.getvalue())
 
     def test_a_date_with_nothing_to_fetch_leaves_no_compilations_folder(self) -> None:
         versions: dict[str | None, list[tuple[str, str]]] = {None: [(quick.PRESET[0], "2026-10-01")]}
@@ -321,6 +321,14 @@ class QuickTests(unittest.TestCase):
             self.assertEqual(stop.exception.code, 2)
             self.assertIn("is not a 1 July as YYYY-07-01", printed.getvalue())
         self.assertFalse(self.staging().exists())
+
+    def test_each_date_given_reaches_the_build(self) -> None:
+        with mock.patch.object(quick, "rust_binary", return_value="bin"), \
+                mock.patch.object(quick, "build", return_value=HIT) as build, \
+                contextlib.redirect_stdout(io.StringIO()):
+            quick.main(["--out", str(self.out), "--in-force-on", "2025-07-01",
+                        "--in-force-on", "2024-07-01"])
+        build.assert_called_once_with("bin", self.out.resolve(), ["2025-07-01", "2024-07-01"])
 
     def test_download_and_retry13_write_only_where_they_are_told(self) -> None:
         scratch = self.base / "build"
