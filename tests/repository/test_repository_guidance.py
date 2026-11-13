@@ -79,6 +79,10 @@ would undo it. One input departs from that stricter Python too: a lone surrogate
 container, section, heading, compilation number or compilation date, which it admits and
 then crashes printing, is refused.
 
+The `discover` cases that finish also hold the reviewed named titles that `discover`
+fetches after its keyword searches (`docs/scope.md`), so regenerating them from the base
+revision would drop those titles.
+
 No Python search stage remains, so the search cases were edited by hand where search
 changed: #284 (0ee6bc4) re-recorded index digests and usage text, and 17f1d15 added the
 `refs` line saying an index holds no rulings.

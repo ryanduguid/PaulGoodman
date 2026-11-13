@@ -27,7 +27,8 @@ const BUILDER: [&str; 5] = [
 ];
 /// `OUTPUT_HASHES` in the removed test_finalize_phases.py; README.md now has its
 /// "Build record" section, says "about 1 minute" and says retrieval dates "can
-/// vary".
+/// vary", and README.md and sources.json name the reviewed list of titles
+/// `discover` adds by register id.
 const OUTPUT_HASHES: [(&str, &str); 4] = [
     (
         "INDEX.md",
@@ -39,11 +40,11 @@ const OUTPUT_HASHES: [(&str, &str); 4] = [
     ),
     (
         "README.md",
-        "7ba539cf05fd041e57a5422800cfef65347fa0f31fcc7b0187e70ac449170320",
+        "803837d72702f4d1448aef238c2ebfa429fbab5540544762136ac08821abb233",
     ),
     (
         "sources.json",
-        "44fb7fea960c7aaf98ce2abc9d642eaaae08872cfc062418950e271921349a0b",
+        "a12de378de92b7a21e3e6fb3ccebebaf48191f2c3b0e0e88bd67d9118bfa84d1",
     ),
 ];
 const STDOUT: &str = "titles=2 (acts=1 instruments=1) rows=3 words=33 epub=0.0 MB \
