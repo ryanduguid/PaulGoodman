@@ -10,12 +10,16 @@ Register's Crawl-delay. The folder takes the shape of a deployed build, with
 the Australian Accounting MCP server reads, so the stages run in a sibling
 `<folder>.building` and the folder appears only once every preset Act is indexed.
 Nothing is fetched from anywhere but the Register and nothing is published.
+
+`--in-force-on YYYY-07-01` also holds, under `compilations/<date>/`, each preset
+Act's compilation in force on that 1 July, where the build holds no other copy of it.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import datetime
 import json
 import shutil
 import sqlite3
@@ -50,6 +54,14 @@ class QuickError(RuntimeError):
     """A step failed; the named folder was not touched."""
 
 
+def lay_out(scratch: Path, titles: list[dict[str, object]]) -> None:
+    """A new module directory holding the titles and what the stages read beside them."""
+    scratch.mkdir(parents=True)
+    for name in SUPPORT:
+        shutil.copyfile(MODULE / name, scratch / name)
+    (scratch / "titles_all.json").write_text(json.dumps(titles, indent=1), encoding="utf-8")
+
+
 def prepare(out: Path) -> Path:
     """Refuse a folder holding anything, then lay out a staging folder beside it."""
     if out.exists() and any(out.iterdir()):
@@ -62,11 +74,7 @@ def prepare(out: Path) -> Path:
     if staging.exists():
         raise QuickError(f"{staging} holds an earlier partial build; remove it first")
     staging.mkdir()
-    scratch = staging / "build"
-    scratch.mkdir()
-    for name in SUPPORT:
-        shutil.copyfile(MODULE / name, scratch / name)
-    (scratch / "titles_all.json").write_text(json.dumps(titles, indent=1), encoding="utf-8")
+    lay_out(staging / "build", titles)
     return staging
 
 
@@ -115,6 +123,56 @@ def assemble(binary: str, staging: Path) -> str:
     return hit
 
 
+def held(scratch: Path) -> set[tuple[str, str]]:
+    """The register id and version start of each compilation a module directory extracted."""
+    rows = json.loads((scratch / "manifest_md.json").read_text(encoding="utf-8"))
+    return {(row["id"], row["versionStart"]) for row in rows}
+
+
+def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
+    """Each date's earlier compilations under compilations/<date>/, in the root's layout.
+
+    `versions --in-force-on` leaves out a title whose version on the date is the current
+    one; a compilation the root or an earlier date already holds is left out here, so the
+    windows of one title never overlap. A date left with nothing to fetch gets no folder.
+    """
+    scratch = staging / "build"
+    titles = json.loads((scratch / "titles_all.json").read_text(encoding="utf-8"))
+    kept = held(scratch)
+    folder = staging / "compilations"
+    for on in sorted(set(dates)):
+        build = folder / on
+        scratch = build / "build"
+        lay_out(scratch, titles)
+        stage(binary, scratch, "versions", "--in-force-on", on)
+        target = scratch / "acts_resolved.json"
+        resolved = json.loads(target.read_text(encoding="utf-8"))
+        wanted = [row for row in resolved if (row["id"], row["versionStart"]) not in kept]
+        print(f"compilations/{on}: {len(wanted)} to fetch, "
+              f"{len(resolved) - len(wanted)} already held")
+        if not wanted:
+            shutil.rmtree(build)
+            continue
+        download.write_json_atomic(str(target), wanted, indent=1)
+        download.main(str(scratch), str(build / "epub"))
+        for name in ("extract", "pii_scan", "pii_scan2"):
+            stage(binary, scratch, name)
+        kept |= held(scratch)
+    if folder.is_dir() and not any(folder.iterdir()):
+        folder.rmdir()
+
+
+def in_force_date(value: str) -> str:
+    """A 1 July as YYYY-07-01, which names its compilations/ folder."""
+    try:
+        valid = datetime.date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        valid = False
+    if not valid or not value.endswith("-07-01"):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a 1 July as YYYY-07-01")
+    return value
+
+
 def publish(staging: Path, out: Path) -> None:
     """Move the finished build to `out`; `rmdir` refuses a folder filled since `prepare`."""
     if out.exists():
@@ -122,11 +180,13 @@ def publish(staging: Path, out: Path) -> None:
     staging.rename(out)
 
 
-def build(binary: str, out: Path) -> str:
+def build(binary: str, out: Path, dates: Sequence[str] = ()) -> str:
     """Build beside `out`, then move the checked result to it; returns a query hit."""
     staging = prepare(out)
     try:
         hit = assemble(binary, staging)
+        if dates:
+            add_compilations(binary, staging, dates)
         publish(staging, out)
     except FAILURES as error:
         raise QuickError(f"{error}; the partial build stays in {staging}") from error
@@ -139,6 +199,10 @@ def main(argv: Sequence[str]) -> int:
         description="Build and index a preset of principal Acts, then print the MCP folder setting.",
     )
     parser.add_argument("--out", required=True, help="an absent or empty folder")
+    parser.add_argument(
+        "--in-force-on", action="append", default=[], type=in_force_date, metavar="YYYY-07-01",
+        help="also hold each Act's earlier compilation in force on this 1 July; repeat for more",
+    )
     args = parser.parse_args(argv)
     binary = rust_binary()
     if binary is None:
@@ -148,7 +212,7 @@ def main(argv: Sequence[str]) -> int:
     out = Path(args.out).resolve()
     started = time.monotonic()
     try:
-        hit = build(binary, out)
+        hit = build(binary, out, args.in_force_on)
     except FAILURES as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

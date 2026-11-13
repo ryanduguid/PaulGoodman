@@ -43,8 +43,9 @@ re-download: the URL built from the in-force date answers 404.
 
 Each row carries the window of the compilation it came from:
 `compilation_date`, the start date of that compiled text; `superseded_from`,
-the start of a later version the Register had published no compilation for
-(otherwise null); and `retrieved`, the day the build obtained it. A compilation
+the start of a later version the Register had published no compilation for, or
+in an earlier compilation the start of the next version (otherwise null); and
+`retrieved`, the day the build obtained it. A compilation
 date is not necessarily the commencement or application date of every
 provision or amendment in the compilation. A provision such as ITAA 1997 s 8-1
 commenced decades before any current compilation of that Act, and its text in
@@ -82,11 +83,22 @@ matches. It does not extend compilation coverage or change quotation checking.
 | `superseded` | Refused | A later version had started by that date, and the Register had no compilation for it when the build ran | A later version started; check the Register and application provisions |
 | `after_retrieval` | Refused | The date is after the build retrieved this title, so the build cannot say what changed | Run `check_current` and read the Register |
 
-The limits above apply to every status. `--as-at` reads the window `compilation_date`, `superseded_from` and `retrieved`, so a date inside a window can still carry text amended with retrospective effect, and a provision's text can differ from what applied to that date. The build holds one compilation of a title, so a refusal is the answer for any earlier date: no earlier text is held.
+The limits above apply to every status. `--as-at` reads the window `compilation_date`, `superseded_from` and `retrieved`, so a date inside a window can still carry text amended with retrospective effect, and a provision's text can differ from what applied to that date. The index and the `as_at` stage hold one compilation of a title, the root's, so their refusal is the answer for any earlier date: no earlier text is in the index.
 
 With `--json`, `query` and `define` print one object per line: each hit with an `as_at` object, then one `{"refused": true, ...}` per refused title with `register_id`, `act`, `matching_rows` and `as_at`, then `{"as_at_summary": ...}` with `date`, `rows`, `withheld_rows`, `titles` (a count per status) and `covers`. The `as_at` object holds `date`, `status`, `compilation_date`, `superseded_from`, `retrieved`, `covers` and `next_step`, which is null for `captured`. `cite-check --json` adds the same object to each citation, or null if the citation reached no title, then prints a refusal for a `--title` that is not `captured`.
 
 The index stores `superseded_from` from schema 3, so an index built earlier is refused until `search build` runs again. A consumer that reads `sections.jsonl` instead of the index, as the MCP server does, can apply the same 4 statuses from each row's own `compilation_date`, `superseded_from`, `retrieved` and `version_is_current` fields, and should report the same field names. `version_is_current` is false for a title with no published compilation for the version in force.
+
+### Earlier compilations
+
+A build can also hold earlier compilations: `quick --in-force-on YYYY-07-01` ([BUILD.md](../BUILD.md#earlier-compilations)) adds each preset Act's compilation in force on that 1 July. This is the contract a consumer reads:
+
+- Each earlier compilation lives at `compilations/<name>/markdown/<register id>/sections.jsonl` under the corpus root, `<name>` being the 1 July (`YYYY-07-01`) it was resolved for. A build without the option has no `compilations/` folder.
+- Its rows have exactly the format of the root's `markdown/`, with `compilation_date` the version's start, `version_is_current` false and `superseded_from` the start of the next version. In the root that flag marks a title with no published compilation for the version in force; here it marks a compilation that a later one replaced.
+- Each compilation is held once: the root holds the current one, and a date holds only compilations that neither the root nor an earlier date holds. The windows of one title therefore never overlap, so at most one covers a date.
+- `row_id`s repeat across compilations of a title, so a row is identified by its folder as well as its `row_id`.
+
+The index, `as_at` and `search --as-at` read the root only. A consumer that reads `sections.jsonl` directly can answer a dated question from the compilation whose window covers the date. The limits of `captured` above apply to each compilation.
 
 ### Amendments a build cannot see
 

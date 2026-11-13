@@ -7,14 +7,15 @@
 //! answer switches the rest of the run to single-title lookups; an ambiguous
 //! batch is retried title by title; a malformed one, or any title left
 //! unresolved, stops the stage before anything is written.
+use super::as_at::is_date;
 use super::corpus_paths::{
     compilation_id, module_dir, register_id, require_builder_layout, script_dir_in, version_date,
     version_rows, write_json_atomic,
 };
 use super::discover::quote;
 use super::http::{self, Http};
-use super::{Exc, Run, get, getitem, head, iterate, json_error};
-use crate::argparse::Exit;
+use super::{Exc, Run, get, getitem, head, iterate, json_error, probe13};
+use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyjson::{self, Json, PyStr};
 use crate::pypath;
 use crate::pyvalue::{self, py_str};
@@ -116,14 +117,17 @@ fn set_field(record: &mut Json, field: &str, value: Json) {
     }
 }
 
-/// Resolve every principal title's current version, with the module in `scratch`.
-pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc> {
-    require_builder_layout(&script_dir_in(scratch, "versions.py")?)?;
+/// Titles by register id, in first-seen order.
+type ById = Vec<(String, Json)>;
+
+/// `titles_all.json` deduplicated by register id (the last row wins, the
+/// first keeps its place), and its principal titles sorted by name.
+fn principal_titles(scratch: &str) -> Result<(ById, Vec<Json>), Exc> {
     let text = crate::pyio::read_text(&pypath::join(scratch, "titles_all.json"))?;
     let rows = pyjson::loads_standard(&text).map_err(json_error)?;
 
     // Proper dedup by register id: the last row wins, the first keeps its place.
-    let mut by_id: Vec<(String, Json)> = Vec::new();
+    let mut by_id: ById = Vec::new();
     for row in iterate(&rows)? {
         let rid = register_id(getitem(&row, "id")?)?;
         match by_id.iter_mut().find(|(id, _)| *id == rid) {
@@ -145,7 +149,14 @@ pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc>
     crate::pysort::sort(&mut order, |&a, &b| {
         super::rates::py_lt(&names[a], &names[b])
     })?;
-    let principal: Vec<Json> = order.into_iter().map(|i| principal[i].clone()).collect();
+    let principal = order.into_iter().map(|i| principal[i].clone()).collect();
+    Ok((by_id, principal))
+}
+
+/// Resolve every principal title's current version, with the module in `scratch`.
+pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc> {
+    require_builder_layout(&script_dir_in(scratch, "versions.py")?)?;
+    let (by_id, principal) = principal_titles(scratch)?;
 
     // titles_all.json holds Acts and both kinds of instrument, so both totals
     // count titles; each row's own `collection` says which kind it is.
@@ -309,6 +320,11 @@ pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc>
         index += group.len();
     }
 
+    finish(scratch, resolved, &failed, run)
+}
+
+/// Report the resolution and write `acts_resolved.json`, or refuse to.
+fn finish(scratch: &str, resolved: Vec<Json>, failed: &[Json], run: &mut Run) -> Result<(), Exc> {
     run.print(&format!(
         "\nresolved: {}   failed: {}",
         resolved.len(),
@@ -337,10 +353,141 @@ pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc>
     )
 }
 
-/// `python -m fadden versions`: the stage takes no arguments.
-pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
+/// Why a title has no earlier compilation to fetch for a date.
+const IN_FORCE_NOW: &str = "in force now, so the default build holds it";
+const NO_DOCUMENT: &str = "the Register published no compilation for the version in force then";
+const NOT_IN_FORCE: &str = "no version was in force then";
+const PAGE_TOO_SHORT: &str = "its newest 60 versions all start after the date";
+
+/// The version of a title in force on `on`: the one with `start <= on < end`,
+/// the Register's `end` being the next version's start. `Err` names why there
+/// is nothing to fetch.
+fn version_on(
+    versions: &[Json],
+    on: &str,
+) -> Result<Result<(Json, String, String), &'static str>, Exc> {
+    let mut found: Option<(&Json, String, Option<String>)> = None;
+    let mut earliest: Option<String> = None;
+    for version in versions {
+        let start = version_date(version.get("start"))?;
+        let end = match version.get("end") {
+            None => return Err(Exc::value("Register version has no end field")),
+            Some(Json::Null) => None,
+            Some(value) => Some(
+                version_date(Some(value))
+                    .map_err(|_| Exc::value("invalid Register version end"))?,
+            ),
+        };
+        compilation_id(version)?;
+        if earliest.as_ref().is_none_or(|e| start < *e) {
+            earliest = Some(start.clone());
+        }
+        if start.as_str() <= on && end.as_deref().is_none_or(|e| on < e) {
+            if found.is_some() {
+                return Err(Exc::value("Register versions overlap on the date"));
+            }
+            found = Some((version, start, end));
+        }
+    }
+    let Some((version, start, end)) = found else {
+        let truncated =
+            versions.len() >= probe13::HISTORY_PAGE && earliest.is_some_and(|e| on < e.as_str());
+        return Ok(Err(if truncated {
+            PAGE_TOO_SHORT
+        } else {
+            NOT_IN_FORCE
+        }));
+    };
+    if version.get("isCurrent").is_some_and(Json::truthy) {
+        return Ok(Err(IN_FORCE_NOW));
+    }
+    if compilation_id(version)?.is_none() {
+        return Ok(Err(NO_DOCUMENT));
+    }
+    // Only the current version, or one not started yet, is open-ended.
+    let end = end.ok_or_else(|| Exc::value("Register version is not current and has no end"))?;
+    Ok(Ok((version.clone(), start, end)))
+}
+
+/// Resolve the version of each principal title in force on `on`, one history
+/// request per title, writing an earlier compilation's `acts_resolved.json`:
+/// `version_is_current` false and `current_version_start` the next version's
+/// start. A title with nothing to fetch for the date is listed and left out;
+/// a failed lookup fails the stage, as for current versions.
+pub fn run_in_force_on(
+    http: &mut dyn Http,
+    scratch: &str,
+    on: &str,
+    run: &mut Run,
+) -> Result<(), Exc> {
+    require_builder_layout(&script_dir_in(scratch, "versions.py")?)?;
+    let (_, principal) = principal_titles(scratch)?;
+    let (mut resolved, mut failed, mut skipped) = (Vec::new(), Vec::new(), Vec::new());
+    for title in &principal {
+        let rid = register_id(getitem(title, "id")?)?;
+        let payload = http::fetch_json(http, &probe13::history_url(&rid))?;
+        http.sleep(RESOLUTION_DELAY);
+        let outcome = version_rows(payload.as_ref().unwrap_or(&Json::Null), &rid)
+            .and_then(|versions| version_on(&versions, on));
+        match outcome {
+            Ok(Ok((version, start, end))) => {
+                let mut record = title.clone();
+                set_field(&mut record, "versionStart", Json::str(&start));
+                set_field(
+                    &mut record,
+                    "compilationNumber",
+                    version
+                        .get("compilationNumber")
+                        .cloned()
+                        .unwrap_or(Json::Null),
+                );
+                let document = compilation_id(&version)?.map_or(Json::Null, |d| Json::str(&d));
+                set_field(&mut record, "compilationRegisterId", document);
+                set_field(&mut record, "version_is_current", Json::Bool(false));
+                set_field(&mut record, "current_version_start", Json::str(&end));
+                resolved.push(record);
+            }
+            Ok(Err(reason)) => skipped.push((rid, reason)),
+            Err(Exc::Value { .. }) => failed.push(title.clone()),
+            Err(other) => return Err(other),
+        }
+    }
+    run.print(&format!(
+        "in force on {on}: {} principal title(s)",
+        principal.len()
+    ));
+    for (rid, reason) in &skipped {
+        run.print(&format!("   skipped {rid}: {reason}"));
+    }
+    finish(scratch, resolved, &failed, run)
+}
+
+/// `python -m fadden versions [--in-force-on YYYY-MM-DD]`: the current
+/// versions, or with a date the earlier versions in force on it.
+pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
+    let parser = Parser::new("python -m fadden versions")
+        .description(
+            "Resolve each principal title's current version, or the version in force on a date.",
+        )
+        .arg(
+            Action::option("--in-force-on")
+                .metavar("YYYY-MM-DD")
+                .help("resolve the earlier compilations in force on this date"),
+        );
+    let args = parser.parse(argv)?;
+    let on = args.str("in_force_on");
+    if let Some(on) = on.as_deref().filter(|on| !is_date(on)) {
+        return Err(parser.error(&format!(
+            "--in-force-on must be YYYY-MM-DD, not {}",
+            crate::py::repr_str(on)
+        )));
+    }
     let mut http = http::connect();
-    Ok(match self::run(http.as_mut(), &module_dir(), run) {
+    let outcome = match on {
+        Some(on) => run_in_force_on(http.as_mut(), &module_dir(), &on, run),
+        None => self::run(http.as_mut(), &module_dir(), run),
+    };
+    Ok(match outcome {
         Ok(()) => 0,
         Err(error) => run.uncaught(&error),
     })

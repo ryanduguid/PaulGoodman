@@ -327,3 +327,217 @@ fn an_empty_probe_does_not_control_resolution() {
     assert!(result.is_ok());
     assert!(stdout.contains("\nprobe isCurrent filter: []\n!! isCurrent filter probe returned no rows; current-version resolution will still be attempted\n"));
 }
+
+/// One version of `id` for the history a dated lookup reads.
+fn version(
+    id: &str,
+    start: &str,
+    end: Option<&str>,
+    current: bool,
+    document: Option<&str>,
+) -> Value {
+    json!({"titleId": id, "start": format!("{start}T00:00:00"), "end": end.map(|e| format!("{e}T00:00:00")),
+           "isCurrent": current, "compilationNumber": "7", "registerId": document})
+}
+
+/// The title a history URL asks for.
+fn history_of(url: &str) -> String {
+    let at = url.find("titleId%20eq%20%27").unwrap() + "titleId%20eq%20%27".len();
+    url[at..at + 11].to_string()
+}
+
+fn in_force<F: FnMut(&str) -> Result<String, Failure>>(
+    script: &mut Script<F>,
+    module: &Path,
+    on: &str,
+) -> (Result<(), Exc>, String) {
+    let mut out = Run::default();
+    let result = versions::run_in_force_on(script, module.to_str().unwrap(), on, &mut out);
+    (result, String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn resolved(module: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(module.join("acts_resolved.json")).unwrap())
+        .unwrap()
+}
+
+#[test]
+fn a_date_resolves_the_version_whose_window_holds_it() {
+    let co = checkout(&titles(2));
+    let mut s = Script {
+        answer: |url: &str| {
+            let id = history_of(url);
+            Ok(json!({"value": [
+                version(&id, "2026-10-01", None, true, Some("C2026C00471")),
+                version(&id, "2025-07-01", Some("2026-10-01"), false, Some("C2025C00300")),
+                version(&id, "2024-11-01", Some("2025-07-01"), false, Some("C2024C00500")),
+            ]})
+            .to_string())
+        },
+        events: Vec::new(),
+    };
+    let (result, stdout) = in_force(&mut s, &co.module, "2025-07-01");
+    result.unwrap();
+    // One history request per title, each followed by the pause; no isCurrent probe.
+    assert_eq!(s.events.len(), 4);
+    assert_eq!(
+        s.events[0],
+        "GET https://api.prod.legislation.gov.au/v1/versions?$top=60&$orderby=start%20desc&$filter=titleId%20eq%20%27C2099A00001%27&$select=titleId,start,end,isCurrent,compilationNumber,registerId"
+    );
+    assert_eq!(s.events[1], "sleep 1.5");
+    // A version starting on the date holds it; the one ending then does not.
+    let rows = resolved(&co.module);
+    assert_eq!(rows.as_array().unwrap().len(), 2);
+    assert_eq!(
+        rows[0],
+        json!({"id": rid(1), "name": "Act 0001", "isPrincipal": true, "collection": "Act",
+               "versionStart": "2025-07-01", "compilationNumber": "7",
+               "compilationRegisterId": "C2025C00300", "version_is_current": false,
+               "current_version_start": "2026-10-01"})
+    );
+    assert!(
+        stdout.starts_with("in force on 2025-07-01: 2 principal title(s)\n"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\nresolved: 2   failed: 0\n"), "{stdout}");
+}
+
+#[test]
+fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
+    let co = checkout(&titles(5));
+    let mut s = Script {
+        answer: |url: &str| {
+            let id = history_of(url);
+            let rows = match id.as_str() {
+                // In force now: the default build holds it.
+                "C2099A00001" => vec![version(&id, "2024-01-01", None, true, Some("C2024C00001"))],
+                // No compilation was published for the version then in force.
+                "C2099A00002" => vec![
+                    version(&id, "2025-01-01", None, true, Some("C2025C00001")),
+                    version(&id, "2024-01-01", Some("2025-01-01"), false, None),
+                ],
+                // Made after the date.
+                "C2099A00003" => vec![version(&id, "2025-01-01", None, true, Some("C2025C00002"))],
+                // 60 versions, all after the date: the page cannot reach it.
+                "C2099A00004" => (0..60)
+                    .map(|n| {
+                        version(
+                            &id,
+                            &format!("{}-01-01", 2100 - n),
+                            Some(&format!("{}-01-01", 2101 - n)),
+                            n == 0,
+                            Some("C2099C00009"),
+                        )
+                    })
+                    .collect(),
+                _ => vec![
+                    version(&id, "2024-07-01", None, true, Some("C2024C00003")),
+                    version(
+                        &id,
+                        "2023-01-01",
+                        Some("2024-07-01"),
+                        false,
+                        Some("C2023C00003"),
+                    ),
+                ],
+            };
+            Ok(json!({"value": rows}).to_string())
+        },
+        events: Vec::new(),
+    };
+    let (result, stdout) = in_force(&mut s, &co.module, "2024-06-30");
+    result.unwrap();
+    for line in [
+        "   skipped C2099A00001: in force now, so the default build holds it\n",
+        "   skipped C2099A00002: the Register published no compilation for the version in force then\n",
+        "   skipped C2099A00003: no version was in force then\n",
+        "   skipped C2099A00004: its newest 60 versions all start after the date\n",
+        "\nresolved: 1   failed: 0\n",
+    ] {
+        assert!(stdout.contains(line), "{line}{stdout}");
+    }
+    let rows = resolved(&co.module);
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    assert_eq!(rows[0]["id"], rid(5));
+    assert_eq!(rows[0]["current_version_start"], "2024-07-01");
+}
+
+#[test]
+fn a_failed_or_malformed_history_fails_the_stage_and_keeps_the_old_manifest() {
+    for bad in [
+        "503",
+        "no end",
+        "no start",
+        "overlap",
+        "open but not current",
+    ] {
+        let co = checkout(&titles(2));
+        std::fs::write(co.module.join("acts_resolved.json"), "old").unwrap();
+        let mut s = Script {
+            answer: |url: &str| {
+                let id = history_of(url);
+                if id == rid(1) {
+                    return Ok(json!({"value": [
+                        version(&id, "2025-01-01", None, true, Some("C2025C00001")),
+                        version(&id, "2024-01-01", Some("2025-01-01"), false, Some("C2024C00001")),
+                    ]})
+                    .to_string());
+                }
+                let mut row = version(
+                    &id,
+                    "2024-01-01",
+                    Some("2025-01-01"),
+                    false,
+                    Some("C2024C00002"),
+                );
+                let rows = match bad {
+                    "503" => return Err(Failure::Status(503)),
+                    "no end" => {
+                        row.as_object_mut().unwrap().remove("end");
+                        vec![row]
+                    }
+                    "no start" => {
+                        row["start"] = json!(null);
+                        vec![row]
+                    }
+                    "overlap" => vec![
+                        row,
+                        version(&id, "2024-03-01", None, true, Some("C2024C00003")),
+                    ],
+                    _ => vec![version(&id, "2024-01-01", None, false, Some("C2024C00002"))],
+                };
+                Ok(json!({"value": rows}).to_string())
+            },
+            events: Vec::new(),
+        };
+        let (result, stdout) = in_force(&mut s, &co.module, "2024-07-01");
+        let Err(error) = result else {
+            panic!("expected a RuntimeError for {bad}")
+        };
+        assert_eq!(
+            error.to_string(),
+            "version resolution incomplete for 1 title(s); refusing to write acts_resolved.json",
+            "{bad}"
+        );
+        assert!(
+            stdout.contains("   FAILED C2099A00002 Act 0002\n"),
+            "{bad}: {stdout}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(co.module.join("acts_resolved.json")).unwrap(),
+            "old"
+        );
+    }
+}
+
+#[test]
+fn the_date_must_be_a_calendar_date() {
+    for bad in ["2025-7-01", "2025-02-30", "1 July 2025"] {
+        let mut out = Run::default();
+        let refused = versions::main(&["--in-force-on".into(), bad.into()], &mut out);
+        let Err(tax_radar_au::argparse::Exit::Error(text)) = refused else {
+            panic!("expected a usage error for {bad}")
+        };
+        assert!(text.contains("--in-force-on must be YYYY-MM-DD"), "{text}");
+    }
+}
