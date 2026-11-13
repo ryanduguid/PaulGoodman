@@ -14,7 +14,7 @@
 [![CodeQL](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml)
 [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_au-tax-legislation-corpus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_au-tax-legislation-corpus)
 [![Codacy code quality](https://app.codacy.com/project/badge/Grade/a474c8d33a4a4bd6bd97993f5c4113bd)](https://app.codacy.com/gh/ryanduguid/PaulGoodman/dashboard)<br>
-[![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/au-tax-legislation-corpus.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/au-tax-legislation-corpus)
+[![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/PaulGoodman.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/PaulGoodman)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15425/badge)](https://www.bestpractices.dev/projects/15425)
 [![SLSA provenance](.github/assets/badges/slsa.svg)](https://github.com/ryanduguid/PaulGoodman/attestations)
 [![VirusTotal](.github/assets/badges/virustotal.svg)](https://github.com/ryanduguid/PaulGoodman/releases/latest)<br>
