@@ -127,11 +127,12 @@ the signed provenance bundle
 because it holds the attestation itself:
 
 ```bash
-tag=v0.4.0
+tag=v0.5.0
 # The policy commit that signed this release, from the list above: 87767ec for
-# v0.1.7 to v0.2.1, a601f1d8b143f92b0517f709216993660d21f480 for v0.3.0, and
-# 0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c for v0.4.0.
-signer_digest=0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c
+# v0.1.7 to v0.2.1, a601f1d8b143f92b0517f709216993660d21f480 for v0.3.0,
+# 0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c for v0.4.0, and
+# ca5492bd09693be9e1fd47d980e2740ef8daf023 for v0.5.0 and later.
+signer_digest=ca5492bd09693be9e1fd47d980e2740ef8daf023
 repo=ryanduguid/PaulGoodman
 release_commit="$(git ls-remote "https://github.com/$repo.git" "refs/tags/$tag^{}" | cut -f1)"
 test -n "$release_commit"
