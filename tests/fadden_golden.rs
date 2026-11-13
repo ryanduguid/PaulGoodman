@@ -20,6 +20,13 @@
 //! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
 //! 17f1d15 added the `refs` line saying an index holds no rulings.
 //!
+//! The discover cases that finish (1, 3, 5 and 7) depart from 43b5e0c on
+//! purpose: after its keyword searches `discover` fetches the reviewed named
+//! titles in one request, so each script gained the Register's answer and each
+//! output was re-recorded with those titles appended. Cases 8 and 9 have no
+//! Python counterpart: a named title the Register no longer holds in force, and
+//! one a keyword already matches.
+//!
 //! The finalize fixtures refresh the shipped http_fetch.py digest for the
 //! PaulGoodman contact URL.
 //!
@@ -41,10 +48,11 @@
 //! leaves out the other cases, which the default run covers and which never
 //! reach the script. How hard can it be? (Top Gear)
 //!
-//! 4 wording fixes depart from Python on purpose, and `departed` maps each
+//! 5 wording fixes depart from Python on purpose, and `departed` maps each
 //! back to Python's text before hashing: finalize's README says "about 1
 //! minute" where Python said "1 minutes" and "retrieval dates can vary" where
-//! Python said they "vary"; dist's REMOVED.md names the contact allowlist's
+//! Python said they "vary", and its README and `sources.json` selection add the
+//! reviewed named titles `discover` appends (below); dist's REMOVED.md names the contact allowlist's
 //! size as that, where Python called it the contacts the second pass approved,
 //! and names the licence's exclusions, where Python said the grant covered
 //! everything but the Coat of Arms. dist's other departures never reach these
@@ -247,14 +255,33 @@ fn snapshot(
 /// purpose (see the module comment).
 fn departed(family: &str, rel: &str, text: &str) -> String {
     match family {
-        "finalize" if rel.ends_with("/README.md") => text
+        "finalize" if rel.ends_with("/README.md") => {
+            let mut text = text
+                .replace(
+                    "about 1 minute for everything",
+                    "about 1 minutes for everything",
+                )
+                .replace(
+                    "**Per-Act retrieval dates can vary.**",
+                    "**Per-Act retrieval dates vary.**",
+                );
+            // Written in text mode, so the line ends are the platform's.
+            for eol in ["\n", "\r\n"] {
+                text = text.replace(
+                    &"in its name is absent, unless\nthe builder's short reviewed list names it by register id (`keywords_in_name`\nis empty for those): the Customs Act 1901 and Charities Act 2013 are absent.".replace('\n', eol),
+                    &"in its name is absent: the\nCustoms Act 1901 and Charities Act 2013 among them.".replace('\n', eol),
+                );
+            }
+            text
+        }
+        "finalize" if rel.ends_with("/sources.json") => text
             .replace(
-                "about 1 minute for everything",
-                "about 1 minutes for everything",
+                " or Medicare Levy, and the principal Acts a short reviewed list names by register id.",
+                " or Medicare Levy.",
             )
             .replace(
-                "**Per-Act retrieval dates can vary.**",
-                "**Per-Act retrieval dates vary.**",
+                " in its name is absent unless the reviewed list names it, and",
+                " in its name is absent, and",
             ),
         "dist" if rel.ends_with("/REMOVED.md") => ALLOWLIST_SIZE
             .replace_all(

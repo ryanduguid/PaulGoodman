@@ -32,7 +32,7 @@
 
 ## What talks to the network, and when
 Documented network access is 7 builder stages that reach the Federal Register and `rulings`, which reaches the ATO Legal Database. The review queue itself makes no network request.
-- `discover` waits 3 seconds after each keyword and collection query and 2 seconds between full pages; its request count depends on the matching titles. `versions` resolves up to 8 titles a request: for 946 titles with no ambiguous groups, 119 resolution requests plus 1 diagnostic, with 178.5 seconds of fixed pauses (`BUILD.md`).
+- `discover` waits 3 seconds after each keyword and collection query and 2 seconds between full pages; its request count depends on the matching titles, plus 1 request for the reviewed named titles in `docs/scope.md`. `versions` resolves up to 8 titles a request: for 946 titles with no ambiguous groups, 119 resolution requests plus 1 diagnostic, with 178.5 seconds of fixed pauses (`BUILD.md`).
 - `download` fetches one EPUB per title through `curl`, sleeping 10 seconds between titles to honour the Register's `robots.txt` Crawl-delay. All 946 titles take about 2 hours 40 minutes, and titles already downloaded at the same version are skipped.
 - `probe13` reads version history for the titles `download` recorded as `no_epub`, and `retry13` downloads the latest published compilation for those it can recover.
 - `check_current` is a read-only staleness check: 946 API calls at 1.5 seconds, about half an hour.

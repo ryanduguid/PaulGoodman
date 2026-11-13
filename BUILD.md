@@ -240,7 +240,8 @@ https://www.legislation.gov.au/robots.txt. All 946 titles take about 2 hours
 records the same version, so re-runs cost only the new titles.
 
 `discover` waits 3 seconds after each keyword/collection query and 2 seconds
-between full pages. Its request count depends on the matching titles.
+between full pages. Its request count depends on the matching titles, plus 1
+request for the named titles in [scope](docs/scope.md).
 
 `versions` makes one diagnostic request, then resolves up to 8 principal
 titles per request, with a 1.5-second pause after each resolution request.
@@ -964,7 +965,7 @@ statuses. `FADDEN_BIN` names another build of it. An exception those Python
 stages did not catch printed a traceback; the binary prints its last line.
 
 ```bash
-python -m fadden discover      # list every in-force title matching the tax keywords -> fadden/titles_all.json, fadden/titles_principal.json (refuses a list missing earlier titles; --accept-missing overrides)
+python -m fadden discover      # list every in-force title matching the tax keywords, plus the reviewed named titles -> fadden/titles_all.json, fadden/titles_principal.json (refuses a list missing earlier titles; --accept-missing overrides)
 python -m fadden versions      # dedup titles and resolve each one's current version date -> fadden/acts_resolved.json
 python -m fadden download      # fetch the current EPUB for each resolved title -> ./corpus/epub/*.epub, fadden/manifest_raw.json
 python -m fadden probe13       # only if download reports no_epub: probe version history -> fadden/probe13.json

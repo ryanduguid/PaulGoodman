@@ -3,10 +3,12 @@
 
 //! The port of `fadden/discover.py` (removed after the port): page every in-force title whose name holds a tax
 //! keyword, across the Act, legislative instrument and notifiable instrument
-//! collections, and write `titles_all.json` and `titles_principal.json` beside
-//! the module. A failed or unordered page stops the stage rather than leave a
-//! silently incomplete title list, and so does a list that has lost titles the
-//! earlier `titles_all.json` held, unless `--accept-missing` records the loss.
+//! collections, add the reviewed `NAMED_TITLES`, and write `titles_all.json` and
+//! `titles_principal.json` beside the module. A failed or unordered page stops
+//! the stage rather than leave a silently incomplete title list, and so do a
+//! named title that is no longer an in-force principal Act and a list that has
+//! lost titles the earlier `titles_all.json` held, unless `--accept-missing`
+//! records the loss.
 use super::corpus_paths::{module_dir, require_builder_layout, script_dir_in, write_json_atomic};
 use super::http::{self, Http};
 use super::{Exc, Run, get, getitem, head};
@@ -36,6 +38,30 @@ const KEYWORDS: [&str; 5] = [
 // Acts alone leave out the operative detail: the ITAA, GST and TAA Regulations
 // and the FBT rate determinations are all legislative instruments.
 const COLLECTIONS: [&str; 3] = ["Act", "LegislativeInstrument", "NotifiableInstrument"];
+const SELECT: &str = "id,name,isPrincipal,isInForce,collection,year,number,status";
+
+/// Tax law no keyword reaches, by Register id: in-force principal Acts whose
+/// names hold none of `KEYWORDS`, each read on the Register on 13 November 2026.
+/// This is a reviewed list, not a rule. A title joins only when its Register
+/// text shows it is tax law, with that reason and its Register page recorded
+/// here; `docs/scope.md` gives the steps.
+const NAMED_TITLES: [(&str, &str); 3] = [
+    // https://www.legislation.gov.au/C2004A00653/latest/text: the Commissioner of
+    // Taxation has its general administration (s 7) and assesses the grants and
+    // benefits it pays (ss 17 to 19).
+    (
+        "C2004A00653",
+        "Product Grants and Benefits Administration Act 2000",
+    ),
+    // https://www.legislation.gov.au/C2004A01074/latest/text: it provides the
+    // administrative measures the venture capital CGT exemption in Subdivision
+    // 118-F of the Income Tax Assessment Act 1997 needs (s 3-1).
+    ("C2004A01074", "Venture Capital Act 2002"),
+    // https://www.legislation.gov.au/C2017A00063/latest/text: it imposes a levy on
+    // certain authorised deposit-taking institutions (long title); 'Levy' is a
+    // keyword only within 'Medicare Levy'.
+    ("C2017A00063", "Major Bank Levy Act 2017"),
+];
 
 /// Why the stage stopped: an uncaught exception, or `SystemExit(message)`,
 /// which prints the message alone and exits 1.
@@ -87,11 +113,10 @@ fn page_titles(http: &mut dyn Http, keyword: &str, collection: &str) -> Result<V
     let filter = format!(
         "collection eq '{collection}' and isInForce eq true and contains(name,'{keyword}')"
     );
-    let select = "id,name,isPrincipal,isInForce,collection,year,number,status";
     let (mut rows, mut skip) = (Vec::new(), 0);
     loop {
         let url = format!(
-            "{API}/titles?$top=100&$skip={skip}&$orderby=id&$filter={}&$select={select}",
+            "{API}/titles?$top=100&$skip={skip}&$orderby=id&$filter={}&$select={SELECT}",
             quote(&filter)
         );
         let page = http::fetch_json(http, &url)?;
@@ -236,6 +261,58 @@ fn discover_titles(http: &mut dyn Http, run: &mut Run) -> Result<Vec<Json>, Stop
     Ok(all_rows)
 }
 
+/// Fetch `NAMED_TITLES` in one request and append each one keyword discovery
+/// missed, in table order. A listed title the Register no longer holds as an
+/// in-force principal Act stops the stage; one a keyword already matched is
+/// reported, so the table can be pruned, and kept once.
+fn add_named_titles(
+    http: &mut dyn Http,
+    all_rows: &mut Vec<Json>,
+    run: &mut Run,
+) -> Result<(), Stop> {
+    let filter = NAMED_TITLES
+        .map(|(id, _)| format!("id eq '{id}'"))
+        .join(" or ");
+    let url = format!("{API}/titles?$filter={}&$select={SELECT}", quote(&filter));
+    let page = http::fetch_json(http, &url)?;
+    let Some(Json::Array(values)) = page.as_ref().and_then(|d| d.get("value")) else {
+        return Err(Stop::Raised(Exc::Runtime(
+            "named title lookup failed; refusing to write an incomplete title list".into(),
+        )));
+    };
+    let mut fresh = 0;
+    for (id, name) in NAMED_TITLES {
+        let id_json = Json::str(id);
+        let current = values.iter().find(|row| {
+            row.get("id") == Some(&id_json)
+                && row.get("isInForce") == Some(&Json::Bool(true))
+                && row.get("isPrincipal") == Some(&Json::Bool(true))
+                && row.get("collection") == Some(&Json::str("Act"))
+        });
+        let Some(row) = current else {
+            return Err(Stop::Exit(format!(
+                "named title {id} ({name}) is no longer an in-force principal Act on the Register; \
+                 review NAMED_TITLES in src/fadden/discover.rs"
+            )));
+        };
+        if all_rows.iter().any(|seen| seen.get("id") == Some(&id_json)) {
+            run.print(&format!(
+                "named title {id} ({name}) is already matched by a keyword; remove it from NAMED_TITLES"
+            ));
+        } else {
+            all_rows.push(row.clone());
+            fresh += 1;
+        }
+    }
+    run.print(&format!(
+        "{:<22} {:<16} matched {:>4}, new {fresh:>4}",
+        "Act",
+        "named titles",
+        NAMED_TITLES.len()
+    ));
+    Ok(())
+}
+
 /// Print the first 15 principal titles by name, as Python printed them.
 fn print_sample(principal: &[Json], run: &mut Run) -> Result<(), Stop> {
     run.print("\nsample principal titles:");
@@ -274,7 +351,8 @@ pub fn run(
     run: &mut Run,
 ) -> Result<(), Stop> {
     require_builder_layout(&script_dir_in(scratch, "discover.py")?)?;
-    let all_rows = discover_titles(http, run)?;
+    let mut all_rows = discover_titles(http, run)?;
+    add_named_titles(http, &mut all_rows, run)?;
 
     let mut principal = Vec::new();
     for row in &all_rows {
@@ -322,7 +400,9 @@ pub fn run(
 /// `python -m fadden discover [--accept-missing]`.
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     let args = Parser::new("python -m fadden discover")
-        .description("List every in-force title whose name holds a tax keyword.")
+        .description(
+            "List every in-force title whose name holds a tax keyword, and the reviewed named titles.",
+        )
         .arg(Action::flag("--accept-missing").help(
             "replace the title lists even though titles the earlier titles_all.json held are missing",
         ))
@@ -343,4 +423,23 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
             }
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KEYWORDS, NAMED_TITLES};
+
+    /// The Register's `contains(name, ...)` ignores case ('Rotax' matches 'Tax'),
+    /// so a listed name holding a keyword in any case belongs to keyword discovery.
+    #[test]
+    fn no_named_title_holds_a_keyword() {
+        for (id, name) in NAMED_TITLES {
+            for keyword in KEYWORDS {
+                assert!(
+                    !name.to_lowercase().contains(&keyword.to_lowercase()),
+                    "{id} {name} holds {keyword}"
+                );
+            }
+        }
+    }
 }
