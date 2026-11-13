@@ -254,13 +254,18 @@ jobs:
       # The Python-parity fixtures for the stages that fetch need the scripted
       # responses; the default test run covers the other stages' fixtures.
       - run: cargo test --locked --features fake-http --test fadden_golden
-      - run: cargo build --locked --release
-      # The samples ship in the repository beside the binary; run the demo
-      # from a directory outside the checkout so nothing resolves relative to it.
-      - name: run the release binary on the samples from outside the checkout
+      # Main keeps compiling the release profile; pull requests skip it. The
+      # test job runs the release binary on Linux for every event.
+      - if: github.event_name != 'pull_request'
+        run: cargo build --locked --release
+      # The demo's debug build reuses the tests' artefacts. The samples ship in
+      # the repository beside the binary; run the demo from a directory outside
+      # the checkout so nothing resolves relative to it.
+      - run: cargo build --locked
+      - name: run the binary on the samples from outside the checkout
         shell: bash
         run: |
-          bin="$PWD/target/release/tax-radar-au"
+          bin="$PWD/target/debug/tax-radar-au"
           samples="$PWD/samples"
           demo="$(mktemp -d)"
           cd "$demo"

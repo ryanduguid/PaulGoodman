@@ -289,15 +289,15 @@ def test_workflow_commands_derive_every_matrix_test_target() -> None:
     )
 
 
-def test_agents_reproduces_the_release_binary_smoke() -> None:
+def test_agents_reproduces_the_binary_smoke() -> None:
     guidance = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    smoke = _section(guidance, "Release binary smoke")
+    smoke = _section(guidance, "Binary smoke")
 
     [gate] = _workflow_multiline_gates()
     assert _fenced_commands(smoke) == gate.splitlines()
     assert _normalise(_without_fenced_commands(smoke)) == _normalise(
         """\
-        Build the release binary, then run it on the shipped samples from a fresh temporary
+        Build the binary, then run it on the shipped samples from a fresh temporary
         directory outside the checkout. This is a binary preflight, not a publication step:
         """
     )

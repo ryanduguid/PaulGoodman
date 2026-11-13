@@ -95,6 +95,7 @@ cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked
 cargo test --locked --features fake-http --test fadden_golden
+cargo build --locked
 cargo audit && cargo audit --file fuzz/Cargo.lock
 uv run --locked --extra dev ruff check .
 uv run --locked --extra dev mypy
@@ -104,13 +105,13 @@ curl --proto '=https' --proto-redir '=https' -sSLO https://github.com/rhysd/acti
 ./actionlint -shellcheck ./shellcheck-v0.11.0/shellcheck
 ```
 
-## Release binary smoke
+## Binary smoke
 
-Build the release binary, then run it on the shipped samples from a fresh temporary
+Build the binary, then run it on the shipped samples from a fresh temporary
 directory outside the checkout. This is a binary preflight, not a publication step:
 
 ```bash
-bin="$PWD/target/release/tax-radar-au"
+bin="$PWD/target/debug/tax-radar-au"
 samples="$PWD/samples"
 demo="$(mktemp -d)"
 cd "$demo"
