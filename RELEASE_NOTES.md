@@ -1,15 +1,27 @@
-# Unreleased
+# v0.5.0
 
-- `search cite-check INDEX DRAFT` checks a draft's citations against a build: each is `resolved`, `assumed` or `not_held`, with the nearest held sections for a provision the build lacks. It grades a quotation in a citation's sentence as `exact`, `normalised`, `partial` or `none`, and checks citations of rulings against a captured rulings run (#270, #286). `docs/build-evidence.md` adds a 46-query retrieval baseline on real law (#270).
+This candidate contains the corpus builder source. It excludes generated legislation and live evidence.
+
+- `search cite-check INDEX DRAFT` checks a draft's legislation citations against a build: each is `resolved`, `assumed` or `not_held`, with the nearest held sections for a provision the build lacks. It grades a quotation in a citation's sentence as `exact`, `normalised`, `partial` or `none` (#270, #286). It does not check citations of rulings. `docs/build-evidence.md` adds a 46-query retrieval baseline on real law (#270).
+- `search quote INDEX ROW_ID QUOTATION` grades one quotation against a chosen row by the `cite-check` rules (#286).
+- `search build --rulings RUN_DIR` indexes each rulings run's references to a section, Division or Subdivision named with its Act, and `search refs` lists them under `cited_by_rulings` with each paragraph's withdrawal status. The build refuses a run whose `rulings.jsonl` does not match its `manifest.json`. Without `--rulings` the index holds no rulings tables (#286).
 - `authorities` exports a build, and optionally a rulings run, as the closed list for DrDebits' `gate --authorities` (`BUILD.md`, 'Exporting an authorities list').
 - `--as-at DATE` on `search query`, `define` and `cite-check` answers only from titles whose status on that date is `captured` and refuses the rest by name. No superseded text is held (#284).
-- `quick --out FOLDER` fetches, builds and indexes 9 principal Acts from the Register in one command and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting (#284).
-- `search query --stem` adds English word-form matches, marked as stemmed; exact search stays the default (#285).
+- `quick --out FOLDER` fetches, builds and indexes 9 principal Acts from the Register in one command and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting; `finalize --preset` marks such a build (#284).
+- `search query --stem` adds English word-form matches, marked as stemmed; exact search stays the default. Every `search build` now also fills the stemmed index, so an index differs from one built by 0.4.0 (#285).
+- A re-run that reuses a cached EPUB records the compilation's resolved Register ID, where it copied the cached file's sidecar and could record `null` or another compilation's ID (#258).
 - `witness` compares a fixed sample of titles' EPUB sections with the Register's Word rendition (#256). `search refs` resolves ITAA 1997, ITAA 1936, TAA 1953, GST Act and FBTAA 1986 through a closed table (#264), and `query` ranks current titles above superseded ones (#246).
 - `discover` adds 3 Acts no tax keyword reaches from a reviewed list: the Major Bank Levy Act 2017, the Product Grants and Benefits Administration Act 2000 and the Venture Capital Act 2002. It stops if a listed title is no longer an in-force principal Act (`docs/scope.md`).
 - `dist` keeps custom distribution notices and supports verified corpus snapshots; the first, `corpus-2026-11-11`, is a separate release (#292).
 - Licence: versions made available from 4 November 2026 are under the Ryan Duguid Public Attribution Licence 1.0, the FSL-1.1-ALv2 text with a public attribution condition; earlier releases keep their licences (#267).
 - `compare_builds` refuses a sections.jsonl row that repeats a JSON member at any depth, names another title, holds a container, section or heading that is neither text nor null (a lone surrogate counts as neither), holds a lone surrogate anywhere in its compilation number or date, or comes from a different compilation from the title's first row, and its text report lists the titles present in only one build. For such inputs it departs on purpose from the output of the Python stage at 43b5e0c.
+- Dependencies: rustix 1.1.6 for RUSTSEC-2026-0486 (#299); the fuzz workspace uses the patched SQLite (#289).
+- The release workflow is pinned to release-policy `ca5492b` (#281).
+
+Known issues:
+
+- `rulings` labels Law Companion Rulings, which the ATO lists under `COG`, as Practical Compliance Guidelines, and does not capture GST determinations, listed under `GSD` (`docs/rulings.md`).
+- A `fadden` stage holds its output until it exits, so a long stage shows no progress, and a panic or Ctrl+C loses what it would have printed.
 
 # v0.4.0
 
