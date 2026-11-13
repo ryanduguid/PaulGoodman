@@ -615,20 +615,26 @@ fn a_named_title_that_is_no_longer_an_in_force_principal_act_stops_discovery() {
 
 #[test]
 fn a_failed_named_title_lookup_writes_neither_output() {
-    let co = checkout();
-    let seeded = seed(&co.module, &titles(3, 1));
-    let mut s = first_search(&titles(3, 1));
-    s.bodies.pop();
-    let (result, _) = run(&mut s, &co.module);
-    let Err(Stop::Raised(error)) = result else {
-        panic!("expected a RuntimeError")
-    };
-    assert_eq!(error.class(), "RuntimeError");
-    assert_eq!(
-        error.to_string(),
-        "named title lookup failed; refusing to write an incomplete title list"
-    );
-    unchanged(&co.module, &seeded);
+    // No answer in 3 tries, then answers whose `value` is missing or not a list.
+    for answer in [None, Some(json!({})), Some(json!({"value": named()[0]}))] {
+        let co = checkout();
+        let seeded = seed(&co.module, &titles(3, 1));
+        let mut s = first_search(&titles(3, 1));
+        s.bodies.pop();
+        if let Some(answer) = answer {
+            s.bodies.push(Ok(answer.to_string()));
+        }
+        let (result, _) = run(&mut s, &co.module);
+        let Err(Stop::Raised(error)) = result else {
+            panic!("expected a RuntimeError")
+        };
+        assert_eq!(error.class(), "RuntimeError");
+        assert_eq!(
+            error.to_string(),
+            "named title lookup failed; refusing to write an incomplete title list"
+        );
+        unchanged(&co.module, &seeded);
+    }
 }
 
 #[test]
@@ -649,8 +655,7 @@ fn a_named_title_a_keyword_already_matches_is_reported_and_listed_once() {
         ),
         "{stdout}"
     );
-    assert_eq!(
-        read(&co.module.join("titles_all.json")),
-        json!([levy, named[0], named[1]])
-    );
+    let listed = json!([levy, named[0], named[1]]);
+    assert_eq!(read(&co.module.join("titles_all.json")), listed);
+    assert_eq!(read(&co.module.join("titles_principal.json")), listed);
 }

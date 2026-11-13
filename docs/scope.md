@@ -18,13 +18,14 @@ Levy Act 2017, the Product Grants and Benefits Administration Act 2000 and the
 Venture Capital Act 2002. `NAMED_TITLES` in `src/fadden/discover.rs` is a
 reviewed list, not a rule: it holds only titles someone has read on the Register
 and found to be tax law that no keyword reaches. To add one, read its text on
-the Register, then add a row with its id and name, a comment giving the Register
-page, the date read and the provision that makes it tax law. Then add the
-Register's answer for the new id to `named()` in `tests/fadden_discover.rs` and
-to the scripted answers of the discover cases in `tests/golden`, and re-record
-those cases' outputs. `discover` stops, writing nothing, if a
-listed title is no longer an in-force principal Act, and prints a line asking
-for a row's removal when a keyword already matches that title.
+the Register, then add a row with its id and name and a comment giving the
+Register page and the provision that makes it tax law, and record the date read
+in the list's doc comment. Then add the Register's answer for the new id to
+`named()` in `tests/fadden_discover.rs` and to the scripted answers of the
+discover cases in `tests/golden`, and re-record those cases' outputs. `discover`
+stops, writing nothing, if a listed title is no longer an in-force principal
+Act, and prints a line asking for a row's removal when a keyword already matches
+that title.
 
 The Register's `contains(name,...)` also matches
 former titles and substrings, which is how the Passenger Movement Charge Act

@@ -52,13 +52,14 @@
 //! back to Python's text before hashing: finalize's README says "about 1
 //! minute" where Python said "1 minutes" and "retrieval dates can vary" where
 //! Python said they "vary", and its README and `sources.json` selection add the
-//! reviewed named titles `discover` appends (below); dist's REMOVED.md names the contact allowlist's
-//! size as that, where Python called it the contacts the second pass approved,
-//! and names the licence's exclusions, where Python said the grant covered
-//! everything but the Coat of Arms. dist's other departures never reach these
-//! cases: its README and LICENCE-NOTICE.md section rewrites and its
-//! `licence_note` apply only to finalize's title, headings and note, which no
-//! dist input holds, so those are covered by tests/fadden_dist.rs alone.
+//! reviewed named titles `discover` appends (above); dist's REMOVED.md names
+//! the contact allowlist's size as that, where Python called it the contacts
+//! the second pass approved, and names the licence's exclusions, where Python
+//! said the grant covered everything but the Coat of Arms. dist's other
+//! departures never reach these cases: its README and LICENCE-NOTICE.md
+//! section rewrites and its `licence_note` apply only to finalize's title,
+//! headings and note, which no dist input holds, so those are covered by
+//! tests/fadden_dist.rs alone.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
