@@ -11,7 +11,22 @@ disallowed or sunset whilst its enabling Act stands.
 Selection uses title keywords (Tax, Excise, Superannuation, Customs Tariff,
 Medicare Levy) applied to the Act, LegislativeInstrument and
 NotifiableInstrument collections. A tax-relevant title without one of those
-words in its name is absent. The Register's `contains(name,...)` also matches
+words in its name is absent unless `discover` names it.
+
+`discover` names 3 Acts by Register id after the keyword search: the Major Bank
+Levy Act 2017, the Product Grants and Benefits Administration Act 2000 and the
+Venture Capital Act 2002. `NAMED_TITLES` in `src/fadden/discover.rs` is a
+reviewed list, not a rule: it holds only titles someone has read on the Register
+and found to be tax law that no keyword reaches. To add one, read its text on
+the Register, then add a row with its id and name, a comment giving the Register
+page, the date read and the provision that makes it tax law. Then add the
+Register's answer for the new id to `named()` in `tests/fadden_discover.rs` and
+to the scripted answers of the discover cases in `tests/golden`, and re-record
+those cases' outputs. `discover` stops, writing nothing, if a
+listed title is no longer an in-force principal Act, and prints a line asking
+for a row's removal when a keyword already matches that title.
+
+The Register's `contains(name,...)` also matches
 former titles and substrings, which is how the Passenger Movement Charge Act
 1978 arrived under its old name, the *Departure Tax Act 1978*, and how 2 dozen
 `AD/ROTAX/...` airworthiness directives arrived because 'Rotax' contains 'tax'.

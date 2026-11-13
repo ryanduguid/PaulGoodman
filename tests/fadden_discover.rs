@@ -65,14 +65,44 @@ fn title(id: &str, name: &str, principal: bool, collection: &str) -> Value {
            "collection": collection, "year": 2099, "number": 1, "status": "InForce"})
 }
 
-/// 15 searches (3 collections by 5 keywords); `pages(search)` gives each one's pages.
+/// The Register's answer for the named titles on 13 November 2026, in its order.
+fn named() -> Vec<Value> {
+    [
+        (
+            "C2004A00653",
+            "Product Grants and Benefits Administration Act 2000",
+            2000,
+            61,
+        ),
+        ("C2004A01074", "Venture Capital Act 2002", 2002, 137),
+        ("C2017A00063", "Major Bank Levy Act 2017", 2017, 63),
+    ]
+    .map(|(id, name, year, number)| {
+        json!({"id": id, "name": name, "collection": "Act", "isPrincipal": true,
+               "isInForce": true, "status": "InForce", "year": year, "number": number})
+    })
+    .to_vec()
+}
+
+/// `rows` followed by the named titles, as `titles_all.json` lists them.
+fn with_named(rows: &[Value]) -> Value {
+    json!([rows, named().as_slice()].concat())
+}
+
+/// 15 searches (3 collections by 5 keywords); `pages(search)` gives each one's
+/// pages. The named-title lookup then gets `named()`.
 fn script(pages: impl Fn(usize) -> Vec<Vec<Value>>) -> Script {
+    script_with(pages, named())
+}
+
+fn script_with(pages: impl Fn(usize) -> Vec<Vec<Value>>, named: Vec<Value>) -> Script {
     let mut bodies = Vec::new();
     for search in 0..15 {
         for page in pages(search) {
             bodies.push(Ok(json!({"value": page}).to_string()));
         }
     }
+    bodies.push(Ok(json!({"value": named}).to_string()));
     Script {
         bodies,
         events: Vec::new(),
@@ -103,10 +133,14 @@ fn a_title_matched_by_two_keywords_is_listed_once() {
     });
     let (result, out) = run(&mut s, &co.module);
     assert!(result.is_ok());
-    assert_eq!(read(&co.module.join("titles_all.json")), json!([shared]));
+    let shared = [shared];
+    assert_eq!(
+        read(&co.module.join("titles_all.json")),
+        with_named(&shared)
+    );
     assert_eq!(
         read(&co.module.join("titles_principal.json")),
-        json!([shared])
+        with_named(&shared)
     );
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.starts_with("Act                    Tax              matched    1, new    1\n"));
@@ -266,9 +300,11 @@ fn totals_count_titles_and_keep_the_collection_breakdown() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("LegislativeInstrument  Tax              matched    1, new    1\n"));
     assert!(stdout.contains(
-        "\ntotal distinct in-force titles: 2\nof which principal (client-side filter): 1\n"
+        "\ntotal distinct in-force titles: 5\nof which principal (client-side filter): 4\n"
     ));
-    assert!(stdout.ends_with("\nsample principal titles:\n   C2099A00001  Income Tax Act\n"));
+    assert!(stdout.ends_with(
+        "\nsample principal titles:\n   C2099A00001  Income Tax Act\n   C2017A00063  Major Bank Levy Act 2017\n   C2004A00653  Product Grants and Benefits Administration Act 2000\n   C2004A01074  Venture Capital Act 2002\n"
+    ));
     // 15 searches, each followed by a 3-second pause.
     assert_eq!(s.events.iter().filter(|e| *e == "sleep 3").count(), 15);
 }
@@ -383,7 +419,7 @@ fn a_small_loss_of_other_titles_is_reported_and_written() {
     );
     assert_eq!(
         read(&co.module.join("titles_all.json")),
-        json!(earlier[2..])
+        with_named(&earlier[2..])
     );
 }
 
@@ -404,11 +440,11 @@ fn accept_missing_records_an_authorised_repeal_and_writes_both_files() {
     );
     assert_eq!(
         read(&co.module.join("titles_all.json")),
-        json!(earlier[1..])
+        with_named(&earlier[1..])
     );
     assert_eq!(
         read(&co.module.join("titles_principal.json")),
-        json!(earlier[1..2])
+        with_named(&earlier[1..2])
     );
 }
 
@@ -523,5 +559,98 @@ fn an_unreadable_earlier_list_is_refused_unless_accepted() {
     assert!(String::from_utf8(out.stdout).unwrap().contains(
         "\n--accept-missing: replacing an unreadable earlier title list (it is not a JSON list)\n"
     ));
-    assert_eq!(read(&co.module.join("titles_all.json")), json!(rows));
+    assert_eq!(read(&co.module.join("titles_all.json")), with_named(&rows));
+}
+
+#[test]
+fn the_named_titles_follow_the_keyword_titles_after_one_request() {
+    let co = checkout();
+    let act = title("C2099A00001", "Income Tax Act", true, "Act");
+    let mut s = script(|search| match search {
+        0 => vec![vec![act.clone()]],
+        _ => vec![vec![]],
+    });
+    let (result, out) = run(&mut s, &co.module);
+    assert!(result.is_ok());
+    assert_eq!(read(&co.module.join("titles_all.json")), with_named(&[act]));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains(
+            "NotifiableInstrument   Medicare Levy    matched    0, new    0\nAct                    named titles     matched    3, new    3\n\ntotal distinct in-force titles: 4\n"
+        ),
+        "{stdout}"
+    );
+    // The lookup follows the last search's pause, and nothing follows it.
+    let n = s.events.len();
+    assert_eq!(s.events[n - 2], "sleep 3");
+    assert_eq!(
+        s.events[n - 1],
+        "GET https://api.prod.legislation.gov.au/v1/titles?$filter=id%20eq%20%27C2004A00653%27%20or%20id%20eq%20%27C2004A01074%27%20or%20id%20eq%20%27C2017A00063%27&$select=id,name,isPrincipal,isInForce,collection,year,number,status"
+    );
+}
+
+#[test]
+fn a_named_title_that_is_no_longer_an_in_force_principal_act_stops_discovery() {
+    let missing: fn(&mut Vec<Value>) = |rows| {
+        rows.remove(1);
+    };
+    let repealed: fn(&mut Vec<Value>) = |rows| rows[1]["isInForce"] = json!(false);
+    let amending: fn(&mut Vec<Value>) = |rows| rows[1]["isPrincipal"] = json!(false);
+    let instrument: fn(&mut Vec<Value>) =
+        |rows| rows[1]["collection"] = json!("LegislativeInstrument");
+    for change in [missing, repealed, amending, instrument] {
+        let co = checkout();
+        let seeded = seed(&co.module, &titles(3, 1));
+        let mut answer = named();
+        change(&mut answer);
+        let mut s = script_with(|_| vec![vec![]], answer);
+        // Even --accept-missing does not let a lapsed named title through.
+        assert_eq!(
+            refusal(run_with(&mut s, &co.module, true).0),
+            "named title C2004A01074 (Venture Capital Act 2002) is no longer an in-force principal Act on the Register; review NAMED_TITLES in src/fadden/discover.rs"
+        );
+        unchanged(&co.module, &seeded);
+    }
+}
+
+#[test]
+fn a_failed_named_title_lookup_writes_neither_output() {
+    let co = checkout();
+    let seeded = seed(&co.module, &titles(3, 1));
+    let mut s = first_search(&titles(3, 1));
+    s.bodies.pop();
+    let (result, _) = run(&mut s, &co.module);
+    let Err(Stop::Raised(error)) = result else {
+        panic!("expected a RuntimeError")
+    };
+    assert_eq!(error.class(), "RuntimeError");
+    assert_eq!(
+        error.to_string(),
+        "named title lookup failed; refusing to write an incomplete title list"
+    );
+    unchanged(&co.module, &seeded);
+}
+
+#[test]
+fn a_named_title_a_keyword_already_matches_is_reported_and_listed_once() {
+    let co = checkout();
+    let named = named();
+    let levy = named[2].clone();
+    let mut s = script(|search| match search {
+        0 => vec![vec![levy.clone()]],
+        _ => vec![vec![]],
+    });
+    let (result, out) = run(&mut s, &co.module);
+    assert!(result.is_ok());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains(
+            "named title C2017A00063 (Major Bank Levy Act 2017) is already matched by a keyword; remove it from NAMED_TITLES\nAct                    named titles     matched    3, new    2\n"
+        ),
+        "{stdout}"
+    );
+    assert_eq!(
+        read(&co.module.join("titles_all.json")),
+        json!([levy, named[0], named[1]])
+    );
 }

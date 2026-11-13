@@ -39,7 +39,7 @@ const ATTR_UNCHANGED: &str = r#"Sourced from the Federal Register of Legislation
 const ATTR_CHANGED: &str = r#"Based on content from the Federal Register of Legislation at %s. For the latest information on Australian Government legislation please go to https://www.legislation.gov.au. Changes: converted from EPUB to markdown, contents pages removed, endnotes separated, images replaced by their descriptive alt text, compilation cover pages and running headers omitted."#;
 const CORPUS: &str = r#"Commonwealth tax statutes and legislative instruments"#;
 pub(super) const LICENCE_NOTE: &str = r#"Excludes the Commonwealth Coat of Arms and any third-party material. The EPUBs under epub/ embed the Coat of Arms as an image; it is NOT licensed under CC BY and must not be reused. The markdown omits it. Authorised versions are PDF only, stamped under sections 15ZA and 15ZB of the Legislation Act 2003; the EPUB reading view used here is NOT the authorised text."#;
-const SELECTION: &str = r#"In-force principal titles in the Act, LegislativeInstrument and NotifiableInstrument collections whose name contains Tax, Excise, Superannuation, Customs Tariff or Medicare Levy. isPrincipal could not be applied server-side (the API returns 400 for any filter containing it), so it was applied client-side. Selection is by title keyword, so a tax-relevant title without one of those words in its name is absent, and some collected titles (notably Commonwealth employee superannuation schemes) are not tax law. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
+const SELECTION: &str = r#"In-force principal titles in the Act, LegislativeInstrument and NotifiableInstrument collections whose name contains Tax, Excise, Superannuation, Customs Tariff or Medicare Levy, and the principal Acts a short reviewed list names by register id. isPrincipal could not be applied server-side (the API returns 400 for any filter containing it), so it was applied client-side. Selection is by title keyword, so a tax-relevant title without one of those words in its name is absent unless the reviewed list names it, and some collected titles (notably Commonwealth employee superannuation schemes) are not tax law. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
 /// `selection` for a build of the `python -m fadden quick` preset, which picks
 /// its Acts by register id rather than by keyword.
 const PRESET_SELECTION: &str = r#"The principal Acts of the `python -m fadden quick` preset, chosen by register id rather than by title keyword, so every other title is absent. Check the collection field before relying on a provision: an Act and a regulation made under it are not interchangeable."#;
@@ -51,8 +51,9 @@ const PRESET_SCOPE: &str =
     "{n} in-force principal titles named by the `python -m fadden quick` preset:
 ";
 const KEYWORD_LIMITS: &str = r#"**Selection is by title keyword.** A tax-relevant title without Tax, Excise,
-Superannuation, Customs Tariff or Medicare Levy in its name is absent: the
-Customs Act 1901 and Charities Act 2013 among them.
+Superannuation, Customs Tariff or Medicare Levy in its name is absent, unless
+the builder's short reviewed list names it by register id (`keywords_in_name`
+is empty for those): the Customs Act 1901 and Charities Act 2013 are absent.
 
 **Some collected titles are not tax law.** Three ways they got in:
 
@@ -187,8 +188,9 @@ Parliament enacts are therefore absent: the FBT gross-up factors, the Division
 instruments give you the formula; the ATO publishes the result.
 
 **Selection is by title keyword.** A tax-relevant title without Tax, Excise,
-Superannuation, Customs Tariff or Medicare Levy in its name is absent: the
-Customs Act 1901 and Charities Act 2013 among them.
+Superannuation, Customs Tariff or Medicare Levy in its name is absent, unless
+the builder's short reviewed list names it by register id (`keywords_in_name`
+is empty for those): the Customs Act 1901 and Charities Act 2013 are absent.
 
 **Some collected titles are not tax law.** Three ways they got in:
 
