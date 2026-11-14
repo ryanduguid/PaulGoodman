@@ -23,15 +23,17 @@ class Stages:
 
     def __init__(self, hit: str = HIT, statuses: tuple[str, ...] = ("ok",),
                  indexed: tuple[str, ...] = quick.PRESET,
-                 versions: dict[str | None, list[tuple[str, str]]] | None = None) -> None:
+                 versions: dict[str | None, list[tuple[str, ...]]] | None = None,
+                 unextracted: tuple[str, ...] = ()) -> None:
         self.ran: list[str] = []
         self.calls: list[tuple[str, ...]] = []
         self.hit = hit
         self.statuses = statuses
         self.indexed = indexed
-        # The (register id, version start) pairs versions resolves: None for the current
-        # versions, else the --in-force-on date.
+        # The (register id, version start[, next version's start]) each versions run
+        # resolves: None for the current versions, else the --in-force-on date.
         self.versions = versions or {}
+        self.unextracted = unextracted
         self.epub_dirs: list[str] = []
 
     def stage(self, _binary: str, scratch: Path, *args: str, capture: bool = False) -> str:
@@ -39,12 +41,14 @@ class Stages:
         self.calls.append(args)
         if args[0] == "versions":
             on = args[2] if args[1:2] == ("--in-force-on",) else None
-            rows = [{"id": rid, "versionStart": start} for rid, start in self.versions.get(on, [])]
+            rows = [{"id": rid, "versionStart": start, "current_version_start": end[0] if end else None}
+                    for rid, start, *end in self.versions.get(on, [])]
             (scratch / "acts_resolved.json").write_text(json.dumps(rows), encoding="utf-8")
         if args[0] == "extract":
             # The titles download left to extract, as manifest_md.json records them.
-            rows = (scratch / "acts_resolved.json").read_text(encoding="utf-8")
-            (scratch / "manifest_md.json").write_text(rows, encoding="utf-8")
+            rows = json.loads((scratch / "acts_resolved.json").read_text(encoding="utf-8"))
+            rows = [row for row in rows if row["id"] not in self.unextracted]
+            (scratch / "manifest_md.json").write_text(json.dumps(rows), encoding="utf-8")
         if args[0] == "finalize":
             (scratch.parent / "sources.json").write_text("{}", encoding="utf-8")
         if args[:2] == ("search", "build"):
@@ -272,12 +276,13 @@ class QuickTests(unittest.TestCase):
 
     def test_each_date_holds_the_compilations_no_other_folder_holds(self) -> None:
         itaa97, gst, itaa36 = quick.PRESET[:3]
-        versions: dict[str | None, list[tuple[str, str]]] = {
+        versions: dict[str | None, list[tuple[str, ...]]] = {
             None: [(itaa97, "2026-10-01"), (gst, "2024-01-01")],
             # The root already holds the GST Act's compilation for this date.
-            "2024-07-01": [(itaa97, "2024-07-01"), (gst, "2024-01-01")],
+            "2024-07-01": [(itaa97, "2024-07-01", "2025-08-01"), (gst, "2024-01-01")],
             # 2024-07-01 already holds the ITAA 1997's.
-            "2025-07-01": [(itaa97, "2024-07-01"), (itaa36, "2025-03-01")],
+            "2025-07-01": [(itaa97, "2024-07-01", "2025-08-01"),
+                           (itaa36, "2025-03-01", "2025-09-01")],
             "2026-07-01": [(gst, "2024-01-01")],
         }
         printed = io.StringIO()
@@ -306,11 +311,36 @@ class QuickTests(unittest.TestCase):
                       "8 with none to fetch, listed above\n", printed.getvalue())
 
     def test_a_date_with_nothing_to_fetch_leaves_no_compilations_folder(self) -> None:
-        versions: dict[str | None, list[tuple[str, str]]] = {None: [(quick.PRESET[0], "2026-10-01")]}
+        versions: dict[str | None, list[tuple[str, ...]]] = {None: [(quick.PRESET[0], "2026-10-01")]}
         with Stages(versions=versions).patched(), contextlib.redirect_stdout(io.StringIO()):
             quick.build("fadden-bin", self.out, ["2025-07-01"])
         self.assertFalse((self.out / "compilations").exists())
         self.assertTrue((self.out / "sources.json").is_file())
+
+    def test_a_date_missing_a_title_it_fetched_is_not_published(self) -> None:
+        itaa97 = quick.PRESET[0]
+        versions: dict[str | None, list[tuple[str, ...]]] = {
+            None: [(itaa97, "2026-10-01")], "2025-07-01": [(itaa97, "2025-03-01", "2026-10-01")],
+        }
+        with Stages(versions=versions, unextracted=(itaa97,)).patched(),                 contextlib.redirect_stdout(io.StringIO()),                 self.assertRaisesRegex(quick.QuickError,
+                                       f"compilations/2025-07-01 holds no rows for {itaa97}"):
+            quick.build("fadden-bin", self.out, ["2025-07-01"])
+        self.assertFalse(self.out.exists())
+        self.assertTrue((self.staging() / "compilations" / "2025-07-01").is_dir())
+
+    def test_overlapping_windows_of_a_title_are_not_published(self) -> None:
+        itaa97 = quick.PRESET[0]
+        versions: dict[str | None, list[tuple[str, ...]]] = {
+            None: [(itaa97, "2026-10-01")],
+            "2024-07-01": [(itaa97, "2024-01-01", "2025-08-01")],
+            "2025-07-01": [(itaa97, "2025-03-01", "2026-10-01")],
+        }
+        with Stages(versions=versions).patched(), contextlib.redirect_stdout(io.StringIO()),                 self.assertRaisesRegex(quick.QuickError,
+                                       f"2 compilations of {itaa97} overlap: the one from "
+                                       "2025-03-01 starts inside the window of the one from "
+                                       "2024-01-01"):
+            quick.build("fadden-bin", self.out, ["2024-07-01", "2025-07-01"])
+        self.assertFalse(self.out.exists())
 
     def test_a_date_must_be_a_1_july(self) -> None:
         for bad in ("2025-03-01", "2025-7-01", "2025-02-30"):

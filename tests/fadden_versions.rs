@@ -404,14 +404,21 @@ fn a_date_resolves_the_version_whose_window_holds_it() {
 
 #[test]
 fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
-    let co = checkout(&titles(6));
+    let co = checkout(&titles(7));
     let mut s = Script {
         answer: |url: &str| {
             let id = history_of(url);
             let rows = match id.as_str() {
-                // A compilation registered for a version that starts after the current one.
-                "C2099A00005" => vec![
-                    version(&id, "2024-06-01", None, false, Some("C2024C00009")),
+                // A version that starts after the current one, with a compilation registered
+                // for it (5) or, as for the ITAA 1997 on 14 November 2026, without one (6).
+                "C2099A00005" | "C2099A00006" => vec![
+                    version(
+                        &id,
+                        "2024-06-01",
+                        None,
+                        false,
+                        (id == "C2099A00005").then_some("C2024C00009"),
+                    ),
                     version(
                         &id,
                         "2024-01-01",
@@ -464,13 +471,14 @@ fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
         "   skipped C2099A00003: no version was in force then\n",
         "   skipped C2099A00004: its newest 60 versions all start after the date\n",
         "   skipped C2099A00005: the version then starts after the current one, so is not in force yet\n",
+        "   skipped C2099A00006: the version then starts after the current one, so is not in force yet\n",
         "\nresolved: 1   failed: 0\n",
     ] {
         assert!(stdout.contains(line), "{line}{stdout}");
     }
     let rows = resolved(&co.module);
     assert_eq!(rows.as_array().unwrap().len(), 1);
-    assert_eq!(rows[0]["id"], rid(6));
+    assert_eq!(rows[0]["id"], rid(7));
     assert_eq!(rows[0]["current_version_start"], "2024-07-01");
 }
 

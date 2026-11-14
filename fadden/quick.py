@@ -26,7 +26,7 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from . import download, retry13
 from .__main__ import run_binary, rust_binary
@@ -123,22 +123,38 @@ def assemble(binary: str, staging: Path) -> str:
     return hit
 
 
-def held(scratch: Path) -> set[tuple[str, str]]:
-    """The register id and version start of each compilation a module directory extracted."""
-    rows = json.loads((scratch / "manifest_md.json").read_text(encoding="utf-8"))
-    return {(row["id"], row["versionStart"]) for row in rows}
+def extracted(scratch: Path) -> list[dict[str, Any]]:
+    """The manifest row of each compilation a module directory extracted."""
+    rows: list[dict[str, Any]] = json.loads(
+        (scratch / "manifest_md.json").read_text(encoding="utf-8"))
+    return rows
+
+
+def check_windows(rows: list[dict[str, Any]]) -> None:
+    """Refuse a build in which 2 compilations of one title cover the same date."""
+    windows: dict[str, list[tuple[str, str | None]]] = {}
+    for row in rows:
+        windows.setdefault(row["id"], []).append(
+            (row["versionStart"], row.get("current_version_start")))
+    for rid, held in windows.items():
+        held.sort()
+        for (start, end), (later, _) in zip(held, held[1:]):
+            if end is None or end > later:
+                raise QuickError(f"2 compilations of {rid} overlap: the one from {later} "
+                                 f"starts inside the window of the one from {start}")
 
 
 def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
     """Each date's earlier compilations under compilations/<date>/, in the root's layout.
 
-    `versions --in-force-on` leaves out, with its reason, a title whose version on the date
-    is the current one or cannot be fetched; a compilation the root or an earlier date already holds is left out here, so the
-    windows of one title never overlap. A date left with nothing to fetch gets no folder.
+    `versions --in-force-on` leaves out, with its reason, a title whose version on the
+    date is the current one or cannot be fetched; a compilation the root or an earlier
+    date already holds is left out here, and the windows of one title must not overlap.
+    A date left with nothing to fetch gets no folder.
     """
     scratch = staging / "build"
     titles = json.loads((scratch / "titles_all.json").read_text(encoding="utf-8"))
-    kept = held(scratch)
+    rows = extracted(scratch)
     folder = staging / "compilations"
     for on in sorted(set(dates)):
         build = folder / on
@@ -147,6 +163,7 @@ def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
         stage(binary, scratch, "versions", "--in-force-on", on)
         target = scratch / "acts_resolved.json"
         resolved = json.loads(target.read_text(encoding="utf-8"))
+        kept = {(row["id"], row["versionStart"]) for row in rows}
         wanted = [row for row in resolved if (row["id"], row["versionStart"]) not in kept]
         print(f"compilations/{on}: {len(wanted)} to fetch, "
               f"{len(resolved) - len(wanted)} already held, "
@@ -158,7 +175,12 @@ def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
         download.main(str(scratch), str(build / "epub"))
         for name in ("extract", "pii_scan", "pii_scan2"):
             stage(binary, scratch, name)
-        kept |= held(scratch)
+        got = extracted(scratch)
+        missing = sorted({row["id"] for row in wanted} - {row["id"] for row in got})
+        if missing:
+            raise QuickError(f"compilations/{on} holds no rows for {', '.join(missing)}")
+        rows += got
+    check_windows(rows)
     if folder.is_dir() and not any(folder.iterdir()):
         folder.rmdir()
 
