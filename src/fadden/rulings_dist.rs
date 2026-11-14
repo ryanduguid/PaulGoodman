@@ -454,7 +454,11 @@ fn verify_run(
     }
     match check_rulings_run(directory) {
         Ok(()) => {}
-        Err(Exc::Value { message, .. }) => found.runs.push(message),
+        Err(Exc::Value { message, .. }) => {
+            // Coverage is read from a run that agrees with its manifest.
+            found.runs.push(message);
+            return Ok(());
+        }
         Err(error) => return Err(error),
     }
     let manifest = load(&pypath::join(directory, "manifest.json"))?;
