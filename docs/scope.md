@@ -184,7 +184,7 @@ drops a flagged title whole rather than row by row, so all 188 of its rows leave
 the distribution, not only the 169.
 A `REMOVED.md` lists every exclusion and its Register link so the omission is
 visible and reversible; an earlier compilation's folder lists its own in its
-`sources.json`, and the same 3 exclusions apply to it. `dist_verify` checks the result against its own
+`sources.json`: the root's removals, the date's own `pii_scan` flags and the restrictive copyright notices all apply to it. `dist_verify` checks the result against its own
 claims and exits non-zero if any check fails.
 
 A `dist/` tree that `dist_verify` passes is the one generated output a release

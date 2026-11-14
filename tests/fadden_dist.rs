@@ -2514,7 +2514,16 @@ fn the_verifier_refuses_each_change_to_a_published_compilation() {
             write(&d.join("LICENCE-NOTICE.md"), "licence\n");
         }),
     ];
-    let listings: [(&str, JsonChange); 3] = [
+    let listings: [(&str, JsonChange); 5] = [
+        // The folder now says it excludes a title it publishes.
+        (COMPILATION_LABELS[5], |v| {
+            let title = v["titles"][0].clone();
+            v["excluded_titles"].as_array_mut().unwrap().push(title);
+        }),
+        // The folder now claims another date.
+        (COMPILATION_LABELS[6], |v| {
+            v["in_force_on"] = json!("2026-07-01")
+        }),
         // The row says it starts 2025-03-28; its listing now says a day later.
         (COMPILATION_LABELS[4], |v| {
             v["titles"][0]["compilation_date"] = json!("2025-03-29");
@@ -2699,6 +2708,17 @@ fn a_dated_row_naming_people_is_refused_as_a_root_row_is() {
     write(
         &rows(&f.root.join("compilations").join(ON)),
         &escaped_private_row(PUBLIC_ID),
+    );
+    refused(&f, COMPILATION_LABELS[3]);
+    assert!(!f.dist().exists());
+    // An unapproved email address, its "@" escaped in the file.
+    let f = with_compilation();
+    let row = json!({"register_id": PUBLIC_ID, "section": "1", "text": "Write to alice@example.org.",
+                     "compilation_date": "2025-03-28", "superseded_from": "2026-07-01",
+                     "version_is_current": false});
+    write(
+        &rows(&f.root.join("compilations").join(ON)),
+        &format!("{}\n", row.to_string().replace('@', "\\u0040")),
     );
     refused(&f, COMPILATION_LABELS[3]);
     assert!(!f.dist().exists());

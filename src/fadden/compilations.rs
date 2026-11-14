@@ -352,11 +352,21 @@ fn verify_date(
     }
     let text = crate::pyio::read_text(&child(directory, &["sources.json"])?)?;
     let listing = pyjson::loads_standard(&text).map_err(json_error)?;
+    if listing.get("in_force_on").and_then(Json::as_str) != Some(on) {
+        found
+            .windows
+            .push(format!("{on}: sources.json names another date"));
+    }
+    // The folder's own exclusions, as well as the root's, keep a title out.
+    let mut excluded = removed.clone();
+    for title in iterate(getitem(&listing, "excluded_titles")?)? {
+        excluded.insert(register_id(getitem(&title, "register_id")?)?);
+    }
     let markdown = pypath::join(directory, "markdown");
     let mut ids = Vec::new();
     for title in iterate(getitem(&listing, "titles")?)? {
         ids.push(verify_listed(
-            &markdown, on, &title, removed, approved, found,
+            &markdown, on, &title, &excluded, approved, found,
         )?);
     }
     let mut sorted = ids.clone();
@@ -392,7 +402,7 @@ fn verify_listed(
     held.push((start.clone(), Some(end.clone())));
     let directory = pypath::join(markdown, &rid);
     verify_title(&directory, &rid, title, approved, found, &label)?;
-    verify_rows(&directory, &rid, (&start, &end), found, &label)?;
+    verify_rows(&directory, &rid, (&start, &end), approved, found, &label)?;
     Ok(rid)
 }
 
@@ -464,12 +474,13 @@ fn same_object(a: &Json, b: &Json) -> bool {
         })
 }
 
-/// Whether every row of a dated title names it, carries its window and names
-/// no private person with a registration number.
+/// Whether every row of a dated title names it, carries its window and, once
+/// decoded, names no private person and holds no unapproved contact.
 fn verify_rows(
     directory: &str,
     rid: &str,
     (start, end): (&str, &str),
+    approved: &[Approved],
     found: &mut Findings,
     label: &str,
 ) -> Result<(), Exc> {
@@ -493,16 +504,32 @@ fn verify_rows(
             found.rows.insert(label.to_string());
             return Ok(());
         };
-        // dist_verify's row check for the root titles: JSON escapes can hide a
-        // name from the file scan, but not from the decoded text.
-        if let Some(Json::Str(text)) = row.get("text") {
-            let text = crate::pyvalue::points_lossy(&text.code_points());
-            if pii::has_private_person_registration_pair(&text) {
-                found.private.insert(label.to_string());
-            }
+        // JSON escapes can hide a name or contact from the file scan, but not
+        // from the decoded strings. Each is scanned alone: joined, the end of
+        // one and the start of the next can read as a phone number.
+        let private = decoded_strings(&row).iter().any(|text| {
+            pii::has_private_person_registration_pair(text)
+                || !pii::unapproved_contact_fingerprints(text, rid, approved).is_empty()
+        });
+        if private {
+            found.private.insert(label.to_string());
         }
     }
     Ok(())
+}
+
+/// A row's top-level string values, decoded.
+fn decoded_strings(row: &Json) -> Vec<String> {
+    let Json::Object(fields) = row else {
+        return Vec::new();
+    };
+    fields
+        .iter()
+        .filter_map(|(_, value)| match value {
+            Json::Str(s) => Some(crate::pyvalue::points_lossy(&s.code_points())),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
