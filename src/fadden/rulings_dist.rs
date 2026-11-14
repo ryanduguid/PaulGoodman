@@ -92,7 +92,7 @@ fn text<'a>(value: &'a Json, key: &str) -> &'a str {
 /// Why the ATO's reuse notice does not cover a captured document, if it does not:
 /// a family it does not cover, a label its docid contradicts, no recorded notice,
 /// or text carrying a copyright notice of its own.
-pub fn uncovered(document: &Json, rows: &[&Json]) -> Option<String> {
+fn uncovered(document: &Json, rows: &[&Json]) -> Option<String> {
     let docid = text(document, "docid");
     let Some(family) = family_of(docid) else {
         return Some(
@@ -227,40 +227,10 @@ fn copy_run(
         .map(|line| pyjson::loads_standard(line).map_err(json_error))
         .collect::<Result<Vec<Json>, Exc>>()?;
     let left_out = leave_out(&mut manifest, &rows, name, published);
-    let mut kept = String::new();
-    for (line, row) in lines.iter().zip(&rows) {
-        let docid = text(row, "docid");
-        if left_out.contains(docid) {
-            continue;
-        }
-        let (pair, contacts) = pii::privacy_findings_in_row(row, docid, approved);
-        if pair || !contacts.is_empty() {
-            return Err(Exc::Runtime(format!(
-                "rulings/{name}: {docid} names a private person or holds a contact; \
-                 remove the run or capture the document again once it is clean"
-            )));
-        }
-        kept.push_str(line);
-        kept.push('\n');
-    }
-    pyos::makedirs_new(target)?;
-    write_new(&pypath::join(target, "rulings.jsonl"), kept.as_bytes())?;
-    write_new(
-        &pypath::join(target, "manifest.json"),
-        &json_bytes(&manifest),
-    )?;
+    let kept = kept_lines(&lines, &rows, &left_out, name, approved)?;
     let notice = read(&child(source, &["LICENCE-NOTICE.md"])?)?;
-    write_new(&pypath::join(target, "LICENCE-NOTICE.md"), &notice)?;
-    let mut files = Vec::new();
-    for file in RUN_FILES {
-        let path = pypath::join(target, file);
-        if private(&path, name, approved)? {
-            return Err(Exc::Runtime(format!(
-                "rulings/{name}/{file} names a private person or holds a contact"
-            )));
-        }
-        files.push((PyStr::Text(file.into()), Json::str(&sha256(&read(&path)?))));
-    }
+    let contents = [notice, json_bytes(&manifest), kept.into_bytes()];
+    let files = write_run(target, name, &contents, approved)?;
     let fetched_on = text(&manifest, "fetched_on").to_string();
     published.runs.push((name.to_string(), fetched_on.clone()));
     Ok(Json::obj([
@@ -279,6 +249,56 @@ fn copy_run(
     ]))
 }
 
+/// The run's lines for the documents kept, each row's decoded values scanned first.
+fn kept_lines(
+    lines: &[&str],
+    rows: &[Json],
+    left_out: &BTreeSet<String>,
+    name: &str,
+    approved: &[Approved],
+) -> Result<String, Exc> {
+    let mut kept = String::new();
+    for (line, row) in lines.iter().zip(rows) {
+        let docid = text(row, "docid");
+        if left_out.contains(docid) {
+            continue;
+        }
+        let (pair, contacts) = pii::privacy_findings_in_row(row, docid, approved);
+        if pair || !contacts.is_empty() {
+            return Err(Exc::Runtime(format!(
+                "rulings/{name}: {docid} names a private person or holds a contact; \
+                 remove the run or capture the document again once it is clean"
+            )));
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    Ok(kept)
+}
+
+/// Write a run's files, `contents` in `RUN_FILES` order, and scan each written
+/// file; returns their digests.
+fn write_run(
+    target: &str,
+    name: &str,
+    contents: &[Vec<u8>; 3],
+    approved: &[Approved],
+) -> Result<Vec<(PyStr, Json)>, Exc> {
+    pyos::makedirs_new(target)?;
+    let mut files = Vec::new();
+    for (file, bytes) in RUN_FILES.into_iter().zip(contents) {
+        let path = pypath::join(target, file);
+        write_new(&path, bytes)?;
+        if private(&path, name, approved)? {
+            return Err(Exc::Runtime(format!(
+                "rulings/{name}/{file} names a private person or holds a contact"
+            )));
+        }
+        files.push((PyStr::Text(file.into()), Json::str(&sha256(bytes))));
+    }
+    Ok(files)
+}
+
 /// Move each uncovered document from the manifest's `documents` to its
 /// `excluded`, with the reason, and recount its rows. Returns their docids.
 fn leave_out(
@@ -287,14 +307,8 @@ fn leave_out(
     name: &str,
     published: &mut Published,
 ) -> BTreeSet<String> {
-    let documents = match manifest.at("documents") {
-        Json::Array(items) => items.clone(),
-        _ => Vec::new(),
-    };
-    let mut excluded = match manifest.at("excluded") {
-        Json::Array(items) => items.clone(),
-        _ => Vec::new(),
-    };
+    let documents = iterate_or_empty(manifest.at("documents")).to_vec();
+    let mut excluded = iterate_or_empty(manifest.at("excluded")).to_vec();
     let (mut kept, mut left_out) = (Vec::new(), BTreeSet::new());
     for document in documents {
         let docid = text(&document, "docid").to_string();
@@ -332,14 +346,11 @@ fn leave_out(
 
 /// The manifest's exclusions for the documents `dist` left out.
 fn listed_left_out(manifest: &Json, left_out: &BTreeSet<String>) -> Vec<Json> {
-    match manifest.at("excluded") {
-        Json::Array(items) => items
-            .iter()
-            .filter(|e| left_out.contains(text(e, "docid")))
-            .cloned()
-            .collect(),
-        _ => Vec::new(),
-    }
+    iterate_or_empty(manifest.at("excluded"))
+        .iter()
+        .filter(|e| left_out.contains(text(e, "docid")))
+        .cloned()
+        .collect()
 }
 
 /// What the checks found under a distribution's `rulings/`.
@@ -367,21 +378,19 @@ pub fn verify(dist_root: &str, approved: &[Approved]) -> Result<Vec<Check>, Exc>
         found.stray.push(format!("{FOLDER} has no sources.json"));
         Vec::new()
     };
-    let present = if entry_kind(&folder) == "directory" {
-        names(&folder)?
-    } else {
-        Vec::new()
-    };
-    for entry in &present {
-        if entry != "sources.json" && !runs.iter().any(|(n, _)| n == entry) {
-            found.stray.push(entry.clone());
-        }
-    }
+    let present = present_entries(&folder, &runs, &mut found)?;
     let removed = crate::pyio::read_text(&child(dist_root, &["REMOVED.md"])?)?;
     for (name, run) in &runs {
         if !present.contains(name) {
             found.stray.push(format!("{name} missing"));
             continue;
+        }
+        for left in iterate_or_empty(run.at("left_out")) {
+            if !removed.contains(text(left, "docid")) {
+                found
+                    .unlisted
+                    .push(format!("{name}/{}", text(left, "docid")));
+            }
         }
         verify_run(
             &pypath::join(&folder, name),
@@ -390,13 +399,6 @@ pub fn verify(dist_root: &str, approved: &[Approved]) -> Result<Vec<Check>, Exc>
             approved,
             &mut found,
         )?;
-        for left in iterate_or_empty(run.at("left_out")) {
-            if !removed.contains(text(left, "docid")) {
-                found
-                    .unlisted
-                    .push(format!("{name}/{}", text(left, "docid")));
-            }
-        }
     }
     if entry_kind(&listing_path) == "file" && private(&listing_path, FOLDER, approved)? {
         found.private.push("sources.json".into());
@@ -404,6 +406,25 @@ pub fn verify(dist_root: &str, approved: &[Approved]) -> Result<Vec<Check>, Exc>
     let notice = crate::pyio::read_text(&child(dist_root, &["LICENCE-NOTICE.md"])?)?;
     let noticed = notice.contains(&format!("\n{NOTICE_HEADING}\n")) && notice.contains(NOTICE);
     Ok(report(&found, noticed))
+}
+
+/// The entries of `rulings/`, recording each that is neither its listing nor a
+/// listed run.
+fn present_entries(
+    folder: &str,
+    runs: &[(String, Json)],
+    found: &mut Findings,
+) -> Result<Vec<String>, Exc> {
+    if entry_kind(folder) != "directory" {
+        return Ok(Vec::new());
+    }
+    let present = names(folder)?;
+    for entry in &present {
+        if entry != "sources.json" && !runs.iter().any(|(n, _)| n == entry) {
+            found.stray.push(entry.clone());
+        }
+    }
+    Ok(present)
 }
 
 fn iterate_or_empty(value: &Json) -> &[Json] {
@@ -438,20 +459,7 @@ fn verify_run(
         found.stray.push(format!("{name}: {}", entries.join(" ")));
         return Ok(());
     }
-    for file in RUN_FILES {
-        let path = pypath::join(directory, file);
-        if run.at("files").at(file).as_str() != Some(sha256(&read(&path)?).as_str()) {
-            found.digests.push(format!("{name}/{file}"));
-        }
-        match private(&path, name, approved) {
-            Ok(false) => {}
-            Ok(true) => found.private.push(format!("{name}/{file}")),
-            Err(error) if pii::unreadable(&error) => {
-                found.private.push(format!("{name}/{file} unreadable"));
-            }
-            Err(error) => return Err(error),
-        }
-    }
+    verify_files(directory, name, run, approved, found)?;
     match check_rulings_run(directory) {
         Ok(()) => {}
         Err(Exc::Value { message, .. }) => {
@@ -473,6 +481,31 @@ fn verify_run(
         let own: Vec<&Json> = rows.iter().filter(|r| text(r, "docid") == docid).collect();
         if let Some(reason) = uncovered(document, &own) {
             found.uncovered.push(format!("{name}/{docid}: {reason}"));
+        }
+    }
+    Ok(())
+}
+
+/// Each of a run's files against its listed digest and the privacy patterns.
+fn verify_files(
+    directory: &str,
+    name: &str,
+    run: &Json,
+    approved: &[Approved],
+    found: &mut Findings,
+) -> Result<(), Exc> {
+    for file in RUN_FILES {
+        let path = pypath::join(directory, file);
+        if run.at("files").at(file).as_str() != Some(sha256(&read(&path)?).as_str()) {
+            found.digests.push(format!("{name}/{file}"));
+        }
+        match private(&path, name, approved) {
+            Ok(false) => {}
+            Ok(true) => found.private.push(format!("{name}/{file}")),
+            Err(error) if pii::unreadable(&error) => {
+                found.private.push(format!("{name}/{file} unreadable"));
+            }
+            Err(error) => return Err(error),
         }
     }
     Ok(())
