@@ -42,6 +42,10 @@ The command runs `versions`, `download`, `probe13` and `retry13` when a title ha
 
 One run took 116 seconds on 6 November 2026; [build evidence](docs/build-evidence.md#one-command-preset-build) gives the machine and what it built.
 
+### Earlier compilations
+
+`--in-force-on YYYY-07-01`, repeatable, also holds each preset Act's compilation in force on that 1 July, for a consumer that answers past income years. Without it the build is unchanged. After the checked build, for each date in order, the command lays out `compilations/<date>/build/` as it laid out `build/`, runs `versions --in-force-on <date>`, then `download`, `extract`, `pii_scan` and `pii_scan2` there, so the date's corpus is `compilations/<date>/markdown/<register id>/sections.jsonl` in the root's row format, with its EPUBs in `compilations/<date>/epub/`. A compilation the root or an earlier date already holds is not fetched again, and a date left with nothing to fetch gets no folder. The folder does not appear if a date lacks rows for a title it fetched or 2 compilations of a title have overlapping windows, so a reader never finds 2 compilations covering one date. Each date costs one history request per Act, with a 1.5-second pause after each, then `download`'s Crawl-delay after each compilation it fetches. `finalize`, `search build` and the `as_at` stage read only the root: the index holds no earlier compilation, and only a consumer that reads `compilations/` answers from it ([scope](docs/scope.md#earlier-compilations)).
+
 ## Exporting monitor inputs
 
 After the `finalize` stage has written a completed `sources.json`, a separately
@@ -251,6 +255,19 @@ identity, date and document checks. A valid batch with missing or duplicate titl
 is discarded and its entire group is resolved individually, then batching resumes.
 Malformed, foreign, paginated or over-limit responses fail without replacing the
 manifest. An unavailable batch switches the remainder to single-title lookups.
+
+`versions --in-force-on YYYY-MM-DD` resolves instead the version of each principal
+title in force on the date: one request per title for its newest 60 versions, the
+query `probe13` makes, with the same 1.5-second pause. The version in force is the
+one whose `start` is on or before the date and whose `end`, the next version's
+start, is after it. Its manifest row has `version_is_current: false` and
+`current_version_start` set to that `end`, so `extract` writes the window into every
+row as `superseded_from`. A title whose version on the date is current, starts after
+the current one, has no published compilation, did not exist yet, or lies beyond its
+newest 60 versions is listed with that reason and left out; a malformed or failed
+lookup fails the stage without replacing the manifest, as for current versions. On
+14 November 2026 the newest 60 versions of the Income Tax Assessment Act 1997 reached
+back to 1 July 2020, so an earlier date leaves that Act out.
 
 For 946 principal titles, a run with no ambiguous groups needs 119 resolution
 requests plus the diagnostic, with 178.5 seconds of fixed pauses. Each ambiguous

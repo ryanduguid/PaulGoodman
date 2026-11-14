@@ -23,6 +23,18 @@ const DELAY: f64 = 1.5;
 /// 988 deep is written, 989 is refused (`tools/stage_depth_probe.py`).
 const OUTPUT_DEPTH: usize = 991;
 
+/// How many versions of a title one history request returns.
+pub const HISTORY_PAGE: usize = 60;
+
+/// A title's newest versions. Newest first: `$top` caps the page, so ascending
+/// order would return the 60 oldest versions of a long-history title.
+pub fn history_url(rid: &str) -> String {
+    format!(
+        "{API}/versions?$top={HISTORY_PAGE}&$orderby=start%20desc&$filter=titleId%20eq%20%27{rid}%27\
+         &$select=titleId,start,end,isCurrent,compilationNumber,registerId"
+    )
+}
+
 fn truthy(value: Option<&Json>) -> bool {
     value.is_some_and(Json::truthy)
 }
@@ -42,13 +54,7 @@ pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc>
     let mut output = Vec::new();
     for item in &missing {
         let rid = register_id(getitem(item, "id")?)?;
-        // Newest first: $top caps the page, so ascending order would return the
-        // 60 oldest versions of a long-history title.
-        let url = format!(
-            "{API}/versions?$top=60&$orderby=start%20desc&$filter=titleId%20eq%20%27{rid}%27\
-             &$select=titleId,start,end,isCurrent,compilationNumber,registerId"
-        );
-        let Some(response) = http::fetch_json(http, &url)? else {
+        let Some(response) = http::fetch_json(http, &history_url(&rid))? else {
             return Err(Exc::Runtime(format!(
                 "version lookup failed for {rid} after retries; refusing to write probe13.json with that title missing"
             )));
