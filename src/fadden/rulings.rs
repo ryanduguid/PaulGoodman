@@ -41,10 +41,11 @@ const RIGHTS_PATH: &str = "/content/corporate/about_this_site.htm";
 const RIGHTS_FRAGMENT: &str = "copyright";
 
 /// docid prefix and family: ATO-authored families only.
-const FAMILIES: [(&str, &str); 9] = [
+const FAMILIES: [(&str, &str); 10] = [
     ("TXR", "Taxation Ruling"),
     ("TXD", "Taxation Determination"),
     ("GST", "GST ruling or determination"),
+    ("GSD", "GST determination"),
     ("CLR", "Class Ruling"),
     ("PRR", "Product Ruling"),
     ("COG", "Practical Compliance Guideline"),
@@ -91,6 +92,11 @@ fn refused(message: impl Into<String>) -> RulingsError {
 /// `family_of(docid)`: the ATO document family, or None when not ATO-authored.
 pub fn family_of(docid: &str) -> Option<&'static str> {
     let upper = docid.to_uppercase();
+    // The ATO files Law Companion Rulings under COG with the guidelines, as
+    // `COG/LCR<year><number>/...`.
+    if upper.starts_with("COG/LCR") {
+        return Some("Law Companion Ruling");
+    }
     FAMILIES
         .iter()
         .find(|(prefix, _)| upper == *prefix || upper.starts_with(&format!("{prefix}/")))

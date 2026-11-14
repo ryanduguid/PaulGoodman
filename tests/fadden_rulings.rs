@@ -581,6 +581,28 @@ fn only_ato_authored_families_are_accepted() {
 }
 
 #[test]
+fn law_companion_rulings_and_gst_determinations_carry_their_own_family() {
+    // The ATO files Law Companion Rulings under COG beside Practical Compliance
+    // Guidelines, and GST determinations under GSD (its rulings feed, read
+    // 15 November 2026). Both were labelled or refused as something else.
+    for (docid, family) in [
+        ("COG/LCR20211/NAT/ATO/00001", "Law Companion Ruling"),
+        ("cog/lcr20211/nat/ato/00001", "Law Companion Ruling"),
+        ("COG/PCG20241/NAT/ATO/00001", "Practical Compliance Guideline"),
+        ("GSD/GSTD20201/NAT/ATO/00001", "GST determination"),
+        ("GST/GSTR20231/NAT/ATO/00001", "GST ruling or determination"),
+    ] {
+        assert_eq!(rulings::family_of(docid), Some(family), "{docid}");
+    }
+    let gstd = "GSD/GSTD20201/NAT/ATO/00001";
+    assert_eq!(targets(json!([gstd])).unwrap(), [gstd]);
+    // Drafts sit under their own prefixes and stay refused.
+    for draft in ["COD/LCR2026D6/NAT/ATO/00001", "DTR/TR2026D3/NAT/ATO/00001"] {
+        assert_eq!(rulings::family_of(draft), None, "{draft}");
+    }
+}
+
+#[test]
 fn duplicates_malformed_ids_and_oversize_lists_are_refused() {
     let many: Vec<String> = (0..=MAX_TARGETS).map(|n| format!("EV/{n:013}")).collect();
     for (value, message) in [
