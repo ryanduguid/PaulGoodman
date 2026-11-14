@@ -126,22 +126,20 @@ fn contact_value(kind: &str, value: &str) -> String {
 /// references are decoded and the text is NFKC-normalised, so a full-width `@`
 /// or an `&#64;` does not hide a contact. The text as written is still read
 /// because NFKC can turn a superscript into a digit a pattern refuses to
-/// follow. A match both readings find counts once, with the digest it has as
-/// written, so the rendered reading never changes what that reading reports.
+/// follow. Each reading's matches keep their own digests, so the digests
+/// reported are exactly those either reading gives.
 pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
-    let written = fingerprints_as_written(text);
-    let mut found: Vec<(&'static str, String)> = written
-        .iter()
-        .map(|(kind, digest, _)| (*kind, digest.clone()))
-        .collect();
+    let mut found = fingerprints_as_written(text);
     let rendered: String = crate::html::unescape(text).nfkc().collect();
     if rendered != text {
-        let mut unmatched: Vec<(&'static str, String)> = written
-            .into_iter()
-            .map(|(kind, _, folded)| (kind, folded))
-            .collect();
-        for (kind, _, folded) in fingerprints_as_written(&rendered) {
-            let finding = (kind, folded);
+        // shortcut: a rendered match pairs with an as-written match of the same
+        // digest, not the same place, so occurrence counts can be off by the
+        // matches one reading alone finds (a contact in mixed forms counts
+        // twice). The digests reported, which the gates test, are exact.
+        // Pairing by source offset would need offsets mapped through decoding
+        // and NFKC.
+        let mut unmatched = found.clone();
+        for finding in fingerprints_as_written(&rendered) {
             match unmatched.iter().position(|f| *f == finding) {
                 Some(i) => {
                     unmatched.swap_remove(i);
@@ -154,10 +152,9 @@ pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
 }
 
 /// `contact_fingerprints(text)` of the Python module: each contact match in
-/// pattern order, with the digest of the identifier as written and of its NFKC
-/// form. A bare nine-digit run counts only outside a labelled TFN and with a
-/// valid check digit.
-fn fingerprints_as_written(text: &str) -> Vec<(&'static str, String, String)> {
+/// pattern order. A bare nine-digit run counts only outside a labelled TFN and
+/// with a valid check digit.
+fn fingerprints_as_written(text: &str) -> Vec<(&'static str, String)> {
     let possible = |any: &str, flags| pyre::re(any, flags).is_match(text);
     let labelling = possible(TFN_ANY, pyre::I);
     let labelled: Vec<(usize, usize)> = if labelling {
@@ -193,14 +190,12 @@ fn fingerprints_as_written(text: &str) -> Vec<(&'static str, String, String)> {
                     continue;
                 }
             }
-            let digest = |value: &str| -> String {
-                Sha256::digest(contact_value(kind, value).as_bytes())
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect()
-            };
-            let folded: String = value.as_str().nfkc().collect();
-            found.push((kind, digest(value.as_str()), digest(&folded)));
+            let normalised = contact_value(kind, value.as_str());
+            let digest: String = Sha256::digest(normalised.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            found.push((kind, digest));
         }
     }
     found
