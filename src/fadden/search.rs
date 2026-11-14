@@ -622,7 +622,7 @@ CREATE INDEX ruling_refs_to ON ruling_refs (to_register_id, kind, to_key);
 ";
 
 /// The values of `licence_basis` the `rulings` stage writes.
-const LICENCE_BASES: [&str; 2] = ["document-notice", "site-notice-via-dc-rights"];
+pub(super) const LICENCE_BASES: [&str; 2] = ["document-notice", "site-notice-via-dc-rights"];
 
 /// One paragraph of a `rulings` run, as `build` keeps it.
 struct RulingRow {
@@ -681,6 +681,12 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
         rulings_sha256: hex(&data),
         notice,
     })
+}
+
+/// Refuse a `rulings` run directory the stage could not have written, as
+/// `search build --rulings` does; `dist` publishes only a run that passes.
+pub(super) fn check_rulings_run(dir: &str) -> Result<(), Exc> {
+    read_rulings_run(dir).map(|_| ())
 }
 
 /// One line of `rulings.jsonl`, at `place`, as the stage writes it.
