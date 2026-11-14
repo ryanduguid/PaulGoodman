@@ -300,6 +300,16 @@ fn the_verifier_fails_on_each_claim_it_reports_as_passing() {
     expect("no row names private individuals");
     std::fs::write(&rows, with_text(contact)).unwrap();
     assert!(!expect("no unapproved contact identifiers").contains(contact));
+    // Broken by a zero-width space or an escaped NUL, or written backwards
+    // under a right-to-left override, which shows it forwards.
+    for hidden in [
+        "new-con\u{200b}tact@example.test",
+        "new-contact@exa\u{0}mple.test",
+        "\u{202e}tset.elpmaxe@tcatnoc-wen\u{202c}",
+    ] {
+        std::fs::write(&rows, with_text(hidden)).unwrap();
+        expect("no unapproved contact identifiers");
+    }
     std::fs::write(&rows, "[]\n").unwrap();
     expect("every JSONL row parses");
     std::fs::write(&rows, b"\xff\xfe").unwrap();

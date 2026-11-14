@@ -28,6 +28,8 @@ rusqlite = { version = "0.41.1", features = ["bundled"] }
 sha2 = "0.11.1"
 # Unicode 17, the version CPython 3.15 normalises with.
 unicode-normalization = "=0.1.25"
+# The order a renderer shows text in, for the contact scan in src/fadden/pii.rs.
+unicode-bidi = "0.3.18"
 # TLS for src/fadden/http.rs, verified against the operating system's
 # certificate store.
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }

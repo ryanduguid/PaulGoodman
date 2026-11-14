@@ -234,6 +234,12 @@ fn contacts_broken_by_invisible_characters_are_found() {
         ("02 1234\u{feff} 5678", &phone),
         ("someone@exam\u{fff9}ple.com", &email),
         ("someone@exa\u{0}mple.com", &email),
+        ("some\u{34f}one@example.com", &email),
+        ("someone@exa\u{200f}mple.com", &email),
+        ("someone@exa\u{202e}\u{202c}mple.com", &email),
+        ("someone@exa\u{fe0f}mple.com", &email),
+        ("someone@exa\u{e0041}mple.com", &email),
+        ("someone@exa\u{3164}mple.com", &email),
         ("TFN: 123\u{200b} 456 782", &tfn),
         // References decoded, then the invisible characters removed.
         ("someone&#64;exam\u{200b}ple.com", &email),
@@ -263,6 +269,74 @@ fn contacts_broken_by_invisible_characters_are_found() {
     let (_, contacts) =
         pii::privacy_findings_in_file(&path.to_string_lossy(), "C2004A00001", &[]).unwrap();
     assert_eq!(contacts.len(), 1);
+}
+
+#[test]
+fn a_control_that_separates_a_contact_broken_by_an_invisible_character_still_separates_it() {
+    // Removing the control as well as the zero-width space would read
+    // `xalice@example.com`.
+    let rid = "C2004A00001";
+    let alice = pii::contact_fingerprints("alice@example.com").remove(0);
+    let joined = pii::contact_fingerprints("xalice@example.com").remove(0);
+    let approved = vec![(joined.0.to_string(), joined.1.clone(), rid.to_string())];
+    for text in [
+        "x\u{1c}alice@exa\u{200b}mple.com",
+        "x\u{0}alice@exa\u{200b}mple.com",
+    ] {
+        assert!(pii::contact_fingerprints(text).contains(&alice), "{text:?}");
+        let unapproved = pii::unapproved_contact_fingerprints(text, rid, &approved);
+        assert_eq!(
+            unapproved,
+            vec![(alice.0, alice.1.clone(), rid.to_string())]
+        );
+    }
+}
+
+#[test]
+fn contacts_bidirectional_controls_show_in_another_order_are_found() {
+    let email = pii::contact_fingerprints("someone@example.com").remove(0);
+    let phone = pii::contact_fingerprints("02 1234 5678").remove(0);
+    let missed: Vec<&str> = [
+        // A right-to-left override shows these backwards, so forwards.
+        ("Write to \u{202e}moc.elpmaxe@enoemos\u{202c}.", &email),
+        ("Call \u{202e}8765 4321 20\u{202c}.", &phone),
+        ("Write to &#x202E;moc.elpmaxe@enoemos&#x202C;.", &email),
+        // Right-to-left marks in a right-to-left isolate show the parts in
+        // reverse order: someone@example.com.
+        (
+            "Write to \u{2067}com\u{200f}.\u{200f}example\u{200f}@\u{200f}someone\u{2069}.",
+            &email,
+        ),
+    ]
+    .into_iter()
+    .filter(|(text, plain)| !pii::contact_fingerprints(text).contains(plain))
+    .map(|(text, _)| text)
+    .collect();
+    assert!(missed.is_empty(), "missed {missed:?}");
+}
+
+#[test]
+fn contacts_written_with_dashes_that_show_as_hyphens_are_found() {
+    let phone = pii::contact_fingerprints("1300 123 456").remove(0);
+    let email = pii::contact_fingerprints("some-one@example.com").remove(0);
+    let missed: Vec<&str> = [
+        // The non-breaking hyphen the Register's EPUBs use, then a hyphen,
+        // a figure dash, an en dash and a minus sign.
+        ("1300\u{2011}123\u{2011}456", &phone),
+        ("1300\u{2010}123\u{2010}456", &phone),
+        ("1300\u{2012}123\u{2012}456", &phone),
+        ("1300\u{2013}123\u{2013}456", &phone),
+        ("1300\u{2212}123\u{2212}456", &phone),
+        ("1300&#8209;123&#8209;456", &phone),
+        ("some\u{2011}one@example.com", &email),
+    ]
+    .into_iter()
+    .filter(|(text, plain)| !pii::contact_fingerprints(text).contains(plain))
+    .map(|(text, _)| text)
+    .collect();
+    assert!(missed.is_empty(), "missed {missed:?}");
+    // A section number is no contact.
+    assert!(pii::contact_fingerprints("section 13\u{2011}10 of the Act").is_empty());
 }
 
 fn policy(dir: &Path, document: Value) -> Result<Vec<pii::Approved>, String> {
