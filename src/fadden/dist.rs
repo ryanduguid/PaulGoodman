@@ -1357,6 +1357,43 @@ fn copy_title(
             &digest[..16]
         )));
     }
+    // Read only once the scan has found the copy to be text.
+    let mut lines = Lines::open(&child(&copied, &["sections.jsonl"])?)?;
+    while let Some(line) = lines.next_line() {
+        if !py::strip(&line?).is_empty() {
+            return Ok(());
+        }
+    }
+    Err(Exc::Runtime(format!(
+        "listed title {rid} has no rows in sections.jsonl"
+    )))
+}
+
+/// Refuse a `sources.json` naming a title, kept or left out, whose name pairs a
+/// person with a registration number or holds an unapproved contact: no title
+/// file gate reads the names it lists.
+fn reject_private_names(sources: &Json, approved: &[Approved]) -> Result<(), Exc> {
+    let lists = [
+        "titles",
+        "excluded_titles",
+        "titles_without_epub",
+        "titles_not_current_version",
+    ];
+    for list in lists.into_iter().filter_map(|key| sources.get(key)) {
+        for entry in iterate(list)? {
+            let rid = entry
+                .get("register_id")
+                .and_then(Json::as_str)
+                .unwrap_or_default();
+            let name = Json::obj([("name", entry.get("name").cloned().unwrap_or(Json::Null))]);
+            let (pair, contacts) = pii::privacy_findings_in_row(&name, rid, approved);
+            if pair || !contacts.is_empty() {
+                return Err(Exc::Runtime(format!(
+                    "listed title name names a private person or holds an unapproved contact: {rid}"
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1430,17 +1467,16 @@ fn copy_date(
             compilations::digests(&child(target, &["markdown", &rid])?)?,
         );
     }
-    dump_json(
-        &pypath::join(target, "sources.json"),
-        &Json::obj([
-            ("in_force_on", Json::str(on)),
-            ("source", Json::str("Federal Register of Legislation")),
-            ("licence", Json::str(super::finalize::LICENCE)),
-            ("licence_url", Json::str(super::finalize::LICENCE_URL)),
-            ("titles", Json::Array(titles)),
-            ("excluded_titles", Json::Array(excluded)),
-        ]),
-    )
+    let listing = Json::obj([
+        ("in_force_on", Json::str(on)),
+        ("source", Json::str("Federal Register of Legislation")),
+        ("licence", Json::str(super::finalize::LICENCE)),
+        ("licence_url", Json::str(super::finalize::LICENCE_URL)),
+        ("titles", Json::Array(titles)),
+        ("excluded_titles", Json::Array(excluded)),
+    ]);
+    reject_private_names(&listing, approved)?;
+    dump_json(&pypath::join(target, "sources.json"), &listing)
 }
 
 /// The titles kept, the titles left out, and every id the manifest names.
@@ -1796,6 +1832,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         ),
         None => {}
     }
+    reject_private_names(&out, &approved)?;
     dump_json(&child(staging, &["sources.json"])?, &out)?;
 
     let licence_src = child(&paths.root, &["LICENCE-NOTICE.md"])?;

@@ -504,42 +504,10 @@ fn verify_rows(
             found.rows.insert(label.to_string());
             return Ok(());
         };
-        if names_people(&row, rid, approved) {
+        let (pair, contacts) = pii::privacy_findings_in_row(&row, rid, approved);
+        if pair || !contacts.is_empty() {
             found.private.insert(label.to_string());
         }
     }
     Ok(())
-}
-
-/// Whether a row's decoded strings pair a name with a registration number,
-/// in any of its fields as the file scan would, or hold an unapproved contact.
-/// JSON escapes can hide either from the file scan. Contacts are sought in
-/// each string alone: joined, the end of one and the start of the next can
-/// read as a phone number.
-fn names_people(row: &Json, rid: &str, approved: &[Approved]) -> bool {
-    let strings = decoded_strings(row);
-    let (mut names, mut numbers) = (false, false);
-    for text in &strings {
-        let (n, r) = pii::private_person_registration_details(text);
-        names |= !n.is_empty();
-        numbers |= !r.is_empty();
-    }
-    (names && numbers)
-        || strings
-            .iter()
-            .any(|text| !pii::unapproved_contact_fingerprints(text, rid, approved).is_empty())
-}
-
-/// A row's top-level string values, decoded.
-fn decoded_strings(row: &Json) -> Vec<String> {
-    let Json::Object(fields) = row else {
-        return Vec::new();
-    };
-    fields
-        .iter()
-        .filter_map(|(_, value)| match value {
-            Json::Str(s) => Some(crate::pyvalue::points_lossy(&s.code_points())),
-            _ => None,
-        })
-        .collect()
 }

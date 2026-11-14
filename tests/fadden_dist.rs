@@ -2759,6 +2759,100 @@ fn a_dated_row_is_not_refused_for_a_phone_number_spanning_2_fields() {
     assert_eq!(verify(&f).0, 0);
 }
 
+/// The public Act's rows under a corpus root or a dated folder.
+fn public_rows(root: &Path) -> PathBuf {
+    root.join("markdown").join(PUBLIC_ID).join("sections.jsonl")
+}
+
+#[test]
+fn a_root_row_hiding_a_contact_or_a_name_behind_json_escapes_is_refused() {
+    // An unapproved email address, its "@" escaped in the file.
+    let f = fixture();
+    let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                     "kind": "section", "text": "Write to alice@example.org."});
+    write(
+        &public_rows(&f.root),
+        &format!("{}\n", row.to_string().replace('@', "\\u0040")),
+    );
+    refused(&f, "no unapproved contact identifiers");
+    assert!(!f.dist().exists());
+    // A name in one field and a registration number in another, each escaped.
+    let f = fixture();
+    let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                     "heading": "Alice Smith", "kind": "section", "text": "Registration 12345678."});
+    let line = row
+        .to_string()
+        .replace("Alice Smith", "Alice\\u0020Smith")
+        .replace("12345678", "1234\\u0035678");
+    write(&public_rows(&f.root), &format!("{line}\n"));
+    refused(&f, "no row names private individuals");
+    assert!(!f.dist().exists());
+}
+
+#[test]
+fn a_root_row_is_not_refused_for_a_phone_number_spanning_2_fields() {
+    // "Part 13" then "10 20" would read as a 13 number if the fields were joined.
+    let f = fixture();
+    let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                     "heading": "Part 13", "kind": "section", "text": "10 20 apply."});
+    write(&public_rows(&f.root), &format!("{row}\n"));
+    publish(&f);
+    assert_eq!(verify(&f).0, 0);
+}
+
+#[test]
+fn a_listed_title_name_naming_a_person_or_holding_a_contact_is_refused() {
+    // A published root title's name holding an unapproved email address.
+    let f = fixture();
+    rewrite(&f.root.join("sources.json"), |v| {
+        v["titles"][0]["name"] = json!("Public Tax Act (write to alice@example.org)");
+    });
+    refused(
+        &f,
+        "title name names a private person or holds an unapproved contact",
+    );
+    assert!(!f.dist().exists());
+    // A left-out root title's name holding a phone number.
+    let f = fixture();
+    rewrite(&f.build.join("pii_flagged.json"), |v| {
+        v[0]["name"] = json!("Private Disciplinary Register, call 0412 345 678");
+    });
+    refused(
+        &f,
+        "title name names a private person or holds an unapproved contact",
+    );
+    assert!(!f.dist().exists());
+    // A dated title's name pairing a person with a registration number.
+    let f = with_compilation();
+    rewrite(
+        &f.root
+            .join("compilations")
+            .join(ON)
+            .join("build")
+            .join("manifest_md.json"),
+        |v| v[0]["name"] = json!("Jane Smith 12345678"),
+    );
+    refused(
+        &f,
+        "title name names a private person or holds an unapproved contact",
+    );
+    assert!(!f.dist().exists());
+}
+
+#[test]
+fn a_listed_title_with_no_rows_is_refused() {
+    for empty in ["", "\n \n"] {
+        let f = fixture();
+        write(&public_rows(&f.root), empty);
+        refused(&f, "listed title C2004A00001 has no rows in sections.jsonl");
+        assert!(!f.dist().exists());
+        let f = with_compilation();
+        write(&public_rows(&f.root.join("compilations").join(ON)), empty);
+        refused(&f, "listed title C2004A00001 has no rows in sections.jsonl");
+        assert!(!f.dist().exists());
+    }
+}
+
 /// One compilation window: its start, and its end unless in force.
 fn window(start: &str, end: Option<&str>) -> (String, Option<String>) {
     (start.into(), end.map(Into::into))

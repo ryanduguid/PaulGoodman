@@ -339,6 +339,38 @@ pub fn unapproved_contact_fingerprints(
     found
 }
 
+/// A JSON row's privacy findings, as `privacy_findings_in_file` gives a file's:
+/// whether its decoded top-level strings pair a name with a registration number,
+/// across fields as the file scan would, and their unapproved contacts. JSON
+/// escapes can hide either from the file scan. Contacts are sought in each
+/// string alone: joined, the end of one and the start of the next can read as
+/// a phone number.
+pub fn privacy_findings_in_row(
+    row: &Json,
+    register_id: &str,
+    approved: &[Approved],
+) -> (bool, Vec<Unapproved>) {
+    let Json::Object(fields) = row else {
+        return (false, Vec::new());
+    };
+    let (mut names, mut numbers, mut contacts) = (false, false, Vec::new());
+    for (_, value) in fields {
+        let Json::Str(s) = value else { continue };
+        let text = pyvalue::points_lossy(&s.code_points());
+        let (n, r) = private_person_registration_details(&text);
+        names |= !n.is_empty();
+        numbers |= !r.is_empty();
+        contacts.extend(unapproved_contact_fingerprints(
+            &text,
+            register_id,
+            approved,
+        ));
+    }
+    contacts.sort();
+    contacts.dedup();
+    (names && numbers, contacts)
+}
+
 /// Whether a privacy check could not read a file: `OSError` or `UnicodeError`.
 pub fn unreadable(error: &Exc) -> bool {
     match error {
