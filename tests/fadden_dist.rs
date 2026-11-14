@@ -2722,4 +2722,39 @@ fn a_dated_row_naming_people_is_refused_as_a_root_row_is() {
     );
     refused(&f, COMPILATION_LABELS[3]);
     assert!(!f.dist().exists());
+    // A name in one field and a registration number in another, each escaped.
+    let f = with_compilation();
+    let row = json!({"register_id": PUBLIC_ID, "section": "1", "heading": "Alice Smith",
+                     "text": "Registration 12345678.", "compilation_date": "2025-03-28",
+                     "superseded_from": "2026-07-01", "version_is_current": false});
+    let line = row
+        .to_string()
+        .replace("Alice Smith", "Alice\\u0020Smith")
+        .replace("12345678", "1234\\u0035678");
+    write(
+        &rows(&f.root.join("compilations").join(ON)),
+        &format!("{line}\n"),
+    );
+    refused(&f, COMPILATION_LABELS[3]);
+    assert!(!f.dist().exists());
+}
+
+#[test]
+fn a_dated_row_is_not_refused_for_a_phone_number_spanning_2_fields() {
+    // "Part 13" then "10 20" would read as a 13 number if the fields were joined.
+    let f = with_compilation();
+    let row = json!({"register_id": PUBLIC_ID, "section": "1", "heading": "Part 13",
+                     "text": "10 20 apply.", "compilation_date": "2025-03-28",
+                     "superseded_from": "2026-07-01", "version_is_current": false});
+    write(
+        &f.root
+            .join("compilations")
+            .join(ON)
+            .join("markdown")
+            .join(PUBLIC_ID)
+            .join("sections.jsonl"),
+        &format!("{row}\n"),
+    );
+    publish(&f);
+    assert_eq!(verify(&f).0, 0);
 }
