@@ -105,10 +105,20 @@ def test_readme_routes_agents_to_the_published_corpus_snapshot() -> None:
     assert "claude mcp add --scope user aus-accounting -e AUS_ACCOUNTING_CORPUS_ROOT=" in readme
     assert "codex mcp add aus-accounting --env AUS_ACCOUNTING_CORPUS_ROOT=" in readme
     assert '"env": { "AUS_ACCOUNTING_CORPUS_ROOT":' in readme
-    assert "aus-accounting-mcp==0.8.0" in readme
+    assert "aus-accounting-mcp==0.9.0" in readme
     assert "Get-FileHash" in readme
     assert "shasum -a 256 -c SHA256SUMS" in readme
     assert "aus-accounting-mcp doctor" in readme
+
+
+def test_readme_offers_earlier_compilations_with_their_limits() -> None:
+    # `quick --in-force-on` was documented only in BUILD.md, so a README reader
+    # never learnt that a build can hold a past 1 July's compilations.
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+
+    assert "`--in-force-on YYYY-07-01`" in readme
+    assert "1 July 2020" in readme
+    assert "BUILD.md#earlier-compilations" in readme
 
 
 def test_comparison_names_the_published_corpus_snapshot() -> None:

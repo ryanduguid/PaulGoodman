@@ -56,8 +56,8 @@ tar.exe -xzf au-tax-legislation-corpus-dist-2026-11-11.tar.gz
 Then add the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, which needs Python 3.14+ and [uv](https://docs.astral.sh/uv/), with `AUS_ACCOUNTING_CORPUS_ROOT` set to the unpacked `dist` folder. Run one of these from the folder that holds `dist` (in PowerShell, write `"$PWD\dist"`):
 
 ```bash
-claude mcp add --scope user aus-accounting -e AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.8.0' aus-accounting-mcp
-codex mcp add aus-accounting --env AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.8.0' aus-accounting-mcp
+claude mcp add --scope user aus-accounting -e AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.9.0' aus-accounting-mcp
+codex mcp add aus-accounting --env AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.9.0' aus-accounting-mcp
 ```
 
 For Claude Desktop and other hosts that read a JSON file, add this entry with the absolute path of `dist`, then restart the host:
@@ -67,14 +67,14 @@ For Claude Desktop and other hosts that read a JSON file, add this entry with th
   "mcpServers": {
     "aus-accounting": {
       "command": "uvx",
-      "args": ["--from", "aus-accounting-mcp==0.8.0", "aus-accounting-mcp"],
+      "args": ["--from", "aus-accounting-mcp==0.9.0", "aus-accounting-mcp"],
       "env": { "AUS_ACCOUNTING_CORPUS_ROOT": "/absolute/path/to/dist" }
     }
   }
 }
 ```
 
-To check the folder before asking anything, run the server's `doctor` with the same setting: `AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" uvx --from 'aus-accounting-mcp==0.8.0' aus-accounting-mcp doctor` (in PowerShell, set `$env:AUS_ACCOUNTING_CORPUS_ROOT = "$PWD\dist"` first). It reports `9439 section rows in 9 title indexes, 1664 rate rows`. `search_tax_legislation`, `read_tax_legislation_section`, `define_tax_term` and `search_tax_rates` then answer from that folder ([evidence](docs/build-evidence.md#published-snapshot-as-an-mcp-corpus)).
+To check the folder before asking anything, run the server's `doctor` with the same setting: `AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" uvx --from 'aus-accounting-mcp==0.9.0' aus-accounting-mcp doctor` (in PowerShell, set `$env:AUS_ACCOUNTING_CORPUS_ROOT = "$PWD\dist"` first). It reports `9439 section rows in 9 title indexes, 1664 rate rows`. `search_tax_legislation`, `read_tax_legislation_section`, `define_tax_term` and `search_tax_rates` then answer from that folder ([evidence](docs/build-evidence.md#published-snapshot-as-an-mcp-corpus)).
 
 The snapshot is a finding aid derived from the Register's EPUB reading view, not authorised text or tax advice. It holds no instruments, rulings or cases, and a later amendment can outdate it; [`quick`](#search-real-law-from-an-empty-folder) builds the current compilations instead. Its legislative content is licensed CC BY 4.0 by the Federal Register of Legislation, with the attribution in the release notes.
 
@@ -123,6 +123,8 @@ default. See [BUILD.md](BUILD.md) for index rebuilding and the measured ranking 
 ### Search real law from an empty folder
 
 `python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts on your machine and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server, which then answers `search_tax_legislation` from that folder. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay ([evidence](docs/build-evidence.md#one-command-preset-build)). It fetches each Act from the Register, builds beside that folder, moves the result in only once all 9 Acts are indexed and publishes nothing. The command needs `curl` and network access; [BUILD.md](BUILD.md#one-command-preset-build) lists the Acts.
+
+To answer a past income year from the text of the time, add `--in-force-on YYYY-07-01` (repeatable): the build also holds each Act's compilation in force on that 1 July under `compilations/<date>/`. An Act whose Register history does not reach the date is listed and left out; on 14 November 2026 the Income Tax Assessment Act 1997's reached back to 1 July 2020. The search index holds only the current compilations, so only a reader of `compilations/` answers from the earlier ones, and the `corpus-2026-11-11` snapshot holds none ([BUILD.md](BUILD.md#earlier-compilations)).
 
 ## Two related systems
 
