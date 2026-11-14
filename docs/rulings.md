@@ -169,8 +169,12 @@ What is not published:
   headings or text carry a copyright notice of their own (`©`, `(c) 2099`,
   `Copyright 2099` or `All rights reserved`, in any case). Third-party material quoted
   without such a mark is not detected.
+- **Edited versions of private advice.** An `EV` document is left out and listed. Each
+  describes one taxpayer's affairs, edited by the ATO to protect their privacy, and a
+  copy in a released snapshot would not follow any later change the ATO makes to it.
 - **Personal data.** Every kept row's decoded values and every published file go through
-  the corpus patterns again. No allowlist entry binds a ruling, so one match stops `dist`
+  the corpus patterns again. The contact allowlist is not consulted, even for a run
+  named like a title it approves contacts for, so one match stops `dist`
   before anything is published. The patterns find a name only beside a registration
   number, so a representative named without one is not found; `docs/scope.md` lists the
   patterns' other limits.
@@ -178,7 +182,8 @@ What is not published:
 `dist_verify` adds 7 checks when `dist/rulings/` exists: only the listed runs and their
 3 files, their digests, the privacy patterns over every file and row, each run's
 agreement with its manifest (as `search build --rulings` checks it), every published
-document's coverage by the notice, `REMOVED.md` listing each document left out, and the
+document's coverage by the notice (and that none is an edited version of private
+advice), `REMOVED.md` listing each document left out, and the
 licence notice's `ATO rulings` section.
 
 The reuse terms were read again on 15 November 2026 at 08:34 AEDT at
@@ -221,3 +226,7 @@ released.
 
 The 5 documents' 443 rows published as 483,003 bytes under `dist/rulings/` (65,250
 bytes as a gzip-compressed tar); their raw pages, left behind, came to 1,086,553 bytes.
+
+PCG 2021/4's page, read again on 15 November 2026, declares UTF-8 (`<meta charset="utf-8">`,
+with no charset in its `Content-Type`) but writes the `×` and `÷` in 26 image titles as
+single Windows-1252 bytes, so it is not UTF-8 and the stage refuses it rather than guess.

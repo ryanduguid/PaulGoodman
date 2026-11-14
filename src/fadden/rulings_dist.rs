@@ -6,10 +6,11 @@
 //! `rulings.jsonl`, `manifest.json` and `LICENCE-NOTICE.md`; its `raw/` pages stay
 //! behind, as the EPUBs do, because their ATO site header and footer were never
 //! scanned. `rulings/sources.json` gives each run's file digests and the
-//! documents left out. A document the ATO's reuse notice does not cover is left
-//! out and listed; a row that names a person beside a registration number or
-//! holds a contact stops the distribution, as an unapproved contact in a title
-//! does.
+//! documents left out. A document the ATO's reuse notice does not cover, or an
+//! edited version of private advice, is left out and listed; a row that names a
+//! person beside a registration number or holds a contact stops the
+//! distribution, as an unapproved contact in a title does. No allowlist entry
+//! approves a contact in a ruling.
 use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
@@ -17,8 +18,8 @@ use sha2::{Digest, Sha256};
 use super::compilations::{Check, names};
 use super::corpus_paths::{child, linked};
 use super::dist_verify::entry_kind;
-use super::pii::{self, Approved};
-use super::rulings::{COPYRIGHT_NOTICE_URL, NOTICE, family_of};
+use super::pii;
+use super::rulings::{COPYRIGHT_NOTICE_URL, EDITED_VERSION, NOTICE, family_of};
 use super::search::{LICENCE_BASES, check_rulings_run};
 use super::{Exc, json_error};
 use crate::pyjson::{self, Json, PyStr};
@@ -37,7 +38,7 @@ pub const NOTICE_HEADING: &str = "## ATO rulings";
 const RUN_FILES: [&str; 3] = ["LICENCE-NOTICE.md", "manifest.json", "rulings.jsonl"];
 
 /// A run folder name the `aus-accounting-mcp` rulings reader accepts.
-const RUN_NAME: &str = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$";
+const RUN_NAME: &str = r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}";
 
 /// Text marking material with a copyright notice of its own, which the ATO's
 /// notice does not license.
@@ -89,16 +90,23 @@ fn text<'a>(value: &'a Json, key: &str) -> &'a str {
     value.at(key).as_str().unwrap_or_default()
 }
 
-/// Why the ATO's reuse notice does not cover a captured document, if it does not:
-/// a family it does not cover, a label its docid contradicts, no recorded notice,
-/// or text carrying a copyright notice of its own.
-fn uncovered(document: &Json, rows: &[&Json]) -> Option<String> {
+/// Why `dist` leaves a captured document out, if it does: a family the ATO's
+/// reuse notice does not cover, an edited version of private advice, a label its
+/// docid contradicts, no recorded notice, or text carrying a copyright notice of
+/// its own.
+fn reason_left_out(document: &Json, rows: &[&Json]) -> Option<String> {
     let docid = text(document, "docid");
     let Some(family) = family_of(docid) else {
         return Some(
             "not an ATO-authored document family; the ATO notice does not cover it".into(),
         );
     };
+    if family == EDITED_VERSION {
+        return Some(
+            "an edited version of private advice, about one taxpayer's affairs; not republished"
+                .into(),
+        );
+    }
     let labels = std::iter::once(document).chain(rows.iter().copied());
     if let Some(label) = labels.map(|r| text(r, "family")).find(|l| *l != family) {
         return Some(format!(
@@ -129,11 +137,11 @@ fn uncovered(document: &Json, rows: &[&Json]) -> Option<String> {
 
 /// Whether `path` names a person beside a registration number or holds a
 /// contact, in the file as written or, for JSON and JSONL, in the decoded values
-/// a JSON escape could hide. No allowlist entry binds a ruling, so every contact
-/// is unapproved.
-fn private(path: &str, run: &str, approved: &[Approved]) -> Result<bool, Exc> {
+/// a JSON escape could hide. The allowlist is not consulted: a run can be named
+/// like a title it approves contacts for.
+fn private(path: &str, run: &str) -> Result<bool, Exc> {
     let found = |(pair, contacts): (bool, Vec<pii::Unapproved>)| pair || !contacts.is_empty();
-    if found(pii::privacy_findings_in_file(path, run, approved)?) {
+    if found(pii::privacy_findings_in_file(path, run, &[])?) {
         return Ok(true);
     }
     let text = crate::pyio::read_text(path)?;
@@ -146,13 +154,13 @@ fn private(path: &str, run: &str, approved: &[Approved]) -> Result<bool, Exc> {
     };
     Ok(values.into_iter().any(|value| {
         pyjson::loads_standard(value)
-            .is_ok_and(|value| found(pii::privacy_findings_in_row(&value, run, approved)))
+            .is_ok_and(|value| found(pii::privacy_findings_in_row(&value, run, &[])))
     }))
 }
 
 /// Copy each run under the corpus's `rulings/` into `staging`, leaving out and
 /// listing what the ATO notice does not cover. None when the corpus holds none.
-pub fn copy(root: &str, staging: &str, approved: &[Approved]) -> Result<Option<Published>, Exc> {
+pub fn copy(root: &str, staging: &str) -> Result<Option<Published>, Exc> {
     let folder = pypath::join(root, FOLDER);
     if std::fs::symlink_metadata(&folder).is_err() {
         return Ok(None);
@@ -166,19 +174,13 @@ pub fn copy(root: &str, staging: &str, approved: &[Approved]) -> Result<Option<P
     let mut listed = Vec::new();
     for name in names(&folder)? {
         let source = pypath::join(&folder, &name);
-        if !pyre::re(RUN_NAME, 0).is_match(&name) || linked(&source)? || !pyos::isdir(&source) {
+        if !pyre::fullmatch(RUN_NAME, 0, &name) || linked(&source)? || !pyos::isdir(&source) {
             return Err(Exc::Runtime(format!(
                 "rulings/{name} is not a run directory the rulings reader accepts"
             )));
         }
         let run_target = pypath::join(&target, &name);
-        listed.push(copy_run(
-            &source,
-            &run_target,
-            &name,
-            approved,
-            &mut published,
-        )?);
+        listed.push(copy_run(&source, &run_target, &name, &mut published)?);
     }
     if listed.is_empty() {
         return Err(Exc::Runtime("rulings holds no run".into()));
@@ -191,7 +193,7 @@ pub fn copy(root: &str, staging: &str, approved: &[Approved]) -> Result<Option<P
     ]);
     let path = pypath::join(&target, "sources.json");
     write_new(&path, &json_bytes(&listing))?;
-    if private(&path, FOLDER, approved)? {
+    if private(&path, FOLDER)? {
         return Err(Exc::Runtime(
             "rulings/sources.json names a private person or holds a contact".into(),
         ));
@@ -206,7 +208,6 @@ fn copy_run(
     source: &str,
     target: &str,
     name: &str,
-    approved: &[Approved],
     published: &mut Published,
 ) -> Result<Json, Exc> {
     if let Some(stray) = names(source)?
@@ -227,10 +228,10 @@ fn copy_run(
         .map(|line| pyjson::loads_standard(line).map_err(json_error))
         .collect::<Result<Vec<Json>, Exc>>()?;
     let left_out = leave_out(&mut manifest, &rows, name, published);
-    let kept = kept_lines(&lines, &rows, &left_out, name, approved)?;
+    let kept = kept_lines(&lines, &rows, &left_out, name)?;
     let notice = read(&child(source, &["LICENCE-NOTICE.md"])?)?;
     let contents = [notice, json_bytes(&manifest), kept.into_bytes()];
-    let files = write_run(target, name, &contents, approved)?;
+    let files = write_run(target, name, &contents)?;
     let fetched_on = text(&manifest, "fetched_on").to_string();
     published.runs.push((name.to_string(), fetched_on.clone()));
     Ok(Json::obj([
@@ -255,7 +256,6 @@ fn kept_lines(
     rows: &[Json],
     left_out: &BTreeSet<String>,
     name: &str,
-    approved: &[Approved],
 ) -> Result<String, Exc> {
     let mut kept = String::new();
     for (line, row) in lines.iter().zip(rows) {
@@ -263,7 +263,7 @@ fn kept_lines(
         if left_out.contains(docid) {
             continue;
         }
-        let (pair, contacts) = pii::privacy_findings_in_row(row, docid, approved);
+        let (pair, contacts) = pii::privacy_findings_in_row(row, docid, &[]);
         if pair || !contacts.is_empty() {
             return Err(Exc::Runtime(format!(
                 "rulings/{name}: {docid} names a private person or holds a contact; \
@@ -278,18 +278,13 @@ fn kept_lines(
 
 /// Write a run's files, `contents` in `RUN_FILES` order, and scan each written
 /// file; returns their digests.
-fn write_run(
-    target: &str,
-    name: &str,
-    contents: &[Vec<u8>; 3],
-    approved: &[Approved],
-) -> Result<Vec<(PyStr, Json)>, Exc> {
+fn write_run(target: &str, name: &str, contents: &[Vec<u8>; 3]) -> Result<Vec<(PyStr, Json)>, Exc> {
     pyos::makedirs_new(target)?;
     let mut files = Vec::new();
     for (file, bytes) in RUN_FILES.into_iter().zip(contents) {
         let path = pypath::join(target, file);
         write_new(&path, bytes)?;
-        if private(&path, name, approved)? {
+        if private(&path, name)? {
             return Err(Exc::Runtime(format!(
                 "rulings/{name}/{file} names a private person or holds a contact"
             )));
@@ -313,7 +308,7 @@ fn leave_out(
     for document in documents {
         let docid = text(&document, "docid").to_string();
         let own: Vec<&Json> = rows.iter().filter(|r| text(r, "docid") == docid).collect();
-        match uncovered(&document, &own) {
+        match reason_left_out(&document, &own) {
             None => kept.push(document),
             Some(reason) => {
                 excluded.push(Json::obj([
@@ -365,7 +360,7 @@ struct Findings {
 }
 
 /// The checks on a distribution's `rulings/`, or none when it holds none.
-pub fn verify(dist_root: &str, approved: &[Approved]) -> Result<Vec<Check>, Exc> {
+pub fn verify(dist_root: &str) -> Result<Vec<Check>, Exc> {
     let folder = pypath::join(dist_root, FOLDER);
     if std::fs::symlink_metadata(&folder).is_err() {
         return Ok(Vec::new());
@@ -392,15 +387,9 @@ pub fn verify(dist_root: &str, approved: &[Approved]) -> Result<Vec<Check>, Exc>
                     .push(format!("{name}/{}", text(left, "docid")));
             }
         }
-        verify_run(
-            &pypath::join(&folder, name),
-            name,
-            run,
-            approved,
-            &mut found,
-        )?;
+        verify_run(&pypath::join(&folder, name), name, run, &mut found)?;
     }
-    if entry_kind(&listing_path) == "file" && private(&listing_path, FOLDER, approved)? {
+    if entry_kind(&listing_path) == "file" && private(&listing_path, FOLDER)? {
         found.private.push("sources.json".into());
     }
     let notice = crate::pyio::read_text(&child(dist_root, &["LICENCE-NOTICE.md"])?)?;
@@ -444,13 +433,7 @@ fn listed_runs(listing: &Json) -> Vec<(String, Json)> {
 
 /// One listed run: its files, their digests and privacy, its agreement with its
 /// manifest, and the coverage of every document it publishes.
-fn verify_run(
-    directory: &str,
-    name: &str,
-    run: &Json,
-    approved: &[Approved],
-    found: &mut Findings,
-) -> Result<(), Exc> {
+fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> Result<(), Exc> {
     let entries = names(directory)?;
     let regular = entries
         .iter()
@@ -459,7 +442,7 @@ fn verify_run(
         found.stray.push(format!("{name}: {}", entries.join(" ")));
         return Ok(());
     }
-    verify_files(directory, name, run, approved, found)?;
+    verify_files(directory, name, run, found)?;
     match check_rulings_run(directory) {
         Ok(()) => {}
         Err(Exc::Value { message, .. }) => {
@@ -479,7 +462,7 @@ fn verify_run(
     for document in iterate_or_empty(manifest.at("documents")) {
         let docid = text(document, "docid");
         let own: Vec<&Json> = rows.iter().filter(|r| text(r, "docid") == docid).collect();
-        if let Some(reason) = uncovered(document, &own) {
+        if let Some(reason) = reason_left_out(document, &own) {
             found.uncovered.push(format!("{name}/{docid}: {reason}"));
         }
     }
@@ -487,19 +470,13 @@ fn verify_run(
 }
 
 /// Each of a run's files against its listed digest and the privacy patterns.
-fn verify_files(
-    directory: &str,
-    name: &str,
-    run: &Json,
-    approved: &[Approved],
-    found: &mut Findings,
-) -> Result<(), Exc> {
+fn verify_files(directory: &str, name: &str, run: &Json, found: &mut Findings) -> Result<(), Exc> {
     for file in RUN_FILES {
         let path = pypath::join(directory, file);
         if run.at("files").at(file).as_str() != Some(sha256(&read(&path)?).as_str()) {
             found.digests.push(format!("{name}/{file}"));
         }
-        match private(&path, name, approved) {
+        match private(&path, name) {
             Ok(false) => {}
             Ok(true) => found.private.push(format!("{name}/{file}")),
             Err(error) if pii::unreadable(&error) => {
@@ -525,7 +502,7 @@ fn report(found: &Findings, noticed: bool) -> Vec<Check> {
         check("no rulings file names people or contacts", &found.private),
         check("each rulings run agrees with its manifest", &found.runs),
         check(
-            "every published ruling is under the ATO notice",
+            "every published ruling is under the ATO notice and not private advice",
             &found.uncovered,
         ),
         check("REMOVED.md lists every ruling left out", &found.unlisted),
@@ -552,9 +529,10 @@ pub fn notice_section(published: &Published) -> String {
          > {NOTICE}\n\n\
          Neither the ATO nor the Commonwealth endorses this corpus. The rows are not the\n\
          authorised text, advice or the Commissioner's current view: read each document\n\
-         at its `source_url` before relying on it. Legislation, court judgments and\n\
-         material carrying a copyright notice of its own are not included, and REMOVED.md\n\
-         lists each document left out. `rulings/sources.json` gives each run's file digests.\n",
+         at its `source_url` before relying on it. Legislation, court judgments, edited\n\
+         versions of private advice and documents whose text carries a copyright notice\n\
+         of its own are left out, and REMOVED.md lists each one. `rulings/sources.json`\n\
+         gives each run's file digests.\n",
         dates.join(", ")
     )
 }

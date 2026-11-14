@@ -40,6 +40,9 @@ const RIGHTS_HOSTS: [&str; 2] = ["www.ato.gov.au", "ato.gov.au"];
 const RIGHTS_PATH: &str = "/content/corporate/about_this_site.htm";
 const RIGHTS_FRAGMENT: &str = "copyright";
 
+/// The family of an edited version of private advice, which `dist` does not republish.
+pub const EDITED_VERSION: &str = "Edited version of private advice";
+
 /// docid prefix and family: ATO-authored families only.
 const FAMILIES: [(&str, &str); 10] = [
     ("TXR", "Taxation Ruling"),
@@ -51,7 +54,7 @@ const FAMILIES: [(&str, &str); 10] = [
     ("COG", "Practical Compliance Guideline"),
     ("PSR", "Law Administration Practice Statement"),
     ("LIT/ICD", "Decision Impact Statement"),
-    ("EV", "Edited version of private advice"),
+    ("EV", EDITED_VERSION),
 ];
 
 const DOCID: &str = r"^[A-Za-z]{2,4}(?:/[A-Za-z0-9.-]+){1,5}$";

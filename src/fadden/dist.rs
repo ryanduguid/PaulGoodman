@@ -1649,7 +1649,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     }
 
     let dates = copy_compilations(&paths.root, staging, &removed, &approved)?;
-    let rulings = rulings_dist::copy(&paths.root, staging, &approved)?;
+    let rulings = rulings_dist::copy(&paths.root, staging)?;
 
     // The JSONL and its readable companion both come from this filtered set.
     let mut rate_records: Vec<Json> = Vec::new();
