@@ -184,20 +184,27 @@ fn reading_the_text_as_rendered_keeps_each_match_as_written_once() {
         pii::contact_fingerprints("Phone\u{a0}02 1234 5678 &amp; ask."),
         phone
     );
-    // A match both readings find has one digest, whichever forms it is written in.
+    // A match the text as written gives keeps the digest it had before the
+    // rendered reading, counted once, so the plain contact's allowlist entry
+    // does not approve it.
+    let rid = "C2004A00001";
     let email = pii::contact_fingerprints("someone@example.com");
-    let doubled: Vec<&str> = [
-        ("02 1234 \u{ff15}\u{ff16}\u{ff17}\u{ff18}", &phone),
-        ("\u{ff53}omeone@example.com", &email),
-    ]
-    .into_iter()
-    .filter(|(text, plain)| pii::contact_fingerprints(text) != **plain)
-    .map(|(text, _)| text)
-    .collect();
-    assert!(
-        doubled.is_empty(),
-        "not read as the plain contact: {doubled:?}"
-    );
+    let approved: Vec<pii::Approved> = [&phone, &email]
+        .iter()
+        .map(|found| (found[0].0.to_string(), found[0].1.clone(), rid.to_string()))
+        .collect();
+    for text in [
+        "02 1234 \u{ff15}\u{ff16}\u{ff17}\u{ff18}",
+        "\u{b2}02 1234 \u{ff15}\u{ff16}\u{ff17}\u{ff18}",
+        "\u{ff53}omeone@example.com",
+    ] {
+        assert_eq!(pii::contact_fingerprints(text).len(), 1, "{text}");
+        assert_eq!(
+            pii::unapproved_contact_fingerprints(text, rid, &approved).len(),
+            1,
+            "{text}"
+        );
+    }
     // One decoding pass, as a renderer shows it: `&amp;#64;` displays as `&#64;`.
     assert!(pii::contact_fingerprints("someone&amp;#64;example.com").is_empty());
 }
