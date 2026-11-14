@@ -151,7 +151,10 @@ What a published run holds:
 The distribution's `LICENCE-NOTICE.md` gains an `ATO rulings` section that quotes the
 notice, gives its address, says the rulings are not covered by CC BY 4.0 and that
 neither the ATO nor the Commonwealth endorses the corpus. `REMOVED.md` gains an
-`ATO rulings left out` table. Point `AUS_ACCOUNTING_RULINGS_ROOT` at `dist/rulings`.
+`ATO rulings left out` table. Point `AUS_ACCOUNTING_RULINGS_ROOT` at `dist/rulings`. On
+15 November 2026 `aus-accounting-mcp` 0.9.0 answered from a published run of 2 Taxation
+Rulings and a Class Ruling, but refused a run holding a Law Companion Ruling and a GST
+determination, as its list of families has neither label yet.
 
 What is not published:
 
@@ -199,3 +202,22 @@ Four targets, run from a Windows checkout into a scratch directory (not committe
 | `LIT/ICD/M47/2025/00001` | 47 paragraphs, `document-notice` |
 | `EV/1052479123827` | 74 paragraphs, `site-notice-via-dc-rights` |
 | `COG/PCG20241/NAT/ATO/00001` | Excluded: email pattern |
+
+## Publication smoke run, 15 November 2026
+
+Six targets in 2 runs, fetched on Linux at the stage's limits (24 seconds for 6
+requests), then published by `dist` beside the `corpus-2026-11-11` snapshot's
+legislation and checked by `dist_verify`, which passed. Nothing was committed or
+released.
+
+| docid | Result |
+| --- | --- |
+| `TXR/TR20211/NAT/ATO/00001` | 86 paragraphs, Taxation Ruling |
+| `TXR/TR20262/NAT/ATO/00001` | 149 paragraphs, Taxation Ruling |
+| `CLR/CR202689/NAT/ATO/00001` | 35 paragraphs, Class Ruling |
+| `COG/PCG20214/NAT/ATO/00001` | Excluded by the stage: response is not UTF-8 |
+| `GSD/GSTD20201/NAT/ATO/00001` | 61 paragraphs, GST determination |
+| `COG/LCR20212/NAT/ATO/00001` | 112 paragraphs, Law Companion Ruling |
+
+The 5 documents' 443 rows published as 483,003 bytes under `dist/rulings/` (65,250
+bytes as a gzip-compressed tar); their raw pages, left behind, came to 1,086,553 bytes.
