@@ -83,6 +83,8 @@ matches. It does not extend compilation coverage or change quotation checking.
 | `superseded` | Refused | A later version had started by that date, and the Register had no compilation for it when the build ran | A later version started; check the Register and application provisions |
 | `after_retrieval` | Refused | The date is after the build retrieved this title, so the build cannot say what changed | Run `check_current` and read the Register |
 
+A compilation can be superseded on the day it starts, since the Register ends a version on the day another starts on that same day, and `retry13` can fall back to one; its window holds no date, so it is never `captured`.
+
 The limits above apply to every status. `--as-at` reads the window `compilation_date`, `superseded_from` and `retrieved`, so a date inside a window can still carry text amended with retrospective effect, and a provision's text can differ from what applied to that date. The index and the `as_at` stage hold one compilation of a title, the root's, so their refusal is the answer for any earlier date: no earlier text is in the index.
 
 With `--json`, `query` and `define` print one object per line: each hit with an `as_at` object, then one `{"refused": true, ...}` per refused title with `register_id`, `act`, `matching_rows` and `as_at`, then `{"as_at_summary": ...}` with `date`, `rows`, `withheld_rows`, `titles` (a count per status) and `covers`. The `as_at` object holds `date`, `status`, `compilation_date`, `superseded_from`, `retrieved`, `covers` and `next_step`, which is null for `captured`. `cite-check --json` adds the same object to each citation, or null if the citation reached no title, then prints a refusal for a `--title` that is not `captured`.
@@ -175,6 +177,14 @@ declared Markdown/JSONL file inventory and inspect every file in it, covering
 the human-readable Markdown and endnotes as well as `sections.jsonl`. A private
 name beside a registration number in any representation fails, as does an
 unreadable file, binary control data, a nested path or an unexpected file.
+`dist_verify` also reads each row's decoded strings and numbers, keys and
+nested values included, so a JSON escape cannot hide a name, registration
+number or contact.
+`dist` also refuses a title with no rows, and a title name, kept or left out,
+that pairs a person with a registration number or holds an unapproved contact.
+The patterns read text as written: they do not find a contact split across 2
+strings, written with a look-alike character such as a full-width `@`, or
+hidden by an HTML character reference in Markdown.
 
 For that validated source snapshot, the `dist` stage writes `dist/`: 934 titles and
 21,596 rows, the shipped manifest's 946 titles and 21,784 rows less the 12

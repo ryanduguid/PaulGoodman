@@ -97,9 +97,11 @@ pub fn window(title: &Json) -> Result<Window<'_>, Exc> {
         });
     }
     let superseded = date(title, "current_version_start")?;
-    if !(start < superseded && superseded <= retrieved) {
+    // The Register ends a version on the day another starts on that same day,
+    // so a compilation superseded the day it starts was in force on no day.
+    if !(start <= superseded && superseded <= retrieved) {
         return Err(Exc::value(format!(
-            "{}: current_version_start must fall after versionStart and on or before retrieved",
+            "{}: current_version_start must fall on or after versionStart and on or before retrieved",
             id(title)
         )));
     }

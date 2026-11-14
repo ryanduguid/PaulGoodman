@@ -213,6 +213,16 @@ fn or<'a>(a: &'a Json, b: &'a Json) -> &'a Json {
     if a.truthy() { a } else { b }
 }
 
+/// A contact `(register id, kind, digest prefix)` and the files holding it.
+type ContactCount = ((String, &'static str, String), usize);
+
+fn count_contact(counts: &mut Vec<ContactCount>, key: (String, &'static str, String)) {
+    match counts.iter_mut().find(|(k, _)| *k == key) {
+        Some(slot) => slot.1 += 1,
+        None => counts.push((key, 1)),
+    }
+}
+
 /// `verify_distribution(distribution, contact_allowlist)`: run every check on
 /// one tree, printing each, and return the labels that failed.
 pub fn verify_distribution(
@@ -334,7 +344,7 @@ pub fn verify_distribution(
 
     let (mut rows, mut bad, mut section_rows, mut rid_mismatch) = (0usize, 0usize, 0usize, 0usize);
     let mut hot = Tally::default();
-    let mut contact_hot: Vec<((String, &'static str, String), usize)> = Vec::new();
+    let mut contact_hot: Vec<ContactCount> = Vec::new();
     let mut private_file_hot = Tally::default();
     let mut kind_counts = Tally::default();
     let (mut rows_by_coll, mut words_by_coll) = (Tally::default(), Tally::default());
@@ -363,6 +373,10 @@ pub fn verify_distribution(
             invalid_inventories.insert(rid.clone());
         }
         let mut unreadable_paths = BTreeSet::new();
+        // The contacts the file scan found in the rows file, and those its
+        // decoded rows hold: each counts once for the file.
+        let (rows_file, mut in_file, mut in_rows) =
+            (pypath::normcase(&p), BTreeSet::new(), BTreeSet::new());
         for title_file in &title_files {
             let injected =
                 PRIVACY_HOOK.with(|h| h.borrow_mut().as_mut().and_then(|hook| hook(title_file)));
@@ -382,10 +396,10 @@ pub fn verify_distribution(
                     }
                     for (kind, digest, _) in contacts {
                         let key = (rid.clone(), kind, digest[..16].to_string());
-                        match contact_hot.iter_mut().find(|(k, _)| *k == key) {
-                            Some(slot) => slot.1 += 1,
-                            None => contact_hot.push((key, 1)),
+                        if pypath::normcase(title_file) == rows_file {
+                            in_file.insert(key.clone());
                         }
+                        count_contact(&mut contact_hot, key);
                     }
                 }
             }
@@ -443,12 +457,19 @@ pub fn verify_distribution(
                 if r.get("section").is_some_and(Json::truthy) {
                     section_rows += 1;
                 }
-                if pii::has_private_person_registration_pair(&pyvalue::points_lossy(&text)) {
+                let (pair, contacts) = pii::privacy_findings_in_row(&r, rid, &approved);
+                if pair {
                     hot.add(pts(rid), 1);
+                }
+                for (kind, digest, _) in contacts {
+                    in_rows.insert((rid.clone(), kind, digest[..16].to_string()));
                 }
             }
             Ok(())
         })();
+        for key in in_rows.difference(&in_file) {
+            count_contact(&mut contact_hot, key.clone());
+        }
         match read {
             Ok(()) => {}
             Err(error) if pii::unreadable(&error) => {

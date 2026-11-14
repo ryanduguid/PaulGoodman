@@ -88,7 +88,7 @@ fn dates_that_cannot_all_be_true_are_refused() {
         with(
             &superseded(),
             "current_version_start",
-            Some("\"2023-09-01\""),
+            Some("\"2023-08-31\""),
         ),
         with(
             &superseded(),
@@ -103,6 +103,23 @@ fn dates_that_cannot_all_be_true_are_refused() {
         let error = as_at::classify(&title, "2026-07-15").unwrap_err();
         assert!(error.is_value(), "{error}");
     }
+}
+
+#[test]
+fn a_compilation_superseded_on_the_day_it_starts_holds_no_date() {
+    // The Register ends a version on the day another starts on that same day:
+    // C1914A00033's compilation 0 runs from 1914-12-21 to 1914-12-21. probe13,
+    // as Python did, can fall back to such a version.
+    let title = with(
+        &superseded(),
+        "current_version_start",
+        Some("\"2023-09-01\""),
+    );
+    assert_eq!(
+        as_at::classify(&title, "2023-08-31").unwrap(),
+        BEFORE_COMPILATION
+    );
+    assert_eq!(as_at::classify(&title, "2023-09-01").unwrap(), SUPERSEDED);
 }
 
 #[test]
