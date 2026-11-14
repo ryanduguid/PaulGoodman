@@ -182,7 +182,7 @@ nested values included, so a JSON escape cannot hide a name, registration
 number or contact.
 `dist` also refuses a title with no rows, and a title name, kept or left out,
 that pairs a person with a registration number or holds an unapproved contact.
-The contact patterns read each text 7 ways: as written; as rendered, with HTML
+The contact patterns read each text 8 ways: as written; as rendered, with HTML
 character references decoded (such as `&#64;`, `&#x40;` or `&commat;` for `@`)
 and then NFKC-normalised, which folds compatibility forms such as a full-width
 `@` or full-width digits; each of those 2 with the characters a reader does not
@@ -190,9 +190,10 @@ see removed, those Unicode marks `Default_Ignorable_Code_Point` or as format
 characters, such as a zero-width space, joiner or non-joiner, word joiner, byte
 order mark, soft hyphen, direction mark, variation selector or tag character;
 each of those 2 with controls other than white space removed as well, such as a
-NUL a JSON escape decodes to; and the rendered text as it shows: in the order
-the Unicode bidirectional algorithm displays it, so a contact written backwards
-after a right-to-left override reads forwards, with both removed and a hyphen,
+NUL a JSON escape decodes to; and the rendered text as it shows, twice, with
+invisible characters removed and then with controls removed as well: in the
+order the Unicode bidirectional algorithm displays it, so a contact written
+backwards after a right-to-left override reads forwards, and with a hyphen,
 non-breaking hyphen, figure dash, en dash or minus sign read as a hyphen-minus.
 A contact any reading finds is reported. Where removing an invisible character
 joins a contact to the letters or digits beside it, the joined contact a reader

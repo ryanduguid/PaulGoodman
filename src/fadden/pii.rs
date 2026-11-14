@@ -131,10 +131,10 @@ fn contact_value(kind: &str, value: &str) -> String {
 /// match in either text with its invisible characters removed ([`INVISIBLE`]),
 /// so a zero-width space does not hide one, then with controls removed too
 /// ([`INVISIBLE_OR_CONTROL`]), so a NUL does not, then in the rendered text as
-/// shown: in display order ([`display_order`]), so a right-to-left override
-/// does not, with both removed and each of [`DASHES`] read as a hyphen-minus,
-/// so a non-breaking hyphen does not. The rendered text is NFKC-normalised
-/// again after a removal. The text as written is still read because NFKC can
+/// shown, in display order ([`display_order`]) with each of [`DASHES`] read as
+/// a hyphen-minus, so neither a right-to-left override nor a non-breaking
+/// hyphen does, with invisible characters removed and then with controls
+/// removed too. The rendered text is NFKC-normalised again after a removal. The text as written is still read because NFKC can
 /// turn a superscript into a digit a pattern refuses to follow, each text is
 /// still read with its invisible characters because removing one can join a
 /// contact to the text after it, and with its controls because a control
@@ -152,18 +152,18 @@ pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
             unchanged => unchanged,
         }
     }
-    let mut shown = composed(INVISIBLE_OR_CONTROL.replace_all(&displayed, ""));
-    if shown.contains(DASHES) {
-        shown = Cow::Owned(shown.replace(DASHES, "-"));
-    }
-    let readings: [&str; 7] = [
+    let shown = |hidden: &Regex| -> String {
+        composed(hidden.replace_all(&displayed, "")).replace(DASHES, "-")
+    };
+    let readings: [&str; 8] = [
         text,
         &rendered,
         &INVISIBLE.replace_all(text, ""),
         &composed(INVISIBLE.replace_all(&rendered, "")),
         &INVISIBLE_OR_CONTROL.replace_all(text, ""),
         &composed(INVISIBLE_OR_CONTROL.replace_all(&rendered, "")),
-        &shown,
+        &shown(&INVISIBLE),
+        &shown(&INVISIBLE_OR_CONTROL),
     ];
     let mut found = fingerprints_as_written(text);
     for (i, reading) in readings.iter().enumerate().skip(1) {
@@ -218,8 +218,10 @@ const DASHES: [char; 4] = ['\u{2010}', '\u{2012}', '\u{2013}', '\u{2212}'];
 /// `text` in the order a renderer shows it, by the Unicode bidirectional
 /// algorithm with each paragraph one line: under a right-to-left override a
 /// contact written backwards shows forwards, and right-to-left marks can show
-/// a contact's parts in another order than they are written. Text with no
-/// right-to-left character or control shows as written.
+/// a contact's parts in another order than they are written. A parenthesis
+/// at a right-to-left level shows mirrored (rule L4), so `(20)` written
+/// backwards shows as `(02)`. Text with no right-to-left character or control
+/// shows as written.
 fn display_order(text: &str) -> Cow<'_, str> {
     use unicode_bidi::{BidiClass, BidiInfo, bidi_class};
     let right_to_left = |c| {
@@ -232,12 +234,26 @@ fn display_order(text: &str) -> Cow<'_, str> {
         return Cow::Borrowed(text);
     }
     let bidi = BidiInfo::new(text, None);
-    let lines = bidi.paragraphs.iter();
-    Cow::Owned(
-        lines
-            .map(|p| bidi.reorder_line(p, p.range.clone()))
-            .collect(),
-    )
+    let mut shown = String::with_capacity(text.len());
+    for paragraph in &bidi.paragraphs {
+        let (levels, runs) = bidi.visual_runs(paragraph, paragraph.range.clone());
+        for run in runs {
+            let run_text = &text[run.clone()];
+            if levels[run.start].is_rtl() {
+                // shortcut: mirrors only the parentheses, the one mirrored
+                // pair the contact patterns use; unicode-bidi has no mirroring
+                // table.
+                shown.extend(run_text.chars().rev().map(|c| match c {
+                    '(' => ')',
+                    ')' => '(',
+                    c => c,
+                }));
+            } else {
+                shown.push_str(run_text);
+            }
+        }
+    }
+    Cow::Owned(shown)
 }
 
 /// `contact_fingerprints(text)` of the Python module: each contact match in

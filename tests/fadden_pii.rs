@@ -274,21 +274,32 @@ fn contacts_broken_by_invisible_characters_are_found() {
 #[test]
 fn a_control_that_separates_a_contact_broken_by_an_invisible_character_still_separates_it() {
     // Removing the control as well as the zero-width space would read
-    // `xalice@example.com`.
+    // `xalice@example.com`, or with a non-breaking hyphen read as a hyphen,
+    // `xalice@example-org.com`.
     let rid = "C2004A00001";
-    let alice = pii::contact_fingerprints("alice@example.com").remove(0);
-    let joined = pii::contact_fingerprints("xalice@example.com").remove(0);
-    let approved = vec![(joined.0.to_string(), joined.1.clone(), rid.to_string())];
-    for text in [
-        "x\u{1c}alice@exa\u{200b}mple.com",
-        "x\u{0}alice@exa\u{200b}mple.com",
+    for (text, plain, joined) in [
+        (
+            "x\u{1c}alice@exa\u{200b}mple.com",
+            "alice@example.com",
+            "xalice@example.com",
+        ),
+        (
+            "x\u{0}alice@exa\u{200b}mple.com",
+            "alice@example.com",
+            "xalice@example.com",
+        ),
+        (
+            "x\u{1c}alice@exa\u{200b}mple\u{2011}org.com",
+            "alice@example-org.com",
+            "xalice@example-org.com",
+        ),
     ] {
-        assert!(pii::contact_fingerprints(text).contains(&alice), "{text:?}");
+        let plain = pii::contact_fingerprints(plain).remove(0);
+        let joined = pii::contact_fingerprints(joined).remove(0);
+        let approved = vec![(joined.0.to_string(), joined.1, rid.to_string())];
+        assert!(pii::contact_fingerprints(text).contains(&plain), "{text:?}");
         let unapproved = pii::unapproved_contact_fingerprints(text, rid, &approved);
-        assert_eq!(
-            unapproved,
-            vec![(alice.0, alice.1.clone(), rid.to_string())]
-        );
+        assert_eq!(unapproved, vec![(plain.0, plain.1, rid.to_string())]);
     }
 }
 
@@ -300,6 +311,8 @@ fn contacts_bidirectional_controls_show_in_another_order_are_found() {
         // A right-to-left override shows these backwards, so forwards.
         ("Write to \u{202e}moc.elpmaxe@enoemos\u{202c}.", &email),
         ("Call \u{202e}8765 4321 20\u{202c}.", &phone),
+        // Shown mirrored, the parentheses read (02) 1234 5678.
+        ("Call \u{202e}8765 4321 (20)\u{202c}.", &phone),
         ("Write to &#x202E;moc.elpmaxe@enoemos&#x202C;.", &email),
         // Right-to-left marks in a right-to-left isolate show the parts in
         // reverse order: someone@example.com.
