@@ -357,7 +357,7 @@ class QuickTests(unittest.TestCase):
                          [("2024-07-01", "2025-03-01")])
 
     def test_windows_overlap_by_the_rule_dist_verify_applies(self) -> None:
-        """The cases of `windows_may_meet_but_not_overlap` in src/fadden/compilations.rs."""
+        """The cases of `windows_may_meet_but_not_overlap` in tests/fadden_dist.rs."""
         cases: list[tuple[list[tuple[str, str | None]], bool]] = [
             ([("2026-07-01", None), ("2025-03-28", "2026-07-01"), ("2024-07-01", "2025-03-28")],
              False),

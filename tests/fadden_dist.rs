@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{Value, json};
-use tax_radar_au::fadden::{dist, dist_verify};
+use tax_radar_au::fadden::{compilations::overlaps, dist, dist_verify};
 use tax_radar_au::pyjson::{self, Json};
 use tax_radar_au::pyos::OsError;
 
@@ -2757,4 +2757,65 @@ fn a_dated_row_is_not_refused_for_a_phone_number_spanning_2_fields() {
     );
     publish(&f);
     assert_eq!(verify(&f).0, 0);
+}
+
+/// One compilation window: its start, and its end unless in force.
+fn window(start: &str, end: Option<&str>) -> (String, Option<String>) {
+    (start.into(), end.map(Into::into))
+}
+
+#[test]
+fn windows_may_meet_but_not_overlap() {
+    let met = vec![
+        window("2026-07-01", None),
+        window("2025-03-28", Some("2026-07-01")),
+        window("2024-07-01", Some("2025-03-28")),
+    ];
+    assert!(overlaps("C2004A03348", met).is_empty());
+    let inside = vec![
+        window("2026-07-01", None),
+        window("2025-03-28", Some("2026-07-02")),
+    ];
+    assert_eq!(
+        overlaps("C2004A03348", inside),
+        [
+            "2 compilations of C2004A03348 overlap: the one from 2026-07-01 starts inside the window of the one from 2025-03-28"
+        ]
+    );
+    // Two compilations from the same start, and one held open while another follows it.
+    assert_eq!(
+        overlaps(
+            "C1",
+            vec![
+                window("2025-01-01", Some("2025-06-01")),
+                window("2025-01-01", Some("2025-03-01"))
+            ]
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        overlaps(
+            "C1",
+            vec![
+                window("2025-01-01", None),
+                window("2025-06-01", Some("2025-09-01"))
+            ]
+        )
+        .len(),
+        1
+    );
+    // An open and a closed window from the same start; test_quick.py holds
+    // these cases for `check_windows`.
+    assert_eq!(
+        overlaps(
+            "C1",
+            vec![
+                window("2025-01-01", Some("2025-03-01")),
+                window("2025-01-01", None)
+            ]
+        )
+        .len(),
+        1
+    );
 }
