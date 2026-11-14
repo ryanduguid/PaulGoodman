@@ -220,6 +220,45 @@ fn reading_the_text_as_rendered_keeps_each_match_as_written_once() {
     assert!(pii::contact_fingerprints("someone&amp;#64;example.com").is_empty());
 }
 
+#[test]
+fn contacts_broken_by_invisible_characters_are_found() {
+    let email = pii::contact_fingerprints("someone@example.com").remove(0);
+    let phone = pii::contact_fingerprints("02 1234 5678").remove(0);
+    let tfn = pii::contact_fingerprints("TFN: 123 456 782").remove(0);
+    let missed: Vec<&str> = [
+        ("some\u{200b}one@example.com", &email),
+        ("someone\u{200c}@example.com", &email),
+        ("someone@exa\u{200d}mple.com", &email),
+        ("someone@example\u{ad}.com", &email),
+        ("02\u{2060} 1234 5678", &phone),
+        ("02 1234\u{feff} 5678", &phone),
+        ("TFN: 123\u{200b} 456 782", &tfn),
+        // References decoded, then the invisible characters removed.
+        ("someone&#64;exam\u{200b}ple.com", &email),
+        ("someone&#8203;@example.com", &email),
+        // As with NFKC alone, the text as written still matters: NFKC turns
+        // the superscript into a digit the phone pattern refuses to follow.
+        ("note\u{b2}02\u{200b} 1234 5678", &phone),
+    ]
+    .into_iter()
+    .filter(|(text, plain)| !pii::contact_fingerprints(text).contains(plain))
+    .map(|(text, _)| text)
+    .collect();
+    assert!(missed.is_empty(), "missed {missed:?}");
+    // Removing an invisible character can join a match to the text after it,
+    // so the match the rendered reading gives is still reported beside it.
+    let joined = pii::contact_fingerprints("someone&#64;example.com\u{200b}au");
+    assert_eq!(joined.len(), 2);
+    assert_eq!(joined[0], email);
+    // The Markdown file scan reads the same way.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("C2004A00001.md");
+    std::fs::write(&path, "Write to someone@exa\u{200d}mple.com.\n").unwrap();
+    let (_, contacts) =
+        pii::privacy_findings_in_file(&path.to_string_lossy(), "C2004A00001", &[]).unwrap();
+    assert_eq!(contacts.len(), 1);
+}
+
 fn policy(dir: &Path, document: Value) -> Result<Vec<pii::Approved>, String> {
     let path = dir.join("policy.json");
     std::fs::write(&path, document.to_string()).unwrap();

@@ -182,12 +182,15 @@ nested values included, so a JSON escape cannot hide a name, registration
 number or contact.
 `dist` also refuses a title with no rows, and a title name, kept or left out,
 that pairs a person with a registration number or holds an unapproved contact.
-The contact patterns read each text twice: as written, and with HTML character
-references decoded (such as `&#64;`, `&#x40;` or `&commat;` for `@`) and then
-NFKC-normalised, which folds compatibility forms such as a full-width `@` or
-full-width digits. A contact either reading finds is reported. They do not
-find a contact split across 2 strings, or one broken by a character NFKC
-keeps, such as a zero-width space. The name and registration
+The contact patterns read each text 4 ways: as written; as rendered, with HTML
+character references decoded (such as `&#64;`, `&#x40;` or `&commat;` for `@`)
+and then NFKC-normalised, which folds compatibility forms such as a full-width
+`@` or full-width digits; and each of those 2 with the characters Unicode marks
+`Default_Ignorable_Code_Point` removed, which a reader does not see, such as a
+zero-width space, joiner or non-joiner, word joiner, byte order mark or soft
+hyphen. A contact any reading finds is reported. They do not find a contact
+split across 2 strings, or one broken by a blank character outside that
+property, such as U+2800 BRAILLE PATTERN BLANK. The name and registration
 number patterns read text as written.
 
 For that validated source snapshot, the `dist` stage writes `dist/`: 934 titles and

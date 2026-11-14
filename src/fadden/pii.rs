@@ -5,8 +5,11 @@
 //! beside registration numbers, and digests of contact details (email, phone,
 //! tax file number) that never carry the identifier itself. The patterns are
 //! the Python module's, unchanged; the Python distribution stages still use it.
+use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
@@ -122,24 +125,34 @@ fn contact_value(kind: &str, value: &str) -> String {
 }
 
 /// `(kind, sha256)` for each contact in `text`, never the identifier: each
-/// match in the text as written, then each further match once HTML character
-/// references are decoded and the text is NFKC-normalised, so a full-width `@`
-/// or an `&#64;` does not hide a contact. The text as written is still read
-/// because NFKC can turn a superscript into a digit a pattern refuses to
-/// follow. Each reading's matches keep their own digests, so the digests
-/// reported are exactly those either reading gives.
+/// match in the text as written, then each further match in the text as
+/// rendered (HTML character references decoded once, then NFKC-normalised),
+/// so a full-width `@` or an `&#64;` does not hide a contact, then each further
+/// match in either text with its invisible characters removed (see
+/// [`visible`]), so a zero-width space does not hide one. The text as written
+/// is still read because NFKC can turn a superscript into a digit a pattern
+/// refuses to follow, and each text is still read with its invisible
+/// characters because removing one can join a contact to the text after it.
+/// Each reading's matches keep their own digests, so the digests reported are
+/// exactly those any reading gives.
 pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
-    let mut found = fingerprints_as_written(text);
     let rendered: String = crate::html::unescape(text).nfkc().collect();
-    if rendered != text {
-        // shortcut: a rendered match pairs with an as-written match of the same
-        // digest, not the same place, so occurrence counts can be off by the
-        // matches one reading alone finds (a contact in mixed forms counts
-        // twice). The digests reported, which the gates test, are exact.
-        // Pairing by source offset would need offsets mapped through decoding
-        // and NFKC.
+    let (visible_text, visible_rendered) = (visible(text), visible(&rendered));
+    let mut read = vec![text];
+    let mut found = fingerprints_as_written(text);
+    for reading in [&rendered, visible_text.as_ref(), visible_rendered.as_ref()] {
+        if read.contains(&reading) {
+            continue;
+        }
+        read.push(reading);
+        // shortcut: a further reading's match pairs with an earlier match of
+        // the same digest, not the same place, so occurrence counts can be off
+        // by the matches one reading alone finds (a contact in mixed forms
+        // counts twice). The digests reported, which the gates test, are exact.
+        // Pairing by source offset would need offsets mapped through decoding,
+        // NFKC and removal.
         let mut unmatched = found.clone();
-        for finding in fingerprints_as_written(&rendered) {
+        for finding in fingerprints_as_written(reading) {
             match unmatched.iter().position(|f| *f == finding) {
                 Some(i) => {
                     unmatched.swap_remove(i);
@@ -149,6 +162,21 @@ pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
         }
     }
     found
+}
+
+/// `text` without the characters Unicode marks `Default_Ignorable_Code_Point`,
+/// which a renderer shows as nothing: the soft hyphen, zero-width space,
+/// non-joiner and joiner, word joiner, byte order mark, direction marks and
+/// controls, variation selectors and tag characters amongst them.
+fn visible(text: &str) -> Cow<'_, str> {
+    // shortcut: the property as the regex crate's Unicode tables give it
+    // (Unicode 16 in regex-syntax 0.8.11). A contact broken by a character
+    // outside it that still renders blank, such as U+2800 BRAILLE PATTERN
+    // BLANK or the interlinear annotation marks U+FFF9 to U+FFFB, is still
+    // missed; widen the class if the corpus shows one.
+    static INVISIBLE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\p{Default_Ignorable_Code_Point}").expect("pattern"));
+    INVISIBLE.replace_all(text, "")
 }
 
 /// `contact_fingerprints(text)` of the Python module: each contact match in
