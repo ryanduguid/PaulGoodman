@@ -131,7 +131,10 @@ def extracted(scratch: Path) -> list[dict[str, Any]]:
 
 
 def check_windows(rows: list[dict[str, Any]]) -> None:
-    """Refuse a build in which 2 compilations of one title cover the same date."""
+    """Refuse a build in which 2 compilations of one title cover the same date.
+
+    `overlaps` in src/fadden/compilations.rs applies the same rule to a distribution.
+    """
     windows: dict[str, list[tuple[str, str | None]]] = {}
     for row in rows:
         windows.setdefault(row["id"], []).append(

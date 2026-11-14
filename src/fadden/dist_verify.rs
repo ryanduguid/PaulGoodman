@@ -6,7 +6,9 @@
 //! Checks the claims the distribution makes about itself rather than trusting
 //! the build that made it: no personal names or unapproved contact details,
 //! no image bytes, every row parses, every title listed in sources.json is
-//! present, and nothing links to a title that was removed.
+//! present, and nothing links to a title that was removed. Each earlier
+//! compilation under `compilations/` must match its listing, digests and
+//! window, without overlapping another compilation of its title.
 //!
 //! The exit status is a three-state contract: 0 every check passed, 1 a check
 //! failed and the distribution is not fit to publish, 2 the verifier could not
@@ -800,6 +802,9 @@ pub fn verify_distribution(
         }
     }
     check(run, "RATES contains no removed-title name", !named, "");
+    for (label, ok, detail) in super::compilations::verify(dist_root, &src, &removed, &approved)? {
+        check(run, label, ok, &detail);
+    }
 
     for step in &walked {
         for name in &step.files {

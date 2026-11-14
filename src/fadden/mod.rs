@@ -13,6 +13,7 @@ pub mod authorities;
 pub mod capture_register;
 pub mod cli;
 pub mod compare_builds;
+pub mod compilations;
 pub mod corpus_paths;
 pub mod discover;
 pub mod dist;
