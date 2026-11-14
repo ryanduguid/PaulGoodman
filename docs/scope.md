@@ -182,9 +182,13 @@ nested values included, so a JSON escape cannot hide a name, registration
 number or contact.
 `dist` also refuses a title with no rows, and a title name, kept or left out,
 that pairs a person with a registration number or holds an unapproved contact.
-The patterns read text as written: they do not find a contact split across 2
-strings, written with a look-alike character such as a full-width `@`, or
-hidden by an HTML character reference in Markdown.
+The contact patterns read each text twice: as written, and with HTML character
+references decoded (such as `&#64;`, `&#x40;` or `&commat;` for `@`) and then
+NFKC-normalised, which folds compatibility forms such as a full-width `@` or
+full-width digits. A contact either reading finds is reported. They do not
+find a contact split across 2 strings, or one broken by a character NFKC
+keeps, such as a zero-width space. The name and registration
+number patterns read text as written.
 
 For that validated source snapshot, the `dist` stage writes `dist/`: 934 titles and
 21,596 rows, the shipped manifest's 946 titles and 21,784 rows less the 12

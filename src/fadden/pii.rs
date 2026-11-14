@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
+use unicode_normalization::UnicodeNormalization;
 
 use super::Exc;
 use crate::py;
@@ -120,10 +121,33 @@ fn contact_value(kind: &str, value: &str) -> String {
     digits
 }
 
-/// `contact_fingerprints(text)`: `(kind, sha256)` for each contact match, in
-/// pattern order, never the identifier. A bare nine-digit run counts only
-/// outside a labelled TFN and with a valid check digit.
+/// `(kind, sha256)` for each contact in `text`, never the identifier: each
+/// match in the text as written, then each further match once HTML character
+/// references are decoded and the text is NFKC-normalised, so a full-width `@`
+/// or an `&#64;` does not hide a contact. The text as written is still read
+/// because NFKC can turn a superscript into a digit a pattern refuses to
+/// follow; a match both readings find counts once.
 pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
+    let mut found = fingerprints_as_written(text);
+    let rendered: String = crate::html::unescape(text).nfkc().collect();
+    if rendered != text {
+        let mut unmatched = found.clone();
+        for finding in fingerprints_as_written(&rendered) {
+            match unmatched.iter().position(|f| *f == finding) {
+                Some(i) => {
+                    unmatched.swap_remove(i);
+                }
+                None => found.push(finding),
+            }
+        }
+    }
+    found
+}
+
+/// `contact_fingerprints(text)` of the Python module: each contact match in
+/// pattern order. A bare nine-digit run counts only outside a labelled TFN and
+/// with a valid check digit.
+fn fingerprints_as_written(text: &str) -> Vec<(&'static str, String)> {
     let possible = |any: &str, flags| pyre::re(any, flags).is_match(text);
     let labelling = possible(TFN_ANY, pyre::I);
     let labelled: Vec<(usize, usize)> = if labelling {

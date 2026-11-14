@@ -149,6 +149,43 @@ fn a_row_scan_decodes_keys_and_nested_values() {
     }
 }
 
+#[test]
+fn contacts_disguised_by_compatibility_forms_or_character_references_are_found() {
+    let email = pii::contact_fingerprints("someone@example.com");
+    let phone = pii::contact_fingerprints("02 1234 5678");
+    let missed: Vec<&str> = [
+        ("someone\u{ff20}example.com", &email),
+        ("someone&#64;example.com", &email),
+        ("someone&#x40;example.com", &email),
+        ("someone&commat;example&period;com", &email),
+        ("\u{ff10}\u{ff12} 1234 5678", &phone),
+    ]
+    .into_iter()
+    .filter(|(text, plain)| pii::contact_fingerprints(text) != **plain)
+    .map(|(text, _)| text)
+    .collect();
+    assert!(missed.is_empty(), "missed {missed:?}");
+    // The Markdown file scan reads the same way.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("C2004A00001.md");
+    std::fs::write(&path, "Write to someone&#64;example.com.\n").unwrap();
+    let (_, contacts) =
+        pii::privacy_findings_in_file(&path.to_string_lossy(), "C2004A00001", &[]).unwrap();
+    assert_eq!(contacts.len(), 1);
+}
+
+#[test]
+fn reading_the_text_as_rendered_keeps_each_match_as_written_once() {
+    let phone = pii::contact_fingerprints("02 1234 5678");
+    // NFKC turns the superscript into a digit the phone pattern refuses to follow.
+    assert_eq!(pii::contact_fingerprints("note\u{b2}02 1234 5678"), phone);
+    // A plain contact in text that normalisation changes is counted once.
+    assert_eq!(
+        pii::contact_fingerprints("Phone\u{a0}02 1234 5678 &amp; ask."),
+        phone
+    );
+}
+
 fn policy(dir: &Path, document: Value) -> Result<Vec<pii::Approved>, String> {
     let path = dir.join("policy.json");
     std::fs::write(&path, document.to_string()).unwrap();
