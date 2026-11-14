@@ -588,7 +588,10 @@ fn law_companion_rulings_and_gst_determinations_carry_their_own_family() {
     for (docid, family) in [
         ("COG/LCR20211/NAT/ATO/00001", "Law Companion Ruling"),
         ("cog/lcr20211/nat/ato/00001", "Law Companion Ruling"),
-        ("COG/PCG20241/NAT/ATO/00001", "Practical Compliance Guideline"),
+        (
+            "COG/PCG20241/NAT/ATO/00001",
+            "Practical Compliance Guideline",
+        ),
         ("GSD/GSTD20201/NAT/ATO/00001", "GST determination"),
         ("GST/GSTR20231/NAT/ATO/00001", "GST ruling or determination"),
     ] {

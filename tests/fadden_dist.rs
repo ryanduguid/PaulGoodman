@@ -12,9 +12,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tax_radar_au::fadden::http::{Failure, Http, Request, Response};
 use tax_radar_au::fadden::{Run, compilations::overlaps, dist, dist_verify, rulings};
-use tax_radar_au::pypath::PyPath;
 use tax_radar_au::pyjson::{self, Json};
 use tax_radar_au::pyos::OsError;
+use tax_radar_au::pypath::PyPath;
 
 const PUBLIC_ID: &str = "C2004A00001";
 const PRIVATE_ID: &str = "C2004A00002";
@@ -3073,7 +3073,10 @@ fn a_rulings_run_is_published_with_its_notice_digests_and_checks() {
     let f = fixture();
     let source = rulings_run(
         &f,
-        vec![(RULING, ruling_page(RULING, "")), (LCR, ruling_page(LCR, ""))],
+        vec![
+            (RULING, ruling_page(RULING, "")),
+            (LCR, ruling_page(LCR, "")),
+        ],
     );
     let dist = publish(&f);
     let published = dist.join("rulings").join(RUN);
@@ -3083,7 +3086,10 @@ fn a_rulings_run_is_published_with_its_notice_digests_and_checks() {
         .collect();
     files.sort();
     // The raw pages, with the ATO site's unscanned header and footer, stay behind.
-    assert_eq!(files, ["LICENCE-NOTICE.md", "manifest.json", "rulings.jsonl"]);
+    assert_eq!(
+        files,
+        ["LICENCE-NOTICE.md", "manifest.json", "rulings.jsonl"]
+    );
     assert_eq!(
         std::fs::read(published.join("rulings.jsonl")).unwrap(),
         std::fs::read(source.join("rulings.jsonl")).unwrap()
@@ -3101,7 +3107,10 @@ fn a_rulings_run_is_published_with_its_notice_digests_and_checks() {
     assert_eq!(listing["runs"][0]["name"], RUN);
     assert_eq!(listing["runs"][0]["rows"], 2);
     for file in &files {
-        assert_eq!(listing["runs"][0]["files"][file], sha256_hex(&published.join(file)));
+        assert_eq!(
+            listing["runs"][0]["files"][file],
+            sha256_hex(&published.join(file))
+        );
     }
     let notice = flat(&std::fs::read_to_string(dist.join("LICENCE-NOTICE.md")).unwrap());
     for needed in [
@@ -3118,10 +3127,17 @@ fn a_rulings_run_is_published_with_its_notice_digests_and_checks() {
         assert_eq!(status(&out, label), "PASS", "{label}");
     }
     // A row changed after publication no longer matches its listed digest.
-    edit(&published.join("rulings.jsonl"), "A fabricated paragraph.", "An edited paragraph.");
+    edit(
+        &published.join("rulings.jsonl"),
+        "A fabricated paragraph.",
+        "An edited paragraph.",
+    );
     let (code, out) = verify(&f);
     assert_eq!(code, 1, "{out}");
-    assert_eq!(status(&out, "rulings files match their listed digests"), "FAIL");
+    assert_eq!(
+        status(&out, "rulings files match their listed digests"),
+        "FAIL"
+    );
 }
 
 #[test]
@@ -3130,7 +3146,8 @@ fn a_ruling_holding_a_contact_stops_the_distribution_and_fails_the_verifier() {
     let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
     let rows = source.join("rulings.jsonl");
     // The stage scans what it captures; this contact came later, behind a JSON escape.
-    let hidden = r"Write to rulings@example.com.au.";
+    // A backslash (code point 92) then `u0040`: JSON's escape for `@`.
+    let hidden = &format!("Write to rulings{}u0040example.com.au.", char::from(92u8));
     edit(&rows, "A fabricated paragraph.", hidden);
     let (code, _, err) = stage(&f, "dist");
     assert_eq!(code, 1, "{err}");
@@ -3144,8 +3161,14 @@ fn a_ruling_holding_a_contact_stops_the_distribution_and_fails_the_verifier() {
     relist(&dist);
     let (code, out) = verify(&f);
     assert_eq!(code, 1, "{out}");
-    assert_eq!(status(&out, "no rulings file names people or contacts"), "FAIL");
-    assert_eq!(status(&out, "rulings files match their listed digests"), "PASS");
+    assert_eq!(
+        status(&out, "no rulings file names people or contacts"),
+        "FAIL"
+    );
+    assert_eq!(
+        status(&out, "rulings files match their listed digests"),
+        "PASS"
+    );
 }
 
 #[test]
@@ -3186,7 +3209,12 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|e| (e["docid"].as_str().unwrap().into(), e["reason"].as_str().unwrap().into()))
+        .map(|e| {
+            (
+                e["docid"].as_str().unwrap().into(),
+                e["reason"].as_str().unwrap().into(),
+            )
+        })
         .collect();
     assert_eq!(reasons.len(), 2, "{reasons:?}");
     assert!(reasons[0].0 == RULING && reasons[0].1.contains("copyright notice of its own"));
@@ -3202,10 +3230,17 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
     // A label its docid contradicts (a Law Companion Ruling captured before the
     // stage told them apart) fails the verifier.
     for file in ["manifest.json", "rulings.jsonl"] {
-        edit(&published.join(file), "Law Companion Ruling", "Practical Compliance Guideline");
+        edit(
+            &published.join(file),
+            "Law Companion Ruling",
+            "Practical Compliance Guideline",
+        );
     }
     relist(&dist);
     let (code, out) = verify(&f);
     assert_eq!(code, 1, "{out}");
-    assert_eq!(status(&out, "every published ruling is under the ATO notice"), "FAIL");
+    assert_eq!(
+        status(&out, "every published ruling is under the ATO notice"),
+        "FAIL"
+    );
 }

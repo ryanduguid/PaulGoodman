@@ -63,8 +63,8 @@ fn read(path: &str) -> Result<Vec<u8>, Exc> {
 }
 
 fn load(path: &str) -> Result<Json, Exc> {
-    let text = String::from_utf8(read(path)?)
-        .map_err(|_| Exc::value(format!("{path} is not UTF-8")))?;
+    let text =
+        String::from_utf8(read(path)?).map_err(|_| Exc::value(format!("{path} is not UTF-8")))?;
     pyjson::loads_standard(&text).map_err(json_error)
 }
 
@@ -95,7 +95,9 @@ fn text<'a>(value: &'a Json, key: &str) -> &'a str {
 pub fn uncovered(document: &Json, rows: &[&Json]) -> Option<String> {
     let docid = text(document, "docid");
     let Some(family) = family_of(docid) else {
-        return Some("not an ATO-authored document family; the ATO notice does not cover it".into());
+        return Some(
+            "not an ATO-authored document family; the ATO notice does not cover it".into(),
+        );
     };
     let labels = std::iter::once(document).chain(rows.iter().copied());
     if let Some(label) = labels.map(|r| text(r, "family")).find(|l| *l != family) {
@@ -104,7 +106,10 @@ pub fn uncovered(document: &Json, rows: &[&Json]) -> Option<String> {
         ));
     }
     let bases = std::iter::once(document).chain(rows.iter().copied());
-    if bases.map(|r| text(r, "licence_basis")).any(|b| !LICENCE_BASES.contains(&b)) {
+    if bases
+        .map(|r| text(r, "licence_basis"))
+        .any(|b| !LICENCE_BASES.contains(&b))
+    {
         return Some("records no ATO reuse notice".into());
     }
     let marked = pyre::re(OWN_COPYRIGHT, pyre::I);
@@ -167,7 +172,13 @@ pub fn copy(root: &str, staging: &str, approved: &[Approved]) -> Result<Option<P
             )));
         }
         let run_target = pypath::join(&target, &name);
-        listed.push(copy_run(&source, &run_target, &name, approved, &mut published)?);
+        listed.push(copy_run(
+            &source,
+            &run_target,
+            &name,
+            approved,
+            &mut published,
+        )?);
     }
     if listed.is_empty() {
         return Err(Exc::Runtime("rulings holds no run".into()));
@@ -234,7 +245,10 @@ fn copy_run(
     }
     pyos::makedirs_new(target)?;
     write_new(&pypath::join(target, "rulings.jsonl"), kept.as_bytes())?;
-    write_new(&pypath::join(target, "manifest.json"), &json_bytes(&manifest))?;
+    write_new(
+        &pypath::join(target, "manifest.json"),
+        &json_bytes(&manifest),
+    )?;
     let notice = read(&child(source, &["LICENCE-NOTICE.md"])?)?;
     write_new(&pypath::join(target, "LICENCE-NOTICE.md"), &notice)?;
     let mut files = Vec::new();
@@ -252,10 +266,16 @@ fn copy_run(
     Ok(Json::obj([
         ("name", Json::str(name)),
         ("fetched_on", Json::str(&fetched_on)),
-        ("documents", Json::Int(iterate_or_empty(manifest.at("documents")).len().into())),
+        (
+            "documents",
+            Json::Int(iterate_or_empty(manifest.at("documents")).len().into()),
+        ),
         ("rows", manifest.at("rows").clone()),
-        ("files", Json::Object(files)),
-        ("left_out", Json::Array(listed_left_out(&manifest, &left_out))),
+        ("files", Json::Object(files.into_iter().collect())),
+        (
+            "left_out",
+            Json::Array(listed_left_out(&manifest, &left_out)),
+        ),
     ]))
 }
 
@@ -286,12 +306,17 @@ fn leave_out(
                     ("docid", Json::str(&docid)),
                     ("reason", Json::str(&reason)),
                 ]));
-                published.left_out.push((name.to_string(), docid.clone(), reason));
+                published
+                    .left_out
+                    .push((name.to_string(), docid.clone(), reason));
                 left_out.insert(docid);
             }
         }
     }
-    let count = rows.iter().filter(|r| !left_out.contains(text(r, "docid"))).count();
+    let count = rows
+        .iter()
+        .filter(|r| !left_out.contains(text(r, "docid")))
+        .count();
     if let Json::Object(pairs) = manifest {
         for (key, value) in pairs.iter_mut() {
             match key.as_str() {
@@ -342,7 +367,11 @@ pub fn verify(dist_root: &str, approved: &[Approved]) -> Result<Vec<Check>, Exc>
         found.stray.push(format!("{FOLDER} has no sources.json"));
         Vec::new()
     };
-    let present = if entry_kind(&folder) == "directory" { names(&folder)? } else { Vec::new() };
+    let present = if entry_kind(&folder) == "directory" {
+        names(&folder)?
+    } else {
+        Vec::new()
+    };
     for entry in &present {
         if entry != "sources.json" && !runs.iter().any(|(n, _)| n == entry) {
             found.stray.push(entry.clone());
@@ -354,10 +383,18 @@ pub fn verify(dist_root: &str, approved: &[Approved]) -> Result<Vec<Check>, Exc>
             found.stray.push(format!("{name} missing"));
             continue;
         }
-        verify_run(&pypath::join(&folder, name), name, run, approved, &mut found)?;
+        verify_run(
+            &pypath::join(&folder, name),
+            name,
+            run,
+            approved,
+            &mut found,
+        )?;
         for left in iterate_or_empty(run.at("left_out")) {
             if !removed.contains(text(left, "docid")) {
-                found.unlisted.push(format!("{name}/{}", text(left, "docid")));
+                found
+                    .unlisted
+                    .push(format!("{name}/{}", text(left, "docid")));
             }
         }
     }
@@ -394,7 +431,9 @@ fn verify_run(
     found: &mut Findings,
 ) -> Result<(), Exc> {
     let entries = names(directory)?;
-    let regular = entries.iter().all(|e| entry_kind(&pypath::join(directory, e)) == "file");
+    let regular = entries
+        .iter()
+        .all(|e| entry_kind(&pypath::join(directory, e)) == "file");
     if entries != RUN_FILES || !regular {
         found.stray.push(format!("{name}: {}", entries.join(" ")));
         return Ok(());
@@ -419,8 +458,12 @@ fn verify_run(
         Err(error) => return Err(error),
     }
     let manifest = load(&pypath::join(directory, "manifest.json"))?;
-    let jsonl = String::from_utf8(read(&pypath::join(directory, "rulings.jsonl"))?).unwrap_or_default();
-    let rows: Vec<Json> = jsonl.lines().filter_map(|l| pyjson::loads_standard(l).ok()).collect();
+    let jsonl =
+        String::from_utf8(read(&pypath::join(directory, "rulings.jsonl"))?).unwrap_or_default();
+    let rows: Vec<Json> = jsonl
+        .lines()
+        .filter_map(|l| pyjson::loads_standard(l).ok())
+        .collect();
     for document in iterate_or_empty(manifest.at("documents")) {
         let docid = text(document, "docid");
         let own: Vec<&Json> = rows.iter().filter(|r| text(r, "docid") == docid).collect();
@@ -437,13 +480,23 @@ fn report(found: &Findings, noticed: bool) -> Vec<Check> {
         (label, items.is_empty(), shown.join(", "))
     }
     vec![
-        check("rulings holds only the listed runs and their files", &found.stray),
+        check(
+            "rulings holds only the listed runs and their files",
+            &found.stray,
+        ),
         check("rulings files match their listed digests", &found.digests),
         check("no rulings file names people or contacts", &found.private),
         check("each rulings run agrees with its manifest", &found.runs),
-        check("every published ruling is under the ATO notice", &found.uncovered),
+        check(
+            "every published ruling is under the ATO notice",
+            &found.uncovered,
+        ),
         check("REMOVED.md lists every ruling left out", &found.unlisted),
-        ("licence notice covers the ATO rulings", noticed, String::new()),
+        (
+            "licence notice covers the ATO rulings",
+            noticed,
+            String::new(),
+        ),
     ]
 }
 
@@ -471,7 +524,11 @@ pub fn notice_section(published: &Published) -> String {
 
 /// REMOVED.md's section on the rulings left out, one line each.
 pub fn removed_lines(published: &Published) -> Vec<String> {
-    let mut lines = vec![String::new(), "## ATO rulings left out".into(), String::new()];
+    let mut lines = vec![
+        String::new(),
+        "## ATO rulings left out".into(),
+        String::new(),
+    ];
     if published.left_out.is_empty() {
         lines.push("No captured document was left out.".into());
         return lines;
@@ -479,7 +536,10 @@ pub fn removed_lines(published: &Published) -> Vec<String> {
     lines.push("| Run | Document | Reason |".into());
     lines.push("|---|---|---|".into());
     for (run, docid, reason) in &published.left_out {
-        lines.push(format!("| {run} | {docid} | {} |", reason.replace('|', "\|")));
+        lines.push(format!(
+            "| {run} | {docid} | {} |",
+            reason.replace('|', r"\|")
+        ));
     }
     lines
 }

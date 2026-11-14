@@ -15,13 +15,13 @@
 use std::cell::RefCell;
 
 use super::compilations;
-use super::rulings_dist;
 use super::corpus_paths::{
     child, corpus_root, iso_date, linked, markdown_text, module_dir, register_id, reject_symlinks,
     relative, require_builder_layout, script_dir_in, write_text,
 };
 use super::dist_verify::{self, LICENCE_EXCLUDED, expected_title_files, verify_distribution};
 use super::pii::{self, Approved, Unapproved};
+use super::rulings_dist;
 use super::{Exc, Run, get, getitem, iterate, json_error};
 use crate::argparse::Exit;
 use crate::py;
@@ -1869,8 +1869,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         )
     };
     let rewritten = match &rulings {
-        Some(published) => format!("{rewritten}
-{}", rulings_dist::notice_section(published)),
+        Some(published) => format!("{rewritten}\n{}", rulings_dist::notice_section(published)),
         None => rewritten,
     };
     if rewritten != notice {
@@ -2142,7 +2141,11 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         ]);
     }
     if let Some(published) = &rulings {
-        lines.extend(rulings_dist::removed_lines(published).iter().map(|l| pts(l)));
+        lines.extend(
+            rulings_dist::removed_lines(published)
+                .iter()
+                .map(|l| pts(l)),
+        );
     }
     let mut removed_md = Vec::new();
     for (i, line) in lines.into_iter().enumerate() {
