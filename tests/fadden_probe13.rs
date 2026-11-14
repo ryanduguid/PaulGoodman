@@ -133,6 +133,19 @@ fn a_version_starting_after_the_current_one_is_not_the_latest() {
 }
 
 #[test]
+fn without_a_current_version_every_published_one_is_a_candidate() {
+    // No current start to compare with: the latest published version, as before.
+    let c = standard();
+    let versions = json!([
+        {"titleId": RID, "start": "2099-12-01T00:00:00", "isCurrent": false, "compilationNumber": "4", "registerId": "C2099C00004"},
+        {"titleId": RID, "start": "2099-01-01T00:00:00", "isCurrent": false, "compilationNumber": "2", "registerId": "C2099C00002"},
+    ]);
+    let (outcome, _, _) = probe(&c, vec![Ok(json!({"value": versions}).to_string())]);
+    outcome.unwrap();
+    assert_eq!(written(&c.module)[0]["latest_doc"], versions[0]);
+}
+
+#[test]
 fn a_title_with_no_published_document_has_no_latest() {
     let c = standard();
     let (outcome, stdout, _) = probe(&c, vec![Ok(r#"{"value": []}"#.into())]);
