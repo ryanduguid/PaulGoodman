@@ -1,3 +1,12 @@
+# Unreleased
+
+- `quick --in-force-on YYYY-07-01`, repeatable, also holds each preset Act's compilation in force on that 1 July under `compilations/<date>/`, for answers about past income years, and `versions --in-force-on YYYY-MM-DD` resolves those versions. A title with nothing earlier to fetch is listed with its reason and left out. The build stops before publishing if a date lacks rows for a title it fetched or 2 compilations of a title have overlapping windows. The search index, `finalize` and `as_at` read only the current compilations. `versions` now refuses arguments it used to ignore. Without the option the build is unchanged (#305).
+- `dist` carries each date's `markdown/` to `dist/compilations/<date>/` with a `sources.json` giving each compilation's source, window, retrieval date and file digests, and lists the titles it leaves out; `dist_verify` adds 8 checks on them. `quick` treats an open and a closed window from the same start as an overlap, where it raised `TypeError` (#307).
+- The privacy checks in `dist` and `dist_verify` read every decoded string and number in a row, keys and nested values included, so a JSON escape cannot hide a contact or a name beside a registration number. `dist` refuses a title with no rows and a listed title name that holds either. `as_at` accepts a compilation superseded on the day it starts, which holds no date (#308).
+- The contact scan also reads each text with HTML character references decoded and NFKC-normalised, so a full-width `@`, full-width digits or a reference such as `&#64;` no longer hides an email address or phone number wherever the scan runs, `dist` and `dist_verify` included (#309).
+- `probe13` no longer falls back to a version that starts after the current one, which gave the root row a window ending before it began (#306).
+- CI runs the samples demo on a debug build; pull requests skip the release compile, which pushes to `main` still run (#304).
+
 # v0.5.0
 
 This candidate contains the corpus builder source. It excludes generated legislation and live evidence.
