@@ -132,6 +132,22 @@ fn tfn_gate_sees_abbreviated_labels_and_bare_nine_digit_runs() {
     }
 }
 
+#[test]
+fn a_row_scan_decodes_keys_and_nested_values() {
+    // Each line hides its finding behind JSON escapes, where a scan of the
+    // file cannot see it.
+    for line in [
+        r#"{"text": "ok", "notes": {"to": "alice\u0040example.org"}}"#,
+        r#"{"text": "ok", "notes": ["see", ["alice\u0040example.org"]]}"#,
+        r#"{"text": "ok", "alice\u0040example.org": null}"#,
+        r#"{"text": "ok", "notes": [{"Alice\u0020Smith": "1234\u0035678"}]}"#,
+    ] {
+        let row = tax_radar_au::pyjson::loads_standard(line).unwrap();
+        let (pair, contacts) = pii::privacy_findings_in_row(&row, "C2004A00001", &[]);
+        assert!(pair || !contacts.is_empty(), "{line}");
+    }
+}
+
 fn policy(dir: &Path, document: Value) -> Result<Vec<pii::Approved>, String> {
     let path = dir.join("policy.json");
     std::fs::write(&path, document.to_string()).unwrap();

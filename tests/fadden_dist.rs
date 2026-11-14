@@ -969,6 +969,14 @@ fn refused(f: &Fixture, needle: &str) -> String {
     err
 }
 
+/// `refused`, over an existing distribution the refusal leaves as it was.
+fn refused_keeping_dist(f: &Fixture, needle: &str) {
+    let marker = with_existing_dist(f);
+    refused(f, needle);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me");
+    assert!(managed_paths(f).is_empty());
+}
+
 fn empty_policy(f: &Fixture) {
     std::fs::write(
         f.build.join("pii_contact_allowlist.json"),
@@ -2787,6 +2795,15 @@ fn a_root_row_hiding_a_contact_or_a_name_behind_json_escapes_is_refused() {
     write(&public_rows(&f.root), &format!("{line}\n"));
     refused(&f, "no row names private individuals");
     assert!(!f.dist().exists());
+    // The same email address in a nested value.
+    let f = fixture();
+    let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                     "kind": "section", "text": "Write to us.", "notes": [{"to": "alice@example.org"}]});
+    write(
+        &public_rows(&f.root),
+        &format!("{}\n", row.to_string().replace('@', "\\u0040")),
+    );
+    refused_keeping_dist(&f, "no unapproved contact identifiers");
 }
 
 #[test]
@@ -2807,21 +2824,19 @@ fn a_listed_title_name_naming_a_person_or_holding_a_contact_is_refused() {
     rewrite(&f.root.join("sources.json"), |v| {
         v["titles"][0]["name"] = json!("Public Tax Act (write to alice@example.org)");
     });
-    refused(
+    refused_keeping_dist(
         &f,
         "title name names a private person or holds an unapproved contact",
     );
-    assert!(!f.dist().exists());
     // A left-out root title's name holding a phone number.
     let f = fixture();
     rewrite(&f.build.join("pii_flagged.json"), |v| {
         v[0]["name"] = json!("Private Disciplinary Register, call 0412 345 678");
     });
-    refused(
+    refused_keeping_dist(
         &f,
         "title name names a private person or holds an unapproved contact",
     );
-    assert!(!f.dist().exists());
     // A dated title's name pairing a person with a registration number.
     let f = with_compilation();
     rewrite(
@@ -2832,11 +2847,10 @@ fn a_listed_title_name_naming_a_person_or_holding_a_contact_is_refused() {
             .join("manifest_md.json"),
         |v| v[0]["name"] = json!("Jane Smith 12345678"),
     );
-    refused(
+    refused_keeping_dist(
         &f,
         "title name names a private person or holds an unapproved contact",
     );
-    assert!(!f.dist().exists());
 }
 
 #[test]
@@ -2844,12 +2858,10 @@ fn a_listed_title_with_no_rows_is_refused() {
     for empty in ["", "\n \n"] {
         let f = fixture();
         write(&public_rows(&f.root), empty);
-        refused(&f, "listed title C2004A00001 has no rows in sections.jsonl");
-        assert!(!f.dist().exists());
+        refused_keeping_dist(&f, "listed title C2004A00001 has no rows in sections.jsonl");
         let f = with_compilation();
         write(&public_rows(&f.root.join("compilations").join(ON)), empty);
-        refused(&f, "listed title C2004A00001 has no rows in sections.jsonl");
-        assert!(!f.dist().exists());
+        refused_keeping_dist(&f, "listed title C2004A00001 has no rows in sections.jsonl");
     }
 }
 

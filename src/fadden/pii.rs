@@ -340,35 +340,44 @@ pub fn unapproved_contact_fingerprints(
 }
 
 /// A JSON row's privacy findings, as `privacy_findings_in_file` gives a file's:
-/// whether its decoded top-level strings pair a name with a registration number,
-/// across fields as the file scan would, and their unapproved contacts. JSON
-/// escapes can hide either from the file scan. Contacts are sought in each
-/// string alone: joined, the end of one and the start of the next can read as
-/// a phone number.
+/// whether its decoded strings, keys and nested values included, pair a name
+/// with a registration number, across fields as the file scan would, and their
+/// unapproved contacts. JSON escapes can hide either from the file scan.
+/// Contacts are sought in each string alone: joined, the end of one and the
+/// start of the next can read as a phone number.
 pub fn privacy_findings_in_row(
     row: &Json,
     register_id: &str,
     approved: &[Approved],
 ) -> (bool, Vec<Unapproved>) {
-    let Json::Object(fields) = row else {
-        return (false, Vec::new());
-    };
+    let mut strings = Vec::new();
+    decoded_strings(row, &mut strings);
     let (mut names, mut numbers, mut contacts) = (false, false, Vec::new());
-    for (_, value) in fields {
-        let Json::Str(s) = value else { continue };
-        let text = pyvalue::points_lossy(&s.code_points());
-        let (n, r) = private_person_registration_details(&text);
+    for text in &strings {
+        let (n, r) = private_person_registration_details(text);
         names |= !n.is_empty();
         numbers |= !r.is_empty();
-        contacts.extend(unapproved_contact_fingerprints(
-            &text,
-            register_id,
-            approved,
-        ));
+        contacts.extend(unapproved_contact_fingerprints(text, register_id, approved));
     }
     contacts.sort();
     contacts.dedup();
     (names && numbers, contacts)
+}
+
+/// Every string in a JSON value, keys included, decoded.
+fn decoded_strings(value: &Json, out: &mut Vec<String>) {
+    let decode = |s: &pyjson::PyStr| pyvalue::points_lossy(&s.code_points());
+    match value {
+        Json::Str(s) => out.push(decode(s)),
+        Json::Array(items) => items.iter().for_each(|item| decoded_strings(item, out)),
+        Json::Object(fields) => {
+            for (key, item) in fields {
+                out.push(decode(key));
+                decoded_strings(item, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Whether a privacy check could not read a file: `OSError` or `UnicodeError`.
