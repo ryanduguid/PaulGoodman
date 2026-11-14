@@ -2571,3 +2571,135 @@ fn the_verifier_needs_the_root_window_of_a_title_with_earlier_compilations() {
         "{out}"
     );
 }
+
+/// A Register title under a restrictive copyright notice (AASB 112).
+const LICENSED_ID: &str = "F2015L01601";
+
+/// `with_compilation`, its dated manifest also listing `rid` with the files `md` holds.
+fn with_dated_title(rid: &str, md: &str) -> Fixture {
+    let f = with_compilation();
+    let dated = f.root.join("compilations").join(ON);
+    let manifest = dated.join("build").join("manifest_md.json");
+    let mut rows = read_json(&manifest);
+    let mut row = rows[0].clone();
+    row["id"] = json!(rid);
+    rows.as_array_mut().unwrap().push(row);
+    write(&manifest, &rows.to_string());
+    let title = dated.join("markdown").join(rid);
+    let row = json!({"register_id": rid, "section": "1", "text": "Text.",
+                     "compilation_date": "2025-03-28", "superseded_from": "2026-07-01",
+                     "version_is_current": false});
+    write(&title.join("sections.jsonl"), &format!("{row}\n"));
+    write(&title.join(format!("{rid}.md")), md);
+    f
+}
+
+#[test]
+fn a_licence_excluded_title_in_a_dated_manifest_is_left_out_for_its_licence() {
+    let f = with_dated_title(LICENSED_ID, "# AASB 112\n");
+    // Flagged by the date's scan as well: the licence reason wins.
+    write(
+        &f.root
+            .join("compilations")
+            .join(ON)
+            .join("build")
+            .join("pii_flagged.json"),
+        &json!([{"register_id": LICENSED_ID, "name": "AASB 112"}]).to_string(),
+    );
+    let output = publish(&f);
+    let dated = output.join("compilations").join(ON);
+    assert_eq!(names(&dated.join("markdown")), [PUBLIC_ID]);
+    let listing = read_json(&dated.join("sources.json"));
+    let licensed: Vec<&Value> = listing["excluded_titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["register_id"] == LICENSED_ID)
+        .collect();
+    assert_eq!(licensed.len(), 1, "{listing}");
+    assert_eq!(
+        licensed[0]["reason"],
+        "restrictive copyright notice; see REMOVED.md"
+    );
+    assert_eq!(verify(&f).0, 0);
+}
+
+#[test]
+fn dist_refuses_a_dated_title_it_cannot_safely_copy() {
+    // Named people with registration numbers, in a title no scan flagged.
+    let f = with_dated_title("C2004A00003", &format!("# Register\n{ALL_CAPS_ROW}\n"));
+    refused(&f, "private-person registration pairs");
+    assert!(!f.dist().exists());
+    // A file the title's listing does not name.
+    let f = with_compilation();
+    let title = f
+        .root
+        .join("compilations")
+        .join(ON)
+        .join("markdown")
+        .join(PUBLIC_ID);
+    write(&title.join("notes.txt"), "not listed\n");
+    refused(&f, "unexpected file inventory");
+    assert!(!f.dist().exists());
+    // A manifest id that is a path rather than a Register id.
+    for id in ["../C2004A00001", "/tmp/C2004A00001", r"C:\C2004A00001"] {
+        let f = with_compilation();
+        let manifest = f
+            .root
+            .join("compilations")
+            .join(ON)
+            .join("build")
+            .join("manifest_md.json");
+        let mut rows = read_json(&manifest);
+        rows[0]["id"] = json!(id);
+        write(&manifest, &rows.to_string());
+        refused(&f, "invalid Federal Register identifier");
+        assert!(!f.dist().exists(), "{id}");
+    }
+}
+
+#[test]
+fn the_verifier_refuses_a_licence_excluded_title_in_a_dated_folder() {
+    let f = with_compilation();
+    let output = publish(&f);
+    let dated = output.join("compilations").join(ON);
+    let title = dated.join("markdown").join(LICENSED_ID);
+    write(&title.join(format!("{LICENSED_ID}.md")), "# AASB 112\n");
+    write(&title.join("sections.jsonl"), "");
+    rewrite(&dated.join("sources.json"), |v| {
+        let mut listed = v["titles"][0].clone();
+        listed["register_id"] = json!(LICENSED_ID);
+        v["titles"].as_array_mut().unwrap().push(listed);
+    });
+    let (code, out) = verify(&f);
+    assert_eq!(
+        (code, status(&out, COMPILATION_LABELS[5])),
+        (1, "FAIL".to_string()),
+        "{out}"
+    );
+}
+
+/// A sections.jsonl line for `rid` whose text, once decoded, names people with
+/// registration numbers; JSON escapes hide each name from a scan of the file.
+fn escaped_private_row(rid: &str) -> String {
+    let row = json!({"register_id": rid, "section": "1", "text": ALL_CAPS_ROW,
+                     "compilation_date": "2025-03-28", "superseded_from": "2026-07-01",
+                     "version_is_current": false});
+    // Only the text holds ", ": the name pattern needs whitespace after the comma.
+    format!("{}\n", row.to_string().replace(", ", ",\\u0020"))
+}
+
+#[test]
+fn a_dated_row_naming_people_is_refused_as_a_root_row_is() {
+    let rows = |root: &Path| root.join("markdown").join(PUBLIC_ID).join("sections.jsonl");
+    let f = fixture();
+    write(&rows(&f.root), &escaped_private_row(PUBLIC_ID));
+    refused(&f, "no row names private individuals");
+    let f = with_compilation();
+    write(
+        &rows(&f.root.join("compilations").join(ON)),
+        &escaped_private_row(PUBLIC_ID),
+    );
+    refused(&f, COMPILATION_LABELS[3]);
+    assert!(!f.dist().exists());
+}

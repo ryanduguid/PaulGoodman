@@ -464,7 +464,8 @@ fn same_object(a: &Json, b: &Json) -> bool {
         })
 }
 
-/// Whether every row of a dated title names it and carries its window.
+/// Whether every row of a dated title names it, carries its window and names
+/// no private person with a registration number.
 fn verify_rows(
     directory: &str,
     rid: &str,
@@ -488,9 +489,17 @@ fn verify_rows(
                 && row.get("superseded_from").and_then(Json::as_str) == Some(end)
                 && matches!(row.get("version_is_current"), Some(Json::Bool(false)))
         };
-        if !pyjson::loads_standard(&line).is_ok_and(|row| carries(&row)) {
+        let Some(row) = pyjson::loads_standard(&line).ok().filter(carries) else {
             found.rows.insert(label.to_string());
             return Ok(());
+        };
+        // dist_verify's row check for the root titles: JSON escapes can hide a
+        // name from the file scan, but not from the decoded text.
+        if let Some(Json::Str(text)) = row.get("text") {
+            let text = crate::pyvalue::points_lossy(&text.code_points());
+            if pii::has_private_person_registration_pair(&text) {
+                found.private.insert(label.to_string());
+            }
         }
     }
     Ok(())
@@ -535,6 +544,16 @@ mod tests {
             overlaps(
                 "C1",
                 vec![w("2025-01-01", None), w("2025-06-01", Some("2025-09-01"))]
+            )
+            .len(),
+            1
+        );
+        // An open and a closed window from the same start; test_quick.py holds
+        // these cases for `check_windows`.
+        assert_eq!(
+            overlaps(
+                "C1",
+                vec![w("2025-01-01", Some("2025-03-01")), w("2025-01-01", None)]
             )
             .len(),
             1
