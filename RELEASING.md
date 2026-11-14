@@ -17,7 +17,7 @@ The one exception is a corpus snapshot: an archive holding only a `dist/` tree b
 
 - `python -m fadden dist_verify` exits 0 on that tree, and again on a tree unpacked from the archive being attached.
 - The archive's SHA-256 is in the release notes and in a `SHA256SUMS` asset beside it.
-- The release notes say the asset is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) by the Federal Register of Legislation, not under this repository's licence, and carry the Register's attribution for changed content: "Based on content from the Federal Register of Legislation at [full date of download]. For the latest information on Australian Government legislation please go to https://www.legislation.gov.au." They name each title with its Register link and compilation date, say it is not the authorised text and imply no endorsement by the Register.
+- The release notes say the asset is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) by the Federal Register of Legislation, not under this repository's licence, and carry the Register's attribution for changed content: "Based on content from the Federal Register of Legislation at [full date of download]. For the latest information on Australian Government legislation please go to https://www.legislation.gov.au." They name each title, and each earlier compilation under `compilations/`, with its Register link and compilation date, say it is not the authorised text and imply no endorsement by the Register.
 - Every source in the snapshot has had its licence terms read at the publisher's site for that release.
 - A human has authorised that release, as for any other.
 

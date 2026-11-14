@@ -31,8 +31,8 @@ const KEYWORDS: [&str; 5] = [
     "Customs Tariff",
     "Medicare Levy",
 ];
-const LICENCE: &str = "CC BY 4.0";
-const LICENCE_URL: &str = "https://creativecommons.org/licenses/by/4.0/";
+pub(super) const LICENCE: &str = "CC BY 4.0";
+pub(super) const LICENCE_URL: &str = "https://creativecommons.org/licenses/by/4.0/";
 const REGISTER: &str = "https://www.legislation.gov.au";
 
 const ATTR_UNCHANGED: &str = r#"Sourced from the Federal Register of Legislation at %s. For the latest information on Australian Government law please go to https://www.legislation.gov.au"#;

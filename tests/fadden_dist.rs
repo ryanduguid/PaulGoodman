@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{Value, json};
-use tax_radar_au::fadden::{dist, dist_verify};
+use tax_radar_au::fadden::{compilations::overlaps, dist, dist_verify};
 use tax_radar_au::pyjson::{self, Json};
 use tax_radar_au::pyos::OsError;
 
@@ -2208,4 +2208,614 @@ fn the_verifier_refuses_a_readme_describing_epubs() {
             "{claim}\n{out}"
         );
     }
+}
+
+const ON: &str = "2025-07-01";
+const COMPILATION_LABELS: [&str; 8] = [
+    "compilations holds only the listed dates and their files",
+    "each dated folder holds its listed titles only",
+    "compilation files match their listed digests",
+    "no compilation file names people or unapproved contacts",
+    "compilation rows carry their listed window",
+    "no removed title in a dated folder",
+    "compilation windows hold their date, without overlap",
+    "licence notice covers the earlier compilations",
+];
+
+/// The fixture with `quick --in-force-on 2025-07-01`'s folder: the public Act's
+/// compilation in force then, the private register's, and the build and EPUB
+/// files a distribution leaves behind. The root's public Act starts 2026-07-01.
+fn with_compilation() -> Fixture {
+    let f = fixture();
+    let mut sources = read_json(&f.root.join("sources.json"));
+    sources["titles"][0]["compilation_date"] = json!("2026-07-01");
+    write(&f.root.join("sources.json"), &sources.to_string());
+    let dated = f.root.join("compilations").join(ON);
+    let mut manifest = Vec::new();
+    for (rid, name, collection) in [
+        (PUBLIC_ID, PUBLIC_NAME, "Act"),
+        (PRIVATE_ID, PRIVATE_NAME, "NotifiableInstrument"),
+    ] {
+        manifest.push(json!({
+            "id": rid, "name": name, "collection": collection, "versionStart": "2025-03-28",
+            "current_version_start": "2026-07-01", "version_is_current": false, "compilationNumber": "65",
+            "compilationRegisterId": "C2025C00288", "retrieved": "2026-11-14", "endnotes": false,
+            "sourceUrl": format!("https://www.legislation.gov.au/{rid}/2025-03-28/2025-03-28/text/original/epub"),
+        }));
+        let row = json!({"register_id": rid, "act": name, "collection": collection, "section": "1",
+                         "heading": "Earlier rate", "kind": "section", "text": "The earlier rate was 9%.",
+                         "compilation_date": "2025-03-28", "superseded_from": "2026-07-01",
+                         "version_is_current": false});
+        let title = dated.join("markdown").join(rid);
+        write(&title.join("sections.jsonl"), &format!("{row}\n"));
+        write(&title.join(format!("{rid}.md")), &format!("# {name}\n"));
+        write(
+            &dated.join("epub").join(format!("{rid}.epub")),
+            "epub bytes",
+        );
+    }
+    write(
+        &dated.join("build").join("manifest_md.json"),
+        &Value::Array(manifest).to_string(),
+    );
+    write(&dated.join("build").join("pii_flagged.json"), "[]");
+    f
+}
+
+fn names(path: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(path)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
+}
+
+fn dated_md(dist: &Path) -> PathBuf {
+    dist.join("compilations")
+        .join(ON)
+        .join("markdown")
+        .join(PUBLIC_ID)
+        .join(format!("{PUBLIC_ID}.md"))
+}
+
+#[test]
+fn earlier_compilations_ship_with_their_provenance_and_pass_the_verifier() {
+    use sha2::{Digest, Sha256};
+    let f = with_compilation();
+    let output = publish(&f);
+    let dated = output.join("compilations").join(ON);
+    assert_eq!(names(&output.join("compilations")), [ON]);
+    assert_eq!(names(&dated), ["markdown", "sources.json"]);
+    assert_eq!(names(&dated.join("markdown")), [PUBLIC_ID]);
+    // The reader's dated layout: compilations/<date>/markdown/<id>/sections.jsonl,
+    // each row carrying its window.
+    let rows = dated
+        .join("markdown")
+        .join(PUBLIC_ID)
+        .join("sections.jsonl");
+    let row: Value = serde_json::from_str(&std::fs::read_to_string(rows).unwrap()).unwrap();
+    assert_eq!(
+        (
+            &row["compilation_date"],
+            &row["superseded_from"],
+            &row["version_is_current"]
+        ),
+        (&json!("2025-03-28"), &json!("2026-07-01"), &json!(false))
+    );
+    let listing = read_json(&dated.join("sources.json"));
+    assert_eq!(listing["in_force_on"], ON);
+    assert_eq!(listing["licence"], "CC BY 4.0");
+    let title = &listing["titles"][0];
+    let source = format!(
+        "https://www.legislation.gov.au/{PUBLIC_ID}/2025-03-28/2025-03-28/text/original/epub"
+    );
+    for (field, value) in [
+        ("register_id", json!(PUBLIC_ID)),
+        ("compilation_register_id", json!("C2025C00288")),
+        ("compilation_date", json!("2025-03-28")),
+        ("superseded_from", json!("2026-07-01")),
+        ("retrieved", json!("2026-11-14")),
+        ("is_authorised", Value::Null),
+        ("source_url", json!(source)),
+    ] {
+        assert_eq!(title[field], value, "{field}");
+    }
+    let md = std::fs::read(dated_md(&output)).unwrap();
+    let digest: String = Sha256::digest(&md)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(title["files"][format!("{PUBLIC_ID}.md")], json!(digest));
+    assert_eq!(listing["titles"].as_array().unwrap().len(), 1);
+    assert_eq!(listing["excluded_titles"][0]["register_id"], PRIVATE_ID);
+    assert_eq!(
+        read_json(&output.join("sources.json"))["compilations"],
+        json!([ON])
+    );
+    let notice = std::fs::read_to_string(output.join("LICENCE-NOTICE.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert!(
+        notice.contains("\n## Earlier compilations\n") && notice.contains(ON),
+        "{notice}"
+    );
+    let removed = std::fs::read_to_string(output.join("REMOVED.md")).unwrap();
+    assert!(removed.contains("## Earlier compilations"), "{removed}");
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    for label in COMPILATION_LABELS {
+        assert_eq!(status(&out, label), "PASS", "{label}");
+    }
+}
+
+#[test]
+fn a_title_the_dates_own_scan_flags_is_left_out_and_listed() {
+    let f = with_compilation();
+    let flagged = f.root.join("compilations").join(ON).join("build");
+    write(
+        &flagged.join("pii_flagged.json"),
+        &json!([{"register_id": PUBLIC_ID, "name": PUBLIC_NAME}]).to_string(),
+    );
+    let output = publish(&f);
+    let dated = output.join("compilations").join(ON);
+    assert!(names(&dated.join("markdown")).is_empty());
+    let listing = read_json(&dated.join("sources.json"));
+    assert_eq!(listing["titles"], json!([]));
+    let excluded: Vec<&Value> = listing["excluded_titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| &e["register_id"])
+        .collect();
+    assert_eq!(excluded, [&json!(PUBLIC_ID), &json!(PRIVATE_ID)]);
+    assert_eq!(verify(&f).0, 0);
+}
+
+#[test]
+fn a_corpus_without_compilations_publishes_as_before() {
+    let f = fixture();
+    let output = publish(&f);
+    assert!(!output.join("compilations").exists());
+    assert!(
+        read_json(&output.join("sources.json"))
+            .get("compilations")
+            .is_none()
+    );
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("compilation"), "{out}");
+}
+
+/// A change to a dated folder, or to a published distribution.
+type DatedChange = fn(&Path);
+
+/// A change to a manifest or listing.
+type JsonChange = fn(&mut Value);
+
+fn rewrite(path: &Path, change: JsonChange) {
+    let mut value = read_json(path);
+    change(&mut value);
+    write(path, &value.to_string());
+}
+
+#[test]
+fn dist_refuses_a_dated_folder_it_cannot_list() {
+    let cases: [(&str, DatedChange); 7] = [
+        ("compilations/2025-07-01 has no markdown directory", |d| {
+            std::fs::remove_dir_all(d.join("markdown")).unwrap();
+        }),
+        ("compilations/latest is not named as a date", |d| {
+            std::fs::create_dir(d.parent().unwrap().join("latest")).unwrap();
+        }),
+        (
+            "compilations/2025-07-01/markdown/C2004A00003 is not in that date's manifest_md.json",
+            |d| {
+                write(
+                    &d.join("markdown")
+                        .join("C2004A00003")
+                        .join("sections.jsonl"),
+                    "{}\n",
+                )
+            },
+        ),
+        ("manifest_md.json", |d| {
+            std::fs::remove_file(d.join("build").join("manifest_md.json")).unwrap();
+        }),
+        ("pii_flagged.json", |d| {
+            std::fs::remove_file(d.join("build").join("pii_flagged.json")).unwrap();
+        }),
+        (
+            "manifest row C2004A00001 is not in force then: it runs from 2025-08-01 to 2026-07-01",
+            |d| {
+                rewrite(&d.join("build").join("manifest_md.json"), |r| {
+                    r[0]["versionStart"] = json!("2025-08-01");
+                });
+            },
+        ),
+        ("manifest_md.json lists C2004A00001 twice", |d| {
+            rewrite(&d.join("build").join("manifest_md.json"), |r| {
+                let first = r[0].clone();
+                r.as_array_mut().unwrap().push(first);
+            });
+        }),
+    ];
+    for (needle, change) in cases {
+        let f = with_compilation();
+        change(&f.root.join("compilations").join(ON));
+        refused(&f, needle);
+        assert!(!f.dist().exists(), "{needle}");
+    }
+    let rows: [(&str, JsonChange); 4] = [
+        (
+            "manifest row C2004A00001 has no current_version_start",
+            |r| {
+                r[0].as_object_mut()
+                    .unwrap()
+                    .remove("current_version_start");
+            },
+        ),
+        (
+            "manifest row C2004A00001 is not marked as an earlier compilation",
+            |r| r[0]["version_is_current"] = json!(true),
+        ),
+        ("manifest row C2004A00001 has no sourceUrl", |r| {
+            r[0]["sourceUrl"] = Value::Null;
+        }),
+        ("manifest row C2004A00001 has an invalid retrieved", |r| {
+            r[0]["retrieved"] = json!("yesterday");
+        }),
+    ];
+    for (needle, change) in rows {
+        let f = with_compilation();
+        let dated = f.root.join("compilations").join(ON);
+        rewrite(&dated.join("build").join("manifest_md.json"), change);
+        refused(&f, needle);
+    }
+}
+
+#[test]
+fn the_verifier_refuses_each_change_to_a_published_compilation() {
+    let cases: [(&str, DatedChange); 9] = [
+        (COMPILATION_LABELS[0], |d| {
+            std::fs::create_dir(d.join("compilations").join("2024-07-01")).unwrap();
+        }),
+        (COMPILATION_LABELS[0], |d| {
+            let build = d.join("compilations").join(ON).join("build");
+            write(&build.join("manifest_md.json"), "[]");
+        }),
+        (COMPILATION_LABELS[0], |d| {
+            std::fs::remove_dir_all(d.join("compilations").join(ON).join("markdown")).unwrap();
+        }),
+        (COMPILATION_LABELS[0], |d| {
+            rewrite(&d.join("sources.json"), |v| {
+                v.as_object_mut().unwrap().remove("compilations");
+            });
+        }),
+        (COMPILATION_LABELS[1], |d| {
+            let markdown = d.join("compilations").join(ON).join("markdown");
+            write(&markdown.join("C2004A00003").join("sections.jsonl"), "{}\n");
+        }),
+        (COMPILATION_LABELS[2], |d| {
+            write(&dated_md(d), "# Changed after listing\n");
+        }),
+        (COMPILATION_LABELS[3], |d| {
+            write(&dated_md(d), &format!("# {PUBLIC_NAME}\n{ALL_CAPS_ROW}\n"));
+        }),
+        (COMPILATION_LABELS[5], |d| {
+            rewrite(&d.join("sources.json"), |v| {
+                v["excluded_titles"].as_array_mut().unwrap().push(json!({
+                    "register_id": PUBLIC_ID, "name": PUBLIC_NAME,
+                    "reason": "names private individuals; see REMOVED.md"
+                }));
+            });
+        }),
+        (COMPILATION_LABELS[7], |d| {
+            write(&d.join("LICENCE-NOTICE.md"), "licence\n");
+        }),
+    ];
+    let listings: [(&str, JsonChange); 5] = [
+        // The folder now says it excludes a title it publishes.
+        (COMPILATION_LABELS[5], |v| {
+            let title = v["titles"][0].clone();
+            v["excluded_titles"].as_array_mut().unwrap().push(title);
+        }),
+        // The folder now claims another date.
+        (COMPILATION_LABELS[6], |v| {
+            v["in_force_on"] = json!("2026-07-01")
+        }),
+        // The row says it starts 2025-03-28; its listing now says a day later.
+        (COMPILATION_LABELS[4], |v| {
+            v["titles"][0]["compilation_date"] = json!("2025-03-29");
+        }),
+        // Its window now runs a day into the root's current compilation.
+        (COMPILATION_LABELS[6], |v| {
+            v["titles"][0]["superseded_from"] = json!("2026-07-02");
+        }),
+        // Its window no longer holds the folder's date.
+        (COMPILATION_LABELS[6], |v| {
+            v["titles"][0]["superseded_from"] = json!("2025-06-30");
+        }),
+    ];
+    let changes = cases.iter().map(|(label, change)| (*label, Ok(*change)));
+    let changes = changes.chain(
+        listings
+            .iter()
+            .map(|(label, change)| (*label, Err(*change))),
+    );
+    for (label, change) in changes {
+        let f = with_compilation();
+        let output = publish(&f);
+        assert_eq!(status(&verify(&f).1, label), "PASS");
+        match change {
+            Ok(change) => change(&output),
+            Err(change) => rewrite(
+                &output.join("compilations").join(ON).join("sources.json"),
+                change,
+            ),
+        }
+        let (code, out) = verify(&f);
+        assert_eq!(
+            (code, status(&out, label)),
+            (1, "FAIL".to_string()),
+            "{label}\n{out}"
+        );
+    }
+}
+
+#[test]
+fn the_verifier_needs_the_root_window_of_a_title_with_earlier_compilations() {
+    let f = with_compilation();
+    let output = publish(&f);
+    rewrite(&output.join("sources.json"), |v| {
+        v["titles"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("compilation_date");
+    });
+    let (code, out) = verify(&f);
+    assert_eq!(
+        (code, status(&out, COMPILATION_LABELS[6])),
+        (1, "FAIL".to_string()),
+        "{out}"
+    );
+}
+
+/// A Register title under a restrictive copyright notice (AASB 112).
+const LICENSED_ID: &str = "F2015L01601";
+
+/// `with_compilation`, its dated manifest also listing `rid` with the files `md` holds.
+fn with_dated_title(rid: &str, md: &str) -> Fixture {
+    let f = with_compilation();
+    let dated = f.root.join("compilations").join(ON);
+    let manifest = dated.join("build").join("manifest_md.json");
+    let mut rows = read_json(&manifest);
+    let mut row = rows[0].clone();
+    row["id"] = json!(rid);
+    rows.as_array_mut().unwrap().push(row);
+    write(&manifest, &rows.to_string());
+    let title = dated.join("markdown").join(rid);
+    let row = json!({"register_id": rid, "section": "1", "text": "Text.",
+                     "compilation_date": "2025-03-28", "superseded_from": "2026-07-01",
+                     "version_is_current": false});
+    write(&title.join("sections.jsonl"), &format!("{row}\n"));
+    write(&title.join(format!("{rid}.md")), md);
+    f
+}
+
+#[test]
+fn a_licence_excluded_title_in_a_dated_manifest_is_left_out_for_its_licence() {
+    let f = with_dated_title(LICENSED_ID, "# AASB 112\n");
+    // Flagged by the date's scan as well: the licence reason wins.
+    write(
+        &f.root
+            .join("compilations")
+            .join(ON)
+            .join("build")
+            .join("pii_flagged.json"),
+        &json!([{"register_id": LICENSED_ID, "name": "AASB 112"}]).to_string(),
+    );
+    let output = publish(&f);
+    let dated = output.join("compilations").join(ON);
+    assert_eq!(names(&dated.join("markdown")), [PUBLIC_ID]);
+    let listing = read_json(&dated.join("sources.json"));
+    let licensed: Vec<&Value> = listing["excluded_titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["register_id"] == LICENSED_ID)
+        .collect();
+    assert_eq!(licensed.len(), 1, "{listing}");
+    assert_eq!(
+        licensed[0]["reason"],
+        "restrictive copyright notice; see REMOVED.md"
+    );
+    assert_eq!(verify(&f).0, 0);
+}
+
+#[test]
+fn dist_refuses_a_dated_title_it_cannot_safely_copy() {
+    // Named people with registration numbers, in a title no scan flagged.
+    let f = with_dated_title("C2004A00003", &format!("# Register\n{ALL_CAPS_ROW}\n"));
+    refused(&f, "private-person registration pairs");
+    assert!(!f.dist().exists());
+    // A file the title's listing does not name.
+    let f = with_compilation();
+    let title = f
+        .root
+        .join("compilations")
+        .join(ON)
+        .join("markdown")
+        .join(PUBLIC_ID);
+    write(&title.join("notes.txt"), "not listed\n");
+    refused(&f, "unexpected file inventory");
+    assert!(!f.dist().exists());
+    // A manifest id that is a path rather than a Register id.
+    for id in ["../C2004A00001", "/tmp/C2004A00001", r"C:\C2004A00001"] {
+        let f = with_compilation();
+        let manifest = f
+            .root
+            .join("compilations")
+            .join(ON)
+            .join("build")
+            .join("manifest_md.json");
+        let mut rows = read_json(&manifest);
+        rows[0]["id"] = json!(id);
+        write(&manifest, &rows.to_string());
+        refused(&f, "invalid Federal Register identifier");
+        assert!(!f.dist().exists(), "{id}");
+    }
+}
+
+#[test]
+fn the_verifier_refuses_a_licence_excluded_title_in_a_dated_folder() {
+    let f = with_compilation();
+    let output = publish(&f);
+    let dated = output.join("compilations").join(ON);
+    let title = dated.join("markdown").join(LICENSED_ID);
+    write(&title.join(format!("{LICENSED_ID}.md")), "# AASB 112\n");
+    write(&title.join("sections.jsonl"), "");
+    rewrite(&dated.join("sources.json"), |v| {
+        let mut listed = v["titles"][0].clone();
+        listed["register_id"] = json!(LICENSED_ID);
+        v["titles"].as_array_mut().unwrap().push(listed);
+    });
+    let (code, out) = verify(&f);
+    assert_eq!(
+        (code, status(&out, COMPILATION_LABELS[5])),
+        (1, "FAIL".to_string()),
+        "{out}"
+    );
+}
+
+/// A sections.jsonl line for `rid` whose text, once decoded, names people with
+/// registration numbers; JSON escapes hide each name from a scan of the file.
+fn escaped_private_row(rid: &str) -> String {
+    let row = json!({"register_id": rid, "section": "1", "text": ALL_CAPS_ROW,
+                     "compilation_date": "2025-03-28", "superseded_from": "2026-07-01",
+                     "version_is_current": false});
+    // Only the text holds ", ": the name pattern needs whitespace after the comma.
+    format!("{}\n", row.to_string().replace(", ", ",\\u0020"))
+}
+
+#[test]
+fn a_dated_row_naming_people_is_refused_as_a_root_row_is() {
+    let rows = |root: &Path| root.join("markdown").join(PUBLIC_ID).join("sections.jsonl");
+    let f = fixture();
+    write(&rows(&f.root), &escaped_private_row(PUBLIC_ID));
+    refused(&f, "no row names private individuals");
+    let f = with_compilation();
+    write(
+        &rows(&f.root.join("compilations").join(ON)),
+        &escaped_private_row(PUBLIC_ID),
+    );
+    refused(&f, COMPILATION_LABELS[3]);
+    assert!(!f.dist().exists());
+    // An unapproved email address, its "@" escaped in the file.
+    let f = with_compilation();
+    let row = json!({"register_id": PUBLIC_ID, "section": "1", "text": "Write to alice@example.org.",
+                     "compilation_date": "2025-03-28", "superseded_from": "2026-07-01",
+                     "version_is_current": false});
+    write(
+        &rows(&f.root.join("compilations").join(ON)),
+        &format!("{}\n", row.to_string().replace('@', "\\u0040")),
+    );
+    refused(&f, COMPILATION_LABELS[3]);
+    assert!(!f.dist().exists());
+    // A name in one field and a registration number in another, each escaped.
+    let f = with_compilation();
+    let row = json!({"register_id": PUBLIC_ID, "section": "1", "heading": "Alice Smith",
+                     "text": "Registration 12345678.", "compilation_date": "2025-03-28",
+                     "superseded_from": "2026-07-01", "version_is_current": false});
+    let line = row
+        .to_string()
+        .replace("Alice Smith", "Alice\\u0020Smith")
+        .replace("12345678", "1234\\u0035678");
+    write(
+        &rows(&f.root.join("compilations").join(ON)),
+        &format!("{line}\n"),
+    );
+    refused(&f, COMPILATION_LABELS[3]);
+    assert!(!f.dist().exists());
+}
+
+#[test]
+fn a_dated_row_is_not_refused_for_a_phone_number_spanning_2_fields() {
+    // "Part 13" then "10 20" would read as a 13 number if the fields were joined.
+    let f = with_compilation();
+    let row = json!({"register_id": PUBLIC_ID, "section": "1", "heading": "Part 13",
+                     "text": "10 20 apply.", "compilation_date": "2025-03-28",
+                     "superseded_from": "2026-07-01", "version_is_current": false});
+    write(
+        &f.root
+            .join("compilations")
+            .join(ON)
+            .join("markdown")
+            .join(PUBLIC_ID)
+            .join("sections.jsonl"),
+        &format!("{row}\n"),
+    );
+    publish(&f);
+    assert_eq!(verify(&f).0, 0);
+}
+
+/// One compilation window: its start, and its end unless in force.
+fn window(start: &str, end: Option<&str>) -> (String, Option<String>) {
+    (start.into(), end.map(Into::into))
+}
+
+#[test]
+fn windows_may_meet_but_not_overlap() {
+    let met = vec![
+        window("2026-07-01", None),
+        window("2025-03-28", Some("2026-07-01")),
+        window("2024-07-01", Some("2025-03-28")),
+    ];
+    assert!(overlaps("C2004A03348", met).is_empty());
+    let inside = vec![
+        window("2026-07-01", None),
+        window("2025-03-28", Some("2026-07-02")),
+    ];
+    assert_eq!(
+        overlaps("C2004A03348", inside),
+        [
+            "2 compilations of C2004A03348 overlap: the one from 2026-07-01 starts inside the window of the one from 2025-03-28"
+        ]
+    );
+    // Two compilations from the same start, and one held open while another follows it.
+    assert_eq!(
+        overlaps(
+            "C1",
+            vec![
+                window("2025-01-01", Some("2025-06-01")),
+                window("2025-01-01", Some("2025-03-01"))
+            ]
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        overlaps(
+            "C1",
+            vec![
+                window("2025-01-01", None),
+                window("2025-06-01", Some("2025-09-01"))
+            ]
+        )
+        .len(),
+        1
+    );
+    // An open and a closed window from the same start; test_quick.py holds
+    // these cases for `check_windows`.
+    assert_eq!(
+        overlaps(
+            "C1",
+            vec![
+                window("2025-01-01", Some("2025-03-01")),
+                window("2025-01-01", None)
+            ]
+        )
+        .len(),
+        1
+    );
 }

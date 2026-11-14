@@ -7,14 +7,17 @@
 //! and the accounting standards under their own copyright notices. Every
 //! title kept is re-scanned for private-person pairs and unapproved contact
 //! details, before copying and again on the copy; REMOVED.md lists what was
-//! dropped. The subset is built in a private sibling of `dist/`, verified with
+//! dropped. Each earlier compilation under `compilations/<date>/` is copied
+//! and gated the same way, without its `build/` and `epub/`. The subset is
+//! built in a private sibling of `dist/`, verified with
 //! dist_verify, and only then promoted, the old tree moved aside first and
 //! restored if the promotion fails.
 use std::cell::RefCell;
 
+use super::compilations;
 use super::corpus_paths::{
-    child, corpus_root, linked, markdown_text, module_dir, register_id, reject_symlinks, relative,
-    require_builder_layout, script_dir_in, write_text,
+    child, corpus_root, iso_date, linked, markdown_text, module_dir, register_id, reject_symlinks,
+    relative, require_builder_layout, script_dir_in, write_text,
 };
 use super::dist_verify::{self, LICENCE_EXCLUDED, expected_title_files, verify_distribution};
 use super::pii::{self, Approved, Unapproved};
@@ -1316,6 +1319,173 @@ fn sub_all(pattern: &str, replacement: &str, text: &str) -> String {
     crate::pyre::re(pattern, 0).sub_with(text, |_| replacement.to_string())
 }
 
+/// Copy a title's `markdown/<rid>/` from one tree to the same place in another,
+/// then refuse the copy if it names private individuals or holds an unapproved
+/// contact.
+fn copy_title(
+    source: &str,
+    staging: &str,
+    rid: &str,
+    title: &Json,
+    approved: &[Approved],
+) -> Result<(), Exc> {
+    let d = child(source, &["markdown", rid])?;
+    if !pyos::isdir(&d) {
+        return Err(Exc::Runtime(format!(
+            "listed title {rid} has no markdown directory"
+        )));
+    }
+    let sections = child(&d, &["sections.jsonl"])?;
+    if !std::fs::metadata(&sections).is_ok_and(|m| m.is_file()) {
+        return Err(Exc::Runtime(format!(
+            "listed title {rid} has no sections.jsonl"
+        )));
+    }
+    reject_symlinks(&d)?;
+    let copied = child(staging, &["markdown", rid])?;
+    // Links are copied as links so the copied-tree gate refuses them.
+    copytree(&d, &copied)?;
+    let (private_files, unexpected) = title_privacy_findings(&copied, rid, title, approved)?;
+    if private_files > 0 {
+        return Err(Exc::Runtime(format!(
+            "copied title contains private-person registration details: {rid}"
+        )));
+    }
+    if let Some((kind, digest, _)) = unexpected.first() {
+        return Err(Exc::Runtime(format!(
+            "copied title contains an unapproved contact identifier: {rid}:{kind}:{}",
+            &digest[..16]
+        )));
+    }
+    Ok(())
+}
+
+/// Copy each dated folder under the corpus's `compilations/` as the root's titles
+/// are copied: its `markdown/`, and a `sources.json` listing each compilation's
+/// provenance, window and file digests. Its `build/` and `epub/` stay behind.
+/// Returns the dates copied.
+fn copy_compilations(
+    root: &str,
+    staging: &str,
+    removed: &std::collections::BTreeSet<String>,
+    approved: &[Approved],
+) -> Result<Vec<String>, Exc> {
+    let folder = pypath::join(root, compilations::FOLDER);
+    if !exists(&folder) {
+        return Ok(Vec::new());
+    }
+    if linked(&folder)? || !pyos::isdir(&folder) {
+        return Err(Exc::Runtime("compilations is not a real directory".into()));
+    }
+    let mut dates = Vec::new();
+    for name in compilations::names(&folder)? {
+        let on = iso_date(&name)
+            .map_err(|_| Exc::Runtime(format!("compilations/{name} is not named as a date")))?;
+        let source = pypath::join(&folder, &on);
+        if linked(&source)? || !pyos::isdir(&source) {
+            return Err(Exc::Runtime(format!(
+                "compilations/{on} is not a directory"
+            )));
+        }
+        let target = pypath::join(&pypath::join(staging, compilations::FOLDER), &on);
+        copy_date(&source, &target, &on, removed, approved)?;
+        dates.push(on);
+    }
+    Ok(dates)
+}
+
+/// One dated folder's titles, from its `build/manifest_md.json`. A title the
+/// root removes, that the date's own PII scan flagged, or that carries a
+/// restrictive copyright notice is left out and listed with its reason.
+fn copy_date(
+    source: &str,
+    target: &str,
+    on: &str,
+    removed: &std::collections::BTreeSet<String>,
+    approved: &[Approved],
+) -> Result<(), Exc> {
+    let markdown = pypath::join(source, "markdown");
+    if !exists(&markdown) || linked(&markdown)? || !pyos::isdir(&markdown) {
+        return Err(Exc::Runtime(format!(
+            "compilations/{on} has no markdown directory"
+        )));
+    }
+    let (mut titles, excluded, ids) = date_titles(source, on, removed)?;
+    if let Some(stray) = compilations::names(&markdown)?
+        .into_iter()
+        .find(|n| !ids.contains(n))
+    {
+        return Err(Exc::Runtime(format!(
+            "compilations/{on}/markdown/{stray} is not in that date's manifest_md.json"
+        )));
+    }
+    reject_unapproved_contacts(source, &titles, approved)?;
+    pyos::makedirs_new(&pypath::join(target, "markdown"))?;
+    for title in &mut titles {
+        let rid = register_id(title.at("register_id"))?;
+        copy_title(source, target, &rid, title, approved)?;
+        set(
+            title,
+            "files",
+            compilations::digests(&child(target, &["markdown", &rid])?)?,
+        );
+    }
+    dump_json(
+        &pypath::join(target, "sources.json"),
+        &Json::obj([
+            ("in_force_on", Json::str(on)),
+            ("source", Json::str("Federal Register of Legislation")),
+            ("licence", Json::str(super::finalize::LICENCE)),
+            ("licence_url", Json::str(super::finalize::LICENCE_URL)),
+            ("titles", Json::Array(titles)),
+            ("excluded_titles", Json::Array(excluded)),
+        ]),
+    )
+}
+
+/// The titles kept, the titles left out, and every id the manifest names.
+type DateTitles = (Vec<Json>, Vec<Json>, std::collections::BTreeSet<String>);
+
+/// A dated folder's listed titles from its `build/manifest_md.json`, the ones
+/// left out with their reasons, and every Register id the manifest names.
+fn date_titles(
+    source: &str,
+    on: &str,
+    removed: &std::collections::BTreeSet<String>,
+) -> Result<DateTitles, Exc> {
+    let manifest = load(&child(source, &["build", "manifest_md.json"])?)?;
+    let mut flagged = std::collections::BTreeSet::new();
+    for f in iterate(&load(&child(source, &["build", "pii_flagged.json"])?)?)? {
+        flagged.insert(register_id(getitem(&f, "register_id")?)?);
+    }
+    let (mut titles, mut excluded, mut ids) =
+        (Vec::new(), Vec::new(), std::collections::BTreeSet::new());
+    for row in iterate(&manifest)? {
+        let title = compilations::listing(&row, on)?;
+        let rid = register_id(title.at("register_id"))?;
+        if !ids.insert(rid.clone()) {
+            return Err(Exc::Runtime(format!(
+                "compilations/{on}: manifest_md.json lists {rid} twice"
+            )));
+        }
+        let reason = if LICENCE_EXCLUDED.contains(&rid.as_str()) {
+            "restrictive copyright notice; see REMOVED.md"
+        } else if removed.contains(&rid) || flagged.contains(&rid) {
+            "names private individuals; see REMOVED.md"
+        } else {
+            titles.push(title);
+            continue;
+        };
+        let name = title.at("name").clone();
+        excluded.push(Json::obj([
+            ("register_id", Json::str(&rid)),
+            ("name", name),
+            ("reason", Json::str(reason)),
+        ]));
+    }
+    Ok((titles, excluded, ids))
+}
+
 struct Paths {
     root: String,
     here: String,
@@ -1408,34 +1578,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     let (mut rows_by_coll, mut words_by_coll) = (Counter::default(), Counter::default());
     for title in &titles {
         let rid = register_id(getitem(title, "register_id")?)?;
-        let d = child(&paths.root, &["markdown", &rid])?;
-        if !pyos::isdir(&d) {
-            return Err(Exc::Runtime(format!(
-                "listed title {rid} has no markdown directory"
-            )));
-        }
-        let sections = child(&d, &["sections.jsonl"])?;
-        if !std::fs::metadata(&sections).is_ok_and(|m| m.is_file()) {
-            return Err(Exc::Runtime(format!(
-                "listed title {rid} has no sections.jsonl"
-            )));
-        }
-        reject_symlinks(&d)?;
-        let copied = child(staging, &["markdown", &rid])?;
-        // Links are copied as links so the copied-tree gate refuses them.
-        copytree(&d, &copied)?;
-        let (private_files, unexpected) = title_privacy_findings(&copied, &rid, title, &approved)?;
-        if private_files > 0 {
-            return Err(Exc::Runtime(format!(
-                "copied title contains private-person registration details: {rid}"
-            )));
-        }
-        if let Some((kind, digest, _)) = unexpected.first() {
-            return Err(Exc::Runtime(format!(
-                "copied title contains an unapproved contact identifier: {rid}:{kind}:{}",
-                &digest[..16]
-            )));
-        }
+        copy_title(&paths.root, staging, &rid, title, &approved)?;
         let mut lines = Lines::open(&child(staging, &["markdown", &rid, "sections.jsonl"])?)?;
         while let Some(line) = lines.next_line() {
             let line = line?;
@@ -1467,6 +1610,8 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
             }
         }
     }
+
+    let dates = copy_compilations(&paths.root, staging, &removed, &approved)?;
 
     // The JSONL and its readable companion both come from this filtered set.
     let mut rate_records: Vec<Json> = Vec::new();
@@ -1638,6 +1783,10 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         "excluded_titles",
         Json::Array(excluded.into_iter().map(|(_, e)| e).collect()),
     );
+    if !dates.is_empty() {
+        let listed = dates.iter().map(|d| Json::str(d)).collect();
+        set(&mut out, compilations::FOLDER, Json::Array(listed));
+    }
     match get(&src, "licence_note")? {
         Some(note) if note.as_str() == Some(super::finalize::LICENCE_NOTE) => {
             set(&mut out, "licence_note", Json::str(DIST_LICENCE_NOTE));
@@ -1666,6 +1815,20 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         "LICENCE-NOTICE.md",
         run,
     )?;
+    let rewritten = if dates.is_empty() {
+        rewritten
+    } else {
+        format!(
+            "{rewritten}\n{}\n\n\
+             The folders under `compilations/` hold the compilations in force on earlier\n\
+             dates ({}), converted from the Register's EPUBs as the current ones are, under\n\
+             the same licence, attribution and exclusions. Each folder's `sources.json`\n\
+             names every compilation, its source and the day it was retrieved, and lists\n\
+             the titles left out.\n",
+            compilations::NOTICE_HEADING,
+            dates.join(", ")
+        )
+    };
     if rewritten != notice {
         write_text(&licence_dst, &pts(&rewritten))?;
     }
@@ -1922,6 +2085,17 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
             line.extend(pts(" |"));
             lines.push(line);
         }
+    }
+    if !dates.is_empty() {
+        lines.extend([
+            Vec::new(),
+            pts("## Earlier compilations"),
+            Vec::new(),
+            pts(
+                "A title left out of a folder under `compilations/` is listed, with the reason, in \
+                 that folder's `sources.json`.",
+            ),
+        ]);
     }
     let mut removed_md = Vec::new();
     for (i, line) in lines.into_iter().enumerate() {

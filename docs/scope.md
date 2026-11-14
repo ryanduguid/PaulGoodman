@@ -98,6 +98,8 @@ A build can also hold earlier compilations: `quick --in-force-on YYYY-07-01` ([B
 - Each compilation is held once: the root holds the current one, and a date holds only compilations that neither the root nor an earlier date holds. The windows of one title therefore never overlap, so at most one covers a date.
 - `row_id`s repeat across compilations of a title, so a row is identified by its folder as well as its `row_id`.
 
+A `dist/` tree carries the same layout: `dist/compilations/<name>/markdown/` beside a `sources.json` naming each compilation's source, window, retrieval date and file digests, and the titles left out of that date.
+
 The index, `as_at` and `search --as-at` read the root only. A consumer that reads `sections.jsonl` directly can answer a dated question from the compilation whose window covers the date. The limits of `captured` above apply to each compilation.
 
 ### Amendments a build cannot see
@@ -181,7 +183,8 @@ which `pii_flagged.json` records 169 as naming private individuals. The `dist` s
 drops a flagged title whole rather than row by row, so all 188 of its rows leave
 the distribution, not only the 169.
 A `REMOVED.md` lists every exclusion and its Register link so the omission is
-visible and reversible. `dist_verify` checks the result against its own
+visible and reversible; an earlier compilation's folder lists its own in its
+`sources.json`: the root's removals, the date's own `pii_scan` flags and the restrictive copyright notices all apply to it. `dist_verify` checks the result against its own
 claims and exits non-zero if any check fails.
 
 A `dist/` tree that `dist_verify` passes is the one generated output a release

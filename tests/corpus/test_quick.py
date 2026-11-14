@@ -356,6 +356,26 @@ class QuickTests(unittest.TestCase):
         self.assertEqual([(row["versionStart"], row["current_version_start"]) for row in rows],
                          [("2024-07-01", "2025-03-01")])
 
+    def test_windows_overlap_by_the_rule_dist_verify_applies(self) -> None:
+        """The cases of `windows_may_meet_but_not_overlap` in tests/fadden_dist.rs."""
+        cases: list[tuple[list[tuple[str, str | None]], bool]] = [
+            ([("2026-07-01", None), ("2025-03-28", "2026-07-01"), ("2024-07-01", "2025-03-28")],
+             False),
+            ([("2026-07-01", None), ("2025-03-28", "2026-07-02")], True),
+            ([("2025-01-01", "2025-06-01"), ("2025-01-01", "2025-03-01")], True),
+            ([("2025-01-01", None), ("2025-06-01", "2025-09-01")], True),
+            ([("2025-01-01", "2025-03-01"), ("2025-01-01", None)], True),
+        ]
+        for windows, overlap in cases:
+            rows = [{"id": "C1", "versionStart": start, "current_version_start": end}
+                    for start, end in windows]
+            with self.subTest(windows=windows):
+                if overlap:
+                    with self.assertRaisesRegex(quick.QuickError, "2 compilations of C1 overlap"):
+                        quick.check_windows(rows)
+                else:
+                    quick.check_windows(rows)
+
     def test_a_date_must_be_a_1_july(self) -> None:
         for bad in ("2025-03-01", "2025-7-01", "2025-02-30"):
             printed = io.StringIO()
