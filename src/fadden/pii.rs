@@ -103,8 +103,12 @@ fn plausible_tfn(value: &str) -> bool {
             == 0
 }
 
-/// `_contact_value(kind, match)`: the normalised identifier a digest covers.
+/// `_contact_value(kind, match)`: the normalised identifier a digest covers,
+/// read after NFKC so a contact written in compatibility forms has the plain
+/// contact's digest.
 fn contact_value(kind: &str, value: &str) -> String {
+    let value: String = value.nfkc().collect();
+    let value = value.as_str();
     if kind == "email" {
         return py::casefold(py::strip(value));
     }

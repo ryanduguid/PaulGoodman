@@ -184,6 +184,22 @@ fn reading_the_text_as_rendered_keeps_each_match_as_written_once() {
         pii::contact_fingerprints("Phone\u{a0}02 1234 5678 &amp; ask."),
         phone
     );
+    // A match both readings find has one digest, whichever forms it is written in.
+    let email = pii::contact_fingerprints("someone@example.com");
+    let doubled: Vec<&str> = [
+        ("02 1234 \u{ff15}\u{ff16}\u{ff17}\u{ff18}", &phone),
+        ("\u{ff53}omeone@example.com", &email),
+    ]
+    .into_iter()
+    .filter(|(text, plain)| pii::contact_fingerprints(text) != **plain)
+    .map(|(text, _)| text)
+    .collect();
+    assert!(
+        doubled.is_empty(),
+        "not read as the plain contact: {doubled:?}"
+    );
+    // One decoding pass, as a renderer shows it: `&amp;#64;` displays as `&#64;`.
+    assert!(pii::contact_fingerprints("someone&amp;#64;example.com").is_empty());
 }
 
 fn policy(dir: &Path, document: Value) -> Result<Vec<pii::Approved>, String> {
