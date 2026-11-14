@@ -163,8 +163,10 @@ What is not published:
   scanned. A manifest's `raw_file` names the copy the builder kept.
 - **Anything the ATO notice does not cover.** A document is left out, and listed with
   its reason, when its docid is not one of the families above (legislation and court
-  judgments from the Legal Database, which a hand-edited run could hold), its rows
-  record no ATO reuse notice, its family label differs from its docid's family (a Law
+  judgments from the Legal Database, which a hand-edited run could hold), its page did
+  not print the ATO's reuse notice (`licence_basis` is not `document-notice`: the
+  `dc.Rights` link a `site-notice-via-dc-rights` page carries returned HTTP 404 on
+  15 November 2026), its family label differs from its docid's family (a Law
   Companion Ruling captured as a Practical Compliance Guideline), or its title,
   headings or text carry a copyright notice of their own (`©`, `(c) 2099`,
   `Copyright 2099` or `All rights reserved`, in any case). Third-party material quoted

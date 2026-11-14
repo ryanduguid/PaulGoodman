@@ -622,7 +622,7 @@ CREATE INDEX ruling_refs_to ON ruling_refs (to_register_id, kind, to_key);
 ";
 
 /// The values of `licence_basis` the `rulings` stage writes.
-pub(super) const LICENCE_BASES: [&str; 2] = ["document-notice", "site-notice-via-dc-rights"];
+const LICENCE_BASES: [&str; 2] = ["document-notice", "site-notice-via-dc-rights"];
 
 /// One paragraph of a `rulings` run, as `build` keeps it.
 struct RulingRow {

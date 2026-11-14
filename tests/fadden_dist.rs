@@ -3249,6 +3249,14 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
     let mislabelled = "PRR/PR20991/NAT/ATO/00001";
     let unnoticed = "CLR/CR20991/NAT/ATO/00001";
     let advice = "EV/1099000000001";
+    // A page that only links to a copyright page, which the stage accepts.
+    let linked = "TXD/TD20992/NAT/ATO/00001";
+    let linked_page = ruling_page(linked, "")
+        .replace(rulings::NOTICE, "")
+        .replace(
+            "</head>",
+            r#"<meta content="http://www.ato.gov.au/content/corporate/about_this_site.htm#copyright" name="dc.Rights" /></head>"#,
+        );
     let source = rulings_run(
         &f,
         vec![
@@ -3257,6 +3265,7 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
             (mislabelled, ruling_page(mislabelled, "")),
             (unnoticed, ruling_page(unnoticed, "")),
             (advice, ruling_page(advice, "")),
+            (linked, linked_page),
             (LCR, ruling_page(LCR, "")),
         ],
     );
@@ -3310,17 +3319,19 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
         assert_eq!(found.len(), 1, "{docid}: {reasons:?}");
         found[0].to_string()
     };
-    assert_eq!(reasons.len(), 5, "{reasons:?}");
+    assert_eq!(reasons.len(), 6, "{reasons:?}");
     assert!(reason(RULING).contains("copyright notice of its own"));
     assert!(reason(judgment).contains("not an ATO-authored"));
     assert!(reason(mislabelled).contains("labelled \"Class Ruling\""));
-    assert!(reason(unnoticed).contains("records no ATO reuse notice"));
+    for docid in [unnoticed, linked] {
+        assert!(reason(docid).contains("did not print the ATO's reuse notice"));
+    }
     assert!(reason(advice).contains("edited version of private advice"));
     let listing = read_json(&dist.join("rulings").join("sources.json"));
-    assert_eq!(listing["runs"][0]["left_out"].as_array().unwrap().len(), 5);
+    assert_eq!(listing["runs"][0]["left_out"].as_array().unwrap().len(), 6);
     let removed = std::fs::read_to_string(dist.join("REMOVED.md")).unwrap();
     assert!(removed.contains("## ATO rulings left out"));
-    for docid in [RULING, judgment, mislabelled, unnoticed, advice] {
+    for docid in [RULING, judgment, mislabelled, unnoticed, advice, linked] {
         assert!(removed.contains(docid), "{docid}");
     }
     let (code, out) = verify(&f);

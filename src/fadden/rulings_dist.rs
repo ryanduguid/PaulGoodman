@@ -20,7 +20,7 @@ use super::corpus_paths::{child, linked};
 use super::dist_verify::entry_kind;
 use super::pii;
 use super::rulings::{COPYRIGHT_NOTICE_URL, EDITED_VERSION, NOTICE, family_of};
-use super::search::{LICENCE_BASES, check_rulings_run};
+use super::search::check_rulings_run;
 use super::{Exc, json_error};
 use crate::pyjson::{self, Json, PyStr};
 use crate::pyos;
@@ -92,8 +92,8 @@ fn text<'a>(value: &'a Json, key: &str) -> &'a str {
 
 /// Why `dist` leaves a captured document out, if it does: a family the ATO's
 /// reuse notice does not cover, an edited version of private advice, a label its
-/// docid contradicts, no recorded notice, or text carrying a copyright notice of
-/// its own.
+/// docid contradicts, a page that did not print the notice, or text carrying a
+/// copyright notice of its own.
 fn reason_left_out(document: &Json, rows: &[&Json]) -> Option<String> {
     let docid = text(document, "docid");
     let Some(family) = family_of(docid) else {
@@ -113,12 +113,14 @@ fn reason_left_out(document: &Json, rows: &[&Json]) -> Option<String> {
             "labelled {label:?}, but its docid is a {family}; capture it again"
         ));
     }
+    // A `site-notice-via-dc-rights` page only links to a copyright page, and that
+    // link's target, read on 15 November 2026, no longer resolves.
     let bases = std::iter::once(document).chain(rows.iter().copied());
     if bases
         .map(|r| text(r, "licence_basis"))
-        .any(|b| !LICENCE_BASES.contains(&b))
+        .any(|b| b != "document-notice")
     {
-        return Some("records no ATO reuse notice".into());
+        return Some("its page did not print the ATO's reuse notice".into());
     }
     let marked = pyre::re(OWN_COPYRIGHT, pyre::I);
     let texts = std::iter::once(text(document, "title")).chain(rows.iter().flat_map(|row| {
@@ -524,8 +526,8 @@ pub fn notice_section(published: &Published) -> String {
          The folders under `rulings/` hold paragraphs of ATO Legal Database documents\n\
          captured on {}. They are \u{a9} Australian Taxation Office for the Commonwealth\n\
          of Australia and are not covered by the CC BY 4.0 licence above. Each document\n\
-         printed, or linked to, the ATO's copyright notice ({COPYRIGHT_NOTICE_URL})\n\
-         when it was captured:\n\n\
+         printed the ATO's copyright notice ({COPYRIGHT_NOTICE_URL}) when it was\n\
+         captured:\n\n\
          > {NOTICE}\n\n\
          Neither the ATO nor the Commonwealth endorses this corpus. The rows are not the\n\
          authorised text, advice or the Commissioner's current view: read each document\n\
