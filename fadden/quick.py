@@ -140,7 +140,8 @@ def check_windows(rows: list[dict[str, Any]]) -> None:
         windows.setdefault(row["id"], []).append(
             (row["versionStart"], row.get("current_version_start")))
     for rid, held in windows.items():
-        held.sort()
+        # An open window sorts before a closed one from the same start, as in Rust.
+        held.sort(key=lambda window: (window[0], window[1] is not None, window[1] or ""))
         for (start, end), (later, _) in zip(held, held[1:]):
             if end is None or end > later:
                 raise QuickError(f"2 compilations of {rid} overlap: the one from {later} "
