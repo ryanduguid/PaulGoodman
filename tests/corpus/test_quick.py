@@ -342,6 +342,20 @@ class QuickTests(unittest.TestCase):
             quick.build("fadden-bin", self.out, ["2024-07-01", "2025-07-01"])
         self.assertFalse(self.out.exists())
 
+    def test_a_root_fallback_and_the_compilation_before_it_meet_without_overlap(self) -> None:
+        """retry13's root row ends at the current version's start; the one before ends where it starts."""
+        itaa97 = quick.PRESET[0]
+        versions: dict[str | None, list[tuple[str, ...]]] = {
+            None: [(itaa97, "2025-03-01", "2026-10-01")],
+            "2024-07-01": [(itaa97, "2024-07-01", "2025-03-01")],
+        }
+        with Stages(versions=versions).patched(), contextlib.redirect_stdout(io.StringIO()):
+            quick.build("fadden-bin", self.out, ["2024-07-01"])
+        rows = json.loads((self.out / "compilations" / "2024-07-01" / "build" / "manifest_md.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual([(row["versionStart"], row["current_version_start"]) for row in rows],
+                         [("2024-07-01", "2025-03-01")])
+
     def test_a_date_must_be_a_1_july(self) -> None:
         for bad in ("2025-03-01", "2025-7-01", "2025-02-30"):
             printed = io.StringIO()
