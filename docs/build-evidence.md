@@ -100,6 +100,8 @@ The folder held 9 titles, 9,439 rows, 3,678 definitions and 32,463 references, f
 
 On 12 November 2026 the `corpus-2026-11-11` archive matched its `SHA256SUMS`, and its unpacked `dist` folder (34 files) served as `AUS_ACCOUNTING_CORPUS_ROOT` for `aus-accounting-mcp` 0.7.1 from PyPI and for australian-accounting `main` at `166333f`. In both, `search_tax_legislation` returned `C2004A05138:0035:8-1`, section 8-1 of the ITAA 1997, first for 'general deductions'; `read_tax_legislation_section` read that row; `search_tax_rates` and `define_tax_term` returned rows from the folder. `aus-accounting-mcp doctor` on `main` reported the folder OK with 9,439 section rows in 9 title indexes and 1,664 rate rows. These show the folder loads and answers, not that any answer is complete or current.
 
+On 15 November 2026 the archive again matched its `SHA256SUMS`, and `aus-accounting-mcp` 0.9.0 from PyPI, run as the README's `doctor` command on Linux, reported the folder OK with 9,439 section rows in 9 title indexes and 1,664 rate rows; through that server, `search_tax_legislation` returned `C2004A05138:0035:8-1` first for 'general deductions' and `search_tax_rates` returned rows from the folder.
+
 ## Retrieval baseline on real law
 
 Measured on 5 November 2026 over `tests/fixtures/retrieval_real_law.tsv`: 46 queries
