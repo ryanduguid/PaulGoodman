@@ -2745,6 +2745,17 @@ fn a_dated_row_naming_people_is_refused_as_a_root_row_is() {
     );
     refused(&f, COMPILATION_LABELS[3]);
     assert!(!f.dist().exists());
+    // An escaped name beside a registration number written as a JSON number.
+    let f = with_compilation();
+    let row = json!({"register_id": PUBLIC_ID, "section": "1", "heading": "Alice Smith",
+                     "text": "Registered.", "registration": 12345678, "compilation_date": "2025-03-28",
+                     "superseded_from": "2026-07-01", "version_is_current": false});
+    let line = row.to_string().replace("Alice Smith", "Alice\\u0020Smith");
+    write(
+        &rows(&f.root.join("compilations").join(ON)),
+        &format!("{line}\n"),
+    );
+    refused_keeping_dist(&f, COMPILATION_LABELS[3]);
 }
 
 #[test]
@@ -2795,6 +2806,13 @@ fn a_root_row_hiding_a_contact_or_a_name_behind_json_escapes_is_refused() {
     write(&public_rows(&f.root), &format!("{line}\n"));
     refused(&f, "no row names private individuals");
     assert!(!f.dist().exists());
+    // An escaped name beside a registration number written as a JSON number.
+    let f = fixture();
+    let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                     "heading": "Alice Smith", "kind": "section", "text": "Registered.", "registration": 12345678});
+    let line = row.to_string().replace("Alice Smith", "Alice\\u0020Smith");
+    write(&public_rows(&f.root), &format!("{line}\n"));
+    refused_keeping_dist(&f, "no row names private individuals");
     // The same email address in a nested value.
     let f = fixture();
     let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
@@ -2846,6 +2864,20 @@ fn a_listed_title_name_naming_a_person_or_holding_a_contact_is_refused() {
             .join("build")
             .join("manifest_md.json"),
         |v| v[0]["name"] = json!("Jane Smith 12345678"),
+    );
+    refused_keeping_dist(
+        &f,
+        "title name names a private person or holds an unapproved contact",
+    );
+    // A left-out dated title's name holding a phone number.
+    let f = with_compilation();
+    rewrite(
+        &f.root
+            .join("compilations")
+            .join(ON)
+            .join("build")
+            .join("manifest_md.json"),
+        |v| v[1]["name"] = json!("Private Disciplinary Register, call 0412 345 678"),
     );
     refused_keeping_dist(
         &f,

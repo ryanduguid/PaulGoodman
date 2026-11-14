@@ -177,8 +177,9 @@ declared Markdown/JSONL file inventory and inspect every file in it, covering
 the human-readable Markdown and endnotes as well as `sections.jsonl`. A private
 name beside a registration number in any representation fails, as does an
 unreadable file, binary control data, a nested path or an unexpected file.
-`dist_verify` also reads each row's decoded strings, keys and nested values
-included, so a JSON escape cannot hide a name, registration number or contact.
+`dist_verify` also reads each row's decoded strings and numbers, keys and
+nested values included, so a JSON escape cannot hide a name, registration
+number or contact.
 `dist` also refuses a title with no rows, and a title name, kept or left out,
 that pairs a person with a registration number or holds an unapproved contact.
 The patterns read text as written: they do not find a contact split across 2

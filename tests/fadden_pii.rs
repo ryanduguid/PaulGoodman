@@ -141,6 +141,7 @@ fn a_row_scan_decodes_keys_and_nested_values() {
         r#"{"text": "ok", "notes": ["see", ["alice\u0040example.org"]]}"#,
         r#"{"text": "ok", "alice\u0040example.org": null}"#,
         r#"{"text": "ok", "notes": [{"Alice\u0020Smith": "1234\u0035678"}]}"#,
+        r#"{"text": "Alice\u0020Smith", "registration": 12345678}"#,
     ] {
         let row = tax_radar_au::pyjson::loads_standard(line).unwrap();
         let (pair, contacts) = pii::privacy_findings_in_row(&row, "C2004A00001", &[]);

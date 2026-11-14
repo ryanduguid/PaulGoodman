@@ -340,11 +340,11 @@ pub fn unapproved_contact_fingerprints(
 }
 
 /// A JSON row's privacy findings, as `privacy_findings_in_file` gives a file's:
-/// whether its decoded strings, keys and nested values included, pair a name
-/// with a registration number, across fields as the file scan would, and their
-/// unapproved contacts. JSON escapes can hide either from the file scan.
-/// Contacts are sought in each string alone: joined, the end of one and the
-/// start of the next can read as a phone number.
+/// whether its decoded strings and numbers, keys and nested values included,
+/// pair a name with a registration number, across fields as the file scan
+/// would, and their unapproved contacts. JSON escapes can hide either from the
+/// file scan. Contacts are sought in each value alone: joined, the end of one
+/// and the start of the next can read as a phone number.
 pub fn privacy_findings_in_row(
     row: &Json,
     register_id: &str,
@@ -364,11 +364,13 @@ pub fn privacy_findings_in_row(
     (names && numbers, contacts)
 }
 
-/// Every string in a JSON value, keys included, decoded.
+/// Every string in a JSON value, keys included, decoded, and every number as
+/// Python writes it: a registration number can be a JSON number.
 fn decoded_strings(value: &Json, out: &mut Vec<String>) {
     let decode = |s: &pyjson::PyStr| pyvalue::points_lossy(&s.code_points());
     match value {
         Json::Str(s) => out.push(decode(s)),
+        Json::Int(_) | Json::Float(_) => out.push(pyvalue::repr(value)),
         Json::Array(items) => items.iter().for_each(|item| decoded_strings(item, out)),
         Json::Object(fields) => {
             for (key, item) in fields {
