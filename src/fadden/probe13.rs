@@ -64,13 +64,25 @@ pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc>
             version_date(version.get("start"))?;
             compilation_id(version)?;
         }
-        let with_document: Vec<&Json> = versions
-            .iter()
-            .filter(|v| truthy(v.get("registerId")))
-            .collect();
         let current: Vec<&Json> = versions
             .iter()
             .filter(|v| truthy(v.get("isCurrent")))
+            .collect();
+        // retry13 ends the fallback's window where the current version starts,
+        // so a version starting after it is no fallback: it is not in force yet.
+        let current_start = current
+            .first()
+            .map(|c| version_date(c.get("start")))
+            .transpose()?;
+        let with_document: Vec<&Json> = versions
+            .iter()
+            .filter(|v| truthy(v.get("registerId")))
+            .filter(|v| {
+                // Every start was validated above.
+                current_start
+                    .as_ref()
+                    .is_none_or(|c| version_date(v.get("start")).is_ok_and(|s| s <= *c))
+            })
             .collect();
         // `max(..., key=start)`: the first of the latest starts.
         let mut latest: Option<&Json> = None;

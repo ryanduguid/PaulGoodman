@@ -354,7 +354,8 @@ and rate metadata are escaped as literal Markdown.
   path built from that date answers 404, which reads as a broken download rather
   than a missing document. Titles can enter or leave this state as compilations
   are published. `retry13.py` falls back to the
-  most recent version that does have a `registerId` and marks the result
+  most recent version that does have a `registerId` and does not start after the
+  current one (a later version is not in force yet), and marks the result
   `version_is_current: false`, in the front matter, on every JSONL row, and in
   `sources.json`. Each row also carries `superseded_from` (the start of the
   version without a compilation) and `retrieved`. Substituting an older compilation silently would misreport the
