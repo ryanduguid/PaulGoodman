@@ -232,6 +232,7 @@ fn contacts_broken_by_invisible_characters_are_found() {
         ("someone@example\u{ad}.com", &email),
         ("02\u{2060} 1234 5678", &phone),
         ("02 1234\u{feff} 5678", &phone),
+        ("someone@exam\u{fff9}ple.com", &email),
         ("TFN: 123\u{200b} 456 782", &tfn),
         // References decoded, then the invisible characters removed.
         ("someone&#64;exam\u{200b}ple.com", &email),
@@ -245,6 +246,10 @@ fn contacts_broken_by_invisible_characters_are_found() {
     .map(|(text, _)| text)
     .collect();
     assert!(missed.is_empty(), "missed {missed:?}");
+    // Once the combining grapheme joiner is gone, NFKC composes the accent
+    // as in the plain contact.
+    let accented = pii::contact_fingerprints("someone@\u{e9}xample.com").remove(0);
+    assert!(pii::contact_fingerprints("someone&#64;e\u{34f}\u{301}xample.com").contains(&accented));
     // Removing an invisible character can join a match to the text after it,
     // so the match the rendered reading gives is still reported beside it.
     let joined = pii::contact_fingerprints("someone&#64;example.com\u{200b}au");

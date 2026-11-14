@@ -129,22 +129,28 @@ fn contact_value(kind: &str, value: &str) -> String {
 /// rendered (HTML character references decoded once, then NFKC-normalised),
 /// so a full-width `@` or an `&#64;` does not hide a contact, then each further
 /// match in either text with its invisible characters removed (see
-/// [`visible`]), so a zero-width space does not hide one. The text as written
-/// is still read because NFKC can turn a superscript into a digit a pattern
-/// refuses to follow, and each text is still read with its invisible
-/// characters because removing one can join a contact to the text after it.
-/// Each reading's matches keep their own digests, so the digests reported are
-/// exactly those any reading gives.
+/// [`visible`]; the rendered text is NFKC-normalised again afterwards), so a
+/// zero-width space does not hide one. The text as written is still read
+/// because NFKC can turn a superscript into a digit a pattern refuses to
+/// follow, and each text is still read with its invisible characters because
+/// removing one can join a contact to the text after it. Each reading's
+/// matches keep their own digests, so the digests reported are exactly those
+/// any reading gives.
 pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
     let rendered: String = crate::html::unescape(text).nfkc().collect();
-    let (visible_text, visible_rendered) = (visible(text), visible(&rendered));
-    let mut read = vec![text];
+    let visible_text = visible(text);
+    // A removed character can leave a pair NFKC composes, such as a letter
+    // and a combining accent a combining grapheme joiner kept apart.
+    let visible_rendered: Cow<'_, str> = match visible(&rendered) {
+        Cow::Owned(removed) => Cow::Owned(removed.nfkc().collect()),
+        unchanged => unchanged,
+    };
+    let readings: [&str; 4] = [text, &rendered, &visible_text, &visible_rendered];
     let mut found = fingerprints_as_written(text);
-    for reading in [&rendered, visible_text.as_ref(), visible_rendered.as_ref()] {
-        if read.contains(&reading) {
+    for (i, reading) in readings.iter().enumerate().skip(1) {
+        if readings[..i].contains(reading) {
             continue;
         }
-        read.push(reading);
         // shortcut: a further reading's match pairs with an earlier match of
         // the same digest, not the same place, so occurrence counts can be off
         // by the matches one reading alone finds (a contact in mixed forms
@@ -164,18 +170,20 @@ pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
     found
 }
 
-/// `text` without the characters Unicode marks `Default_Ignorable_Code_Point`,
-/// which a renderer shows as nothing: the soft hyphen, zero-width space,
-/// non-joiner and joiner, word joiner, byte order mark, direction marks and
-/// controls, variation selectors and tag characters amongst them.
+/// `text` without the characters Unicode marks `Default_Ignorable_Code_Point`
+/// or as format characters (general category `Cf`), which a renderer shows as
+/// nothing or need not show: the soft hyphen, zero-width space, non-joiner and
+/// joiner, word joiner, byte order mark, direction marks and controls,
+/// variation selectors, interlinear annotation marks and tag characters
+/// amongst them.
 fn visible(text: &str) -> Cow<'_, str> {
-    // shortcut: the property as the regex crate's Unicode tables give it
-    // (Unicode 16 in regex-syntax 0.8.11). A contact broken by a character
-    // outside it that still renders blank, such as U+2800 BRAILLE PATTERN
-    // BLANK or the interlinear annotation marks U+FFF9 to U+FFFB, is still
-    // missed; widen the class if the corpus shows one.
+    // shortcut: both properties as the regex crate's Unicode tables give them
+    // (Unicode 16 in regex-syntax 0.8.11). A character that shows as a blank
+    // cell, such as U+2800 BRAILLE PATTERN BLANK, is kept: it reads as a gap,
+    // as a space does. Add such characters here if the corpus uses one inside
+    // a contact.
     static INVISIBLE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\p{Default_Ignorable_Code_Point}").expect("pattern"));
+        LazyLock::new(|| Regex::new(r"[\p{Default_Ignorable_Code_Point}\p{Cf}]").expect("pattern"));
     INVISIBLE.replace_all(text, "")
 }
 
