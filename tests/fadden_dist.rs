@@ -2825,6 +2825,23 @@ fn a_root_row_hiding_a_contact_or_a_name_behind_json_escapes_is_refused() {
 }
 
 #[test]
+fn a_root_row_hiding_a_contact_behind_an_invisible_character_is_refused() {
+    // An unapproved email address broken by an escaped zero-width joiner or NUL.
+    for invisible in ["\\u200d", "\\u0000"] {
+        let f = fixture();
+        let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                         "kind": "section", "text": "Write to alice@example.org."});
+        let line = row.to_string().replace(
+            "alice@example.org",
+            &format!("alice@exa{invisible}mple.org"),
+        );
+        write(&public_rows(&f.root), &format!("{line}\n"));
+        refused(&f, "no unapproved contact identifiers");
+        assert!(!f.dist().exists());
+    }
+}
+
+#[test]
 fn a_root_row_is_not_refused_for_a_phone_number_spanning_2_fields() {
     // "Part 13" then "10 20" would read as a 13 number if the fields were joined.
     let f = fixture();

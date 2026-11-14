@@ -170,20 +170,22 @@ pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
     found
 }
 
-/// `text` without the characters Unicode marks `Default_Ignorable_Code_Point`
-/// or as format characters (general category `Cf`), which a renderer shows as
-/// nothing or need not show: the soft hyphen, zero-width space, non-joiner and
-/// joiner, word joiner, byte order mark, direction marks and controls,
-/// variation selectors, interlinear annotation marks and tag characters
-/// amongst them.
+/// `text` without the characters Unicode marks `Default_Ignorable_Code_Point`,
+/// format characters (general category `Cf`) or controls (`Cc`) other than
+/// white space, which a renderer shows as nothing or need not show: the soft
+/// hyphen, zero-width space, non-joiner and joiner, word joiner, byte order
+/// mark, direction marks and controls, variation selectors, interlinear
+/// annotation marks, tag characters and a NUL a JSON escape decodes to amongst
+/// them.
 fn visible(text: &str) -> Cow<'_, str> {
-    // shortcut: both properties as the regex crate's Unicode tables give them
+    // shortcut: the properties as the regex crate's Unicode tables give them
     // (Unicode 16 in regex-syntax 0.8.11). A character that shows as a blank
     // cell, such as U+2800 BRAILLE PATTERN BLANK, is kept: it reads as a gap,
     // as a space does. Add such characters here if the corpus uses one inside
     // a contact.
-    static INVISIBLE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"[\p{Default_Ignorable_Code_Point}\p{Cf}]").expect("pattern"));
+    static INVISIBLE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}--\s]").expect("pattern")
+    });
     INVISIBLE.replace_all(text, "")
 }
 

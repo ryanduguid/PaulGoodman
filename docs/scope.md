@@ -186,9 +186,10 @@ The contact patterns read each text 4 ways: as written; as rendered, with HTML
 character references decoded (such as `&#64;`, `&#x40;` or `&commat;` for `@`)
 and then NFKC-normalised, which folds compatibility forms such as a full-width
 `@` or full-width digits; and each of those 2 with the characters Unicode marks
-`Default_Ignorable_Code_Point` or as format characters removed, which a reader
-does not see, such as a zero-width space, joiner or non-joiner, word joiner,
-byte order mark or soft hyphen. A contact any reading finds is reported. They
+`Default_Ignorable_Code_Point`, as format characters or as controls other than
+white space removed, which a reader does not see, such as a zero-width space,
+joiner or non-joiner, word joiner, byte order mark, soft hyphen or a NUL a JSON
+escape decodes to. A contact any reading finds is reported. They
 do not find a contact split across 2 strings, or one broken by a character that
 shows as a gap, such as a space or U+2800 BRAILLE PATTERN BLANK. The name and
 registration number patterns read text as written.

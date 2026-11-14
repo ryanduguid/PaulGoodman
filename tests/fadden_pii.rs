@@ -233,6 +233,7 @@ fn contacts_broken_by_invisible_characters_are_found() {
         ("02\u{2060} 1234 5678", &phone),
         ("02 1234\u{feff} 5678", &phone),
         ("someone@exam\u{fff9}ple.com", &email),
+        ("someone@exa\u{0}mple.com", &email),
         ("TFN: 123\u{200b} 456 782", &tfn),
         // References decoded, then the invisible characters removed.
         ("someone&#64;exam\u{200b}ple.com", &email),
