@@ -21,6 +21,7 @@ use super::corpus_paths::{
 };
 use super::dist_verify::{self, LICENCE_EXCLUDED, expected_title_files, verify_distribution};
 use super::pii::{self, Approved, Unapproved};
+use super::rulings_dist;
 use super::{Exc, Run, get, getitem, iterate, json_error};
 use crate::argparse::Exit;
 use crate::py;
@@ -1648,6 +1649,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
     }
 
     let dates = copy_compilations(&paths.root, staging, &removed, &approved)?;
+    let rulings = rulings_dist::copy(&paths.root, staging)?;
 
     // The JSONL and its readable companion both come from this filtered set.
     let mut rate_records: Vec<Json> = Vec::new();
@@ -1865,6 +1867,10 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
             compilations::NOTICE_HEADING,
             dates.join(", ")
         )
+    };
+    let rewritten = match &rulings {
+        Some(published) => format!("{rewritten}\n{}", rulings_dist::notice_section(published)),
+        None => rewritten,
     };
     if rewritten != notice {
         write_text(&licence_dst, &pts(&rewritten))?;
@@ -2134,6 +2140,13 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
             ),
         ]);
     }
+    if let Some(published) = &rulings {
+        lines.extend(
+            rulings_dist::removed_lines(published)
+                .iter()
+                .map(|l| pts(l)),
+        );
+    }
     let mut removed_md = Vec::new();
     for (i, line) in lines.into_iter().enumerate() {
         if i > 0 {
@@ -2163,6 +2176,13 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         rate_records.len(),
         size as f64 / 1e6
     ));
+    if let Some(published) = &rulings {
+        run.print(&format!(
+            "rulings: {} runs, {} documents left out (REMOVED.md)",
+            published.runs.len(),
+            published.left_out.len()
+        ));
+    }
     Ok(())
 }
 

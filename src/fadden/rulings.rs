@@ -40,17 +40,21 @@ const RIGHTS_HOSTS: [&str; 2] = ["www.ato.gov.au", "ato.gov.au"];
 const RIGHTS_PATH: &str = "/content/corporate/about_this_site.htm";
 const RIGHTS_FRAGMENT: &str = "copyright";
 
+/// The family of an edited version of private advice, which `dist` does not republish.
+pub const EDITED_VERSION: &str = "Edited version of private advice";
+
 /// docid prefix and family: ATO-authored families only.
-const FAMILIES: [(&str, &str); 9] = [
+const FAMILIES: [(&str, &str); 10] = [
     ("TXR", "Taxation Ruling"),
     ("TXD", "Taxation Determination"),
     ("GST", "GST ruling or determination"),
+    ("GSD", "GST determination"),
     ("CLR", "Class Ruling"),
     ("PRR", "Product Ruling"),
     ("COG", "Practical Compliance Guideline"),
     ("PSR", "Law Administration Practice Statement"),
     ("LIT/ICD", "Decision Impact Statement"),
-    ("EV", "Edited version of private advice"),
+    ("EV", EDITED_VERSION),
 ];
 
 const DOCID: &str = r"^[A-Za-z]{2,4}(?:/[A-Za-z0-9.-]+){1,5}$";
@@ -91,6 +95,11 @@ fn refused(message: impl Into<String>) -> RulingsError {
 /// `family_of(docid)`: the ATO document family, or None when not ATO-authored.
 pub fn family_of(docid: &str) -> Option<&'static str> {
     let upper = docid.to_uppercase();
+    // The ATO files Law Companion Rulings under COG with the guidelines, as
+    // `COG/LCR<year><number>/...`.
+    if upper.starts_with("COG/LCR") {
+        return Some("Law Companion Ruling");
+    }
     FAMILIES
         .iter()
         .find(|(prefix, _)| upper == *prefix || upper.starts_with(&format!("{prefix}/")))
@@ -837,19 +846,7 @@ pub fn run(
     let mut manifest_bytes = text_bytes(&dumps_sorted(&manifest, Some(2)));
     manifest_bytes.push(b'\n');
     write_new(&out.join("manifest.json"), &manifest_bytes)?;
-    let licence = format!(
-        "# ATO Legal Database material\n\n\
-         The rows in rulings.jsonl are derived from documents published by the Australian \
-         Taxation Office on its Legal Database. They are reproduced under the ATO copyright \
-         notice ({COPYRIGHT_NOTICE_URL}):\n\n\
-         > {NOTICE}\n\n\
-         Copyright in the source documents remains with the Australian Taxation Office for \
-         the Commonwealth of Australia. Neither the ATO nor the Commonwealth endorses this \
-         corpus. The rows are not the authorised text; read the source document at its \
-         source_url before relying on it. An edited version of private advice cannot be \
-         relied on by anyone.\n"
-    );
-    write_new(&out.join("LICENCE-NOTICE.md"), licence.as_bytes())?;
+    write_new(&out.join("LICENCE-NOTICE.md"), licence_notice().as_bytes())?;
     run.print(&format!(
         "rulings: {} documents, {} rows, {} excluded -> {out}",
         documents.len(),
@@ -863,6 +860,22 @@ pub fn run(
         run.eprint(&format!("  excluded {docid}: {reason}"));
     }
     Ok(Ok(i32::from(!excluded.is_empty())))
+}
+
+/// The `LICENCE-NOTICE.md` every run holds, which `dist` publishes with it.
+pub fn licence_notice() -> String {
+    format!(
+        "# ATO Legal Database material\n\n\
+         The rows in rulings.jsonl are derived from documents published by the Australian \
+         Taxation Office on its Legal Database. They are reproduced under the ATO copyright \
+         notice ({COPYRIGHT_NOTICE_URL}):\n\n\
+         > {NOTICE}\n\n\
+         Copyright in the source documents remains with the Australian Taxation Office for \
+         the Commonwealth of Australia. Neither the ATO nor the Commonwealth endorses this \
+         corpus. The rows are not the authorised text; read the source document at its \
+         source_url before relying on it. An edited version of private advice cannot be \
+         relied on by anyone.\n"
+    )
 }
 
 /// A line for each captured document's withdrawal notice, then what a notice leaves

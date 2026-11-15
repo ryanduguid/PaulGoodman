@@ -826,6 +826,9 @@ pub fn verify_distribution(
     for (label, ok, detail) in super::compilations::verify(dist_root, &src, &removed, &approved)? {
         check(run, label, ok, &detail);
     }
+    for (label, ok, detail) in super::rulings_dist::verify(dist_root)? {
+        check(run, label, ok, &detail);
+    }
 
     for step in &walked {
         for name in &step.files {

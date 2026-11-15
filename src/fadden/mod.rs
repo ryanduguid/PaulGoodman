@@ -33,6 +33,7 @@ pub mod publication_bundles;
 pub mod quotes;
 pub mod rates;
 pub mod rulings;
+pub mod rulings_dist;
 pub mod search;
 pub mod versions;
 pub mod witness;

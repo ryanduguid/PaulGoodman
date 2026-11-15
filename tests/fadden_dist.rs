@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{Value, json};
-use tax_radar_au::fadden::{compilations::overlaps, dist, dist_verify};
+use sha2::{Digest, Sha256};
+use tax_radar_au::fadden::http::{Failure, Http, Request, Response};
+use tax_radar_au::fadden::{Run, compilations::overlaps, dist, dist_verify, rulings};
 use tax_radar_au::pyjson::{self, Json};
 use tax_radar_au::pyos::OsError;
+use tax_radar_au::pypath::PyPath;
 
 const PUBLIC_ID: &str = "C2004A00001";
 const PRIVATE_ID: &str = "C2004A00002";
@@ -2982,5 +2985,593 @@ fn windows_may_meet_but_not_overlap() {
         )
         .len(),
         1
+    );
+}
+
+// ---------------------------------------------------------------- rulings
+
+const RULING: &str = "TXR/TR20991/NAT/ATO/00001";
+const DETERMINATION: &str = "TXD/TD20991/NAT/ATO/00001";
+const LCR: &str = "COG/LCR20991/NAT/ATO/00001";
+const RUN: &str = "run-2099-02-01";
+
+/// A fabricated Legal Database page for `docid` that prints the ATO's notice,
+/// with `extra` paragraphs after its first.
+fn ruling_page(docid: &str, extra: &str) -> String {
+    let notice = tax_radar_au::fadden::rulings::NOTICE;
+    format!(
+        r##"<html><head>
+<meta content="{docid}" name="ato.reference.id" />
+<meta content="Fabricated document {docid}" name="DC.Title" />
+<meta content="ATO Ruling" name="dc.Type.documentType" />
+<meta content="2099/01/31" name="dc.Date.Issued" />
+</head><body><div id="main-content"><div id="LawBody">
+<p><strong>Ruling</strong><a name="H1" id="H1"></a></p>
+<p class="indentlevel0"><a name="P1" id="P1"></a>1. A fabricated paragraph.</p>
+{extra}
+<p class="indentlevel0"><a name="COPYRIGHT" id="COPYRIGHT"></a>Copyright line</p>
+<p>{notice}</p>
+</div></div></body></html>"##
+    )
+}
+
+/// Serves each docid's fabricated page; no request leaves the test.
+struct Pages(Vec<(String, String)>);
+
+impl Http for Pages {
+    fn get(
+        &mut self,
+        url: &str,
+        _limit: Option<usize>,
+        _request: &mut Request,
+    ) -> Result<Response, Failure> {
+        let docid = url.strip_prefix(rulings::BASE_URL).unwrap();
+        let (_, page) = self.0.iter().find(|(d, _)| d == docid).unwrap();
+        Ok(Response {
+            url: url.into(),
+            content_type: "text/html; charset=utf-8".into(),
+            body: page.clone().into_bytes(),
+        })
+    }
+    fn sleep(&mut self, _seconds: f64) {}
+    fn today(&mut self) -> String {
+        "2099-02-01".into()
+    }
+}
+
+/// The rulings stage's run of `pages` under the fixture's `rulings/<RUN>/`.
+fn rulings_run(f: &Fixture, pages: Vec<(&str, String)>) -> PathBuf {
+    rulings_run_named(f, RUN, pages)
+}
+
+/// The rulings stage's run of `pages` under the fixture's `rulings/<name>/`.
+fn rulings_run_named(f: &Fixture, name: &str, pages: Vec<(&str, String)>) -> PathBuf {
+    let out = f.root.join("rulings").join(name);
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    let targets: Vec<String> = pages.iter().map(|(d, _)| d.to_string()).collect();
+    let mut http = Pages(pages.into_iter().map(|(d, p)| (d.into(), p)).collect());
+    let code = rulings::run(
+        &mut http,
+        &targets,
+        &PyPath::new(&out.to_string_lossy()),
+        &mut Run::default(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(code, 0);
+    out
+}
+
+fn sha256_hex(path: &Path) -> String {
+    Sha256::digest(std::fs::read(path).unwrap())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Rewrite `rulings/sources.json`'s digests for a run edited after `dist`.
+fn relist(dist: &Path) {
+    let path = dist.join("rulings").join("sources.json");
+    let mut listing = read_json(&path);
+    let run = listing["runs"][0]["name"].as_str().unwrap().to_string();
+    for file in ["LICENCE-NOTICE.md", "manifest.json", "rulings.jsonl"] {
+        let published = dist.join("rulings").join(&run).join(file);
+        listing["runs"][0]["files"][file] = json!(sha256_hex(&published));
+    }
+    std::fs::write(&path, listing.to_string()).unwrap();
+}
+
+fn edit(path: &Path, from: &str, to: &str) {
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(text.contains(from), "{from} not in {}", path.display());
+    std::fs::write(path, text.replace(from, to)).unwrap();
+}
+
+fn flat(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+const RULINGS_CHECKS: [&str; 7] = [
+    "rulings holds only the listed runs and their files",
+    "rulings files match their listed digests",
+    "no rulings file names people or contacts",
+    "each rulings run agrees with its manifest",
+    "every published ruling is under the ATO notice and not private advice",
+    "REMOVED.md lists every ruling left out",
+    "licence notice covers the ATO rulings",
+];
+
+#[test]
+fn a_rulings_run_is_published_with_its_notice_digests_and_checks() {
+    let f = fixture();
+    let source = rulings_run(
+        &f,
+        vec![
+            (RULING, ruling_page(RULING, "")),
+            (LCR, ruling_page(LCR, "")),
+        ],
+    );
+    let dist = publish(&f);
+    let published = dist.join("rulings").join(RUN);
+    let mut files: Vec<String> = std::fs::read_dir(&published)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    files.sort();
+    // The raw pages, with the ATO site's unscanned header and footer, stay behind.
+    assert_eq!(
+        files,
+        ["LICENCE-NOTICE.md", "manifest.json", "rulings.jsonl"]
+    );
+    assert_eq!(
+        std::fs::read(published.join("rulings.jsonl")).unwrap(),
+        std::fs::read(source.join("rulings.jsonl")).unwrap()
+    );
+    let manifest = read_json(&published.join("manifest.json"));
+    assert_eq!(manifest, read_json(&source.join("manifest.json")));
+    let families: Vec<&str> = manifest["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["family"].as_str().unwrap())
+        .collect();
+    assert_eq!(families, ["Taxation Ruling", "Law Companion Ruling"]);
+    let listing = read_json(&dist.join("rulings").join("sources.json"));
+    assert_eq!(listing["runs"][0]["name"], RUN);
+    assert_eq!(listing["runs"][0]["rows"], 2);
+    for file in &files {
+        assert_eq!(
+            listing["runs"][0]["files"][file],
+            sha256_hex(&published.join(file))
+        );
+    }
+    let notice = flat(&std::fs::read_to_string(dist.join("LICENCE-NOTICE.md")).unwrap());
+    for needed in [
+        "## ATO rulings",
+        rulings::NOTICE,
+        "https://www.ato.gov.au/about-ato/using-our-website/copyright-notice",
+        "Neither the ATO nor the Commonwealth endorses this corpus.",
+    ] {
+        assert!(notice.contains(&flat(needed)), "{needed}");
+    }
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    for label in RULINGS_CHECKS {
+        assert_eq!(status(&out, label), "PASS", "{label}");
+    }
+    // A row changed after publication no longer matches its listed digest.
+    edit(
+        &published.join("rulings.jsonl"),
+        "A fabricated paragraph.",
+        "An edited paragraph.",
+    );
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "rulings files match their listed digests"),
+        "FAIL"
+    );
+}
+
+#[test]
+fn a_ruling_holding_a_contact_stops_the_distribution_and_fails_the_verifier() {
+    let f = fixture();
+    let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+    let rows = source.join("rulings.jsonl");
+    // The stage scans what it captures; this contact came later, behind a JSON escape.
+    // A backslash (code point 92) then `u0040`: JSON's escape for `@`.
+    let hidden = &format!("Write to rulings{}u0040example.com.au.", char::from(92u8));
+    edit(&rows, "A fabricated paragraph.", hidden);
+    let (code, _, err) = stage(&f, "dist");
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("holds a contact"), "{err}");
+    assert!(!f.dist().exists());
+
+    edit(&rows, hidden, "A fabricated paragraph.");
+    let dist = publish(&f);
+    let published = dist.join("rulings").join(RUN).join("rulings.jsonl");
+    edit(&published, "A fabricated paragraph.", "Call 02 6216 1111.");
+    relist(&dist);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "no rulings file names people or contacts"),
+        "FAIL"
+    );
+    assert_eq!(
+        status(&out, "rulings files match their listed digests"),
+        "PASS"
+    );
+}
+
+#[test]
+fn a_run_notice_edited_by_hand_is_not_published() {
+    let f = fixture();
+    let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+    let claim = "The ATO endorses this corpus.";
+    let notice = source.join("LICENCE-NOTICE.md");
+    let original = std::fs::read_to_string(&notice).unwrap();
+    edit(
+        &notice,
+        "relied on by anyone.",
+        &format!("relied on by anyone. {claim}"),
+    );
+    let dist = publish(&f);
+    let published = dist.join("rulings").join(RUN).join("LICENCE-NOTICE.md");
+    assert_eq!(std::fs::read_to_string(&published).unwrap(), original);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+
+    edit(
+        &published,
+        "relied on by anyone.",
+        &format!("relied on by anyone. {claim}"),
+    );
+    relist(&dist);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "each rulings run agrees with its manifest"),
+        "FAIL"
+    );
+}
+
+#[test]
+fn the_verifier_fails_on_a_changed_catalogue_or_a_missing_rulings_folder() {
+    let published = || {
+        let f = fixture();
+        rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+        let dist = publish(&f);
+        (f, dist.join("rulings"))
+    };
+    // sources.json carries no digest of its own: its capture date must match the manifest.
+    let (f, rulings) = published();
+    let path = rulings.join("sources.json");
+    let mut listing = read_json(&path);
+    listing["runs"][0]["fetched_on"] = json!("2099-01-01");
+    std::fs::write(&path, listing.to_string()).unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "each rulings run agrees with its manifest"),
+        "FAIL"
+    );
+
+    // A distribution whose notice declares rulings but whose rulings folder is gone.
+    let (f, rulings) = published();
+    std::fs::remove_dir_all(&rulings).unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    let label = "rulings holds only the listed runs and their files";
+    assert_eq!(status(&out, label), "FAIL");
+
+    // An empty catalogue with its run removed.
+    let (f, rulings) = published();
+    std::fs::remove_dir_all(rulings.join(RUN)).unwrap();
+    let path = rulings.join("sources.json");
+    let mut listing = read_json(&path);
+    listing["runs"] = json!([]);
+    std::fs::write(&path, listing.to_string()).unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(status(&out, label), "FAIL");
+}
+
+/// A published run holding an edited version of private advice, which `dist`
+/// leaves out, and a document the stage left out with a reason spanning 2 lines.
+fn published_with_a_stage_exclusion() -> (Fixture, PathBuf) {
+    let f = fixture();
+    let advice = "EV/1099000000001";
+    let pages = vec![
+        (RULING, ruling_page(RULING, "")),
+        (advice, ruling_page(advice, "")),
+    ];
+    let source = rulings_run(&f, pages);
+    let path = source.join("manifest.json");
+    let mut manifest = read_json(&path);
+    manifest["excluded"].as_array_mut().unwrap().push(json!({
+        "docid": DETERMINATION, "reason": "HTTP 404\nnot found | gone"
+    }));
+    std::fs::write(&path, manifest.to_string()).unwrap();
+    let dist = publish(&f);
+    (f, dist)
+}
+
+#[test]
+fn what_the_stage_left_out_is_listed_with_what_dist_left_out() {
+    let (f, dist) = published_with_a_stage_exclusion();
+    let removed = std::fs::read_to_string(dist.join("REMOVED.md")).unwrap();
+    let row = format!(r"| {RUN} | {DETERMINATION} | HTTP 404 not found \| gone |");
+    assert!(removed.lines().any(|l| l == row), "{removed}");
+    let listing = read_json(&dist.join("rulings").join("sources.json"));
+    assert_eq!(listing["runs"][0]["left_out"].as_array().unwrap().len(), 2);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn the_verifier_rebuilds_the_catalogue_from_the_run() {
+    let mut passed = Vec::new();
+    for tamper in [
+        "an entry dropped from left_out",
+        "a digest for a file the run lacks",
+        "a changed reuse notice",
+        "the run listed twice",
+    ] {
+        let (f, dist) = published_with_a_stage_exclusion();
+        let path = dist.join("rulings").join("sources.json");
+        let mut listing = read_json(&path);
+        let (runs, run) = (&mut listing["runs"], 0);
+        match tamper {
+            "an entry dropped from left_out" => {
+                runs[run]["left_out"].as_array_mut().unwrap().remove(0);
+            }
+            "a digest for a file the run lacks" => runs[run]["files"]["raw.html"] = json!("00"),
+            "the run listed twice" => {
+                let copy = runs[run].clone();
+                runs.as_array_mut().unwrap().push(copy);
+            }
+            _ => listing["reuse_notice"] = json!("Free to use; endorsed by the ATO."),
+        }
+        std::fs::write(&path, listing.to_string()).unwrap();
+        let (code, out) = verify(&f);
+        let label = if tamper.starts_with("the run") || tamper.contains("notice") {
+            "rulings holds only the listed runs and their files"
+        } else {
+            "each rulings run agrees with its manifest"
+        };
+        if code != 1 || status(&out, label) != "FAIL" {
+            passed.push(tamper);
+        }
+    }
+    assert!(passed.is_empty(), "dist_verify passed after {passed:?}");
+}
+
+#[test]
+fn removed_md_must_hold_each_left_out_row() {
+    // The same document left out of 2 runs needs 2 rows.
+    let f = fixture();
+    let advice = "EV/1099000000001";
+    for run in ["run-a", "run-b"] {
+        let pages = vec![
+            (RULING, ruling_page(RULING, "")),
+            (advice, ruling_page(advice, "")),
+        ];
+        rulings_run_named(&f, run, pages);
+    }
+    let dist = publish(&f);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    let path = dist.join("REMOVED.md");
+    let removed = std::fs::read_to_string(&path).unwrap();
+    let row = format!("| run-b | {advice} |");
+    let kept: Vec<&str> = removed.lines().filter(|l| !l.starts_with(&row)).collect();
+    assert_eq!(kept.len() + 1, removed.lines().count());
+    std::fs::write(&path, kept.join("\n") + "\n").unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "REMOVED.md lists every ruling left out"),
+        "FAIL"
+    );
+}
+
+#[test]
+fn a_ruling_hiding_a_contact_behind_an_invisible_character_stops_the_distribution() {
+    // An email address broken by an escaped zero-width joiner or NUL, added
+    // after the stage scanned the run.
+    for invisible in ["\\u200d", "\\u0000"] {
+        let f = fixture();
+        let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+        edit(
+            &source.join("rulings.jsonl"),
+            "A fabricated paragraph.",
+            &format!("Write to alice@exa{invisible}mple.org."),
+        );
+        let (code, _, err) = stage(&f, "dist");
+        assert_eq!(code, 1, "{invisible}: {err}");
+        assert!(err.contains("holds a contact"), "{err}");
+        assert!(!f.dist().exists());
+    }
+}
+
+#[test]
+fn no_allowlist_entry_approves_a_contact_in_a_ruling() {
+    // A run named like a title the allowlist approves a phone number for.
+    let f = fixture();
+    let title = "C2099A00001";
+    let contact = "Call 02 6216 1111.";
+    let (kind, digest) = tax_radar_au::fadden::pii::contact_fingerprints(contact)
+        .pop()
+        .unwrap();
+    let policy_path = f.build.join("pii_contact_allowlist.json");
+    let mut policy = read_json(&policy_path);
+    policy["entries"].as_array_mut().unwrap().push(json!({
+        "kind": kind, "sha256": digest, "register_id": title,
+        "reason": "Fabricated organisational contact"
+    }));
+    std::fs::write(&policy_path, policy.to_string()).unwrap();
+    let source = rulings_run_named(&f, title, vec![(RULING, ruling_page(RULING, ""))]);
+    // In the manifest only, where no row carries it.
+    let manifest = source.join("manifest.json");
+    edit(
+        &manifest,
+        "\"ATO Ruling\"",
+        &format!("\"ATO Ruling. {contact}\""),
+    );
+    let (code, _, err) = stage(&f, "dist");
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("holds a contact"), "{err}");
+    assert!(!f.dist().exists());
+
+    edit(
+        &manifest,
+        &format!("\"ATO Ruling. {contact}\""),
+        "\"ATO Ruling\"",
+    );
+    let dist = publish(&f);
+    let published = dist.join("rulings").join(title).join("rulings.jsonl");
+    edit(&published, "A fabricated paragraph.", contact);
+    relist(&dist);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "no rulings file names people or contacts"),
+        "FAIL"
+    );
+}
+
+/// A run folder name the rulings reader refuses, such as one ending in a line
+/// break, stops `dist`.
+#[cfg(unix)]
+#[test]
+fn a_run_name_ending_in_a_line_break_is_refused() {
+    let f = fixture();
+    rulings_run_named(&f, "run\n", vec![(RULING, ruling_page(RULING, ""))]);
+    let (code, _, err) = stage(&f, "dist");
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("is not a run directory the rulings reader accepts"),
+        "{err}"
+    );
+    assert!(!f.dist().exists());
+}
+
+#[test]
+fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
+    let f = fixture();
+    let marked = ruling_page(
+        RULING,
+        r#"<p class="indentlevel0"><a name="P2" id="P2"></a>2. Table 1 is &#169; Example Standards Body 2099, reproduced with permission.</p>"#,
+    );
+    let mislabelled = "PRR/PR20991/NAT/ATO/00001";
+    let unnoticed = "CLR/CR20991/NAT/ATO/00001";
+    let advice = "EV/1099000000001";
+    // A page that only links to a copyright page, which the stage accepts.
+    let linked = "TXD/TD20992/NAT/ATO/00001";
+    let linked_page = ruling_page(linked, "")
+        .replace(rulings::NOTICE, "")
+        .replace(
+            "</head>",
+            r#"<meta content="http://www.ato.gov.au/content/corporate/about_this_site.htm#copyright" name="dc.Rights" /></head>"#,
+        );
+    let source = rulings_run(
+        &f,
+        vec![
+            (RULING, marked),
+            (DETERMINATION, ruling_page(DETERMINATION, "")),
+            (mislabelled, ruling_page(mislabelled, "")),
+            (unnoticed, ruling_page(unnoticed, "")),
+            (advice, ruling_page(advice, "")),
+            (linked, linked_page),
+            (LCR, ruling_page(LCR, "")),
+        ],
+    );
+    // The stage refuses a court judgment and labels each document by its docid;
+    // a run edited by hand can still hold a judgment or a wrong label.
+    let judgment = "JUD/2099ATC20-001";
+    for file in ["manifest.json", "rulings.jsonl"] {
+        edit(&source.join(file), DETERMINATION, judgment);
+        edit(&source.join(file), "Product Ruling", "Class Ruling");
+    }
+    // A manifest that records no notice for a document.
+    let manifest_path = source.join("manifest.json");
+    let mut manifest = read_json(&manifest_path);
+    for document in manifest["documents"].as_array_mut().unwrap() {
+        if document["docid"] == unnoticed {
+            document.as_object_mut().unwrap().remove("licence_basis");
+        }
+    }
+    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let dist = publish(&f);
+    let published = dist.join("rulings").join(RUN);
+    let manifest = read_json(&published.join("manifest.json"));
+    let kept: Vec<&str> = manifest["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["docid"].as_str().unwrap())
+        .collect();
+    assert_eq!(kept, [LCR]);
+    assert_eq!(manifest["rows"], 1);
+    let rows = std::fs::read_to_string(published.join("rulings.jsonl")).unwrap();
+    assert_eq!(rows.lines().count(), 1);
+    assert!(rows.contains(LCR) && !rows.contains("Example Standards Body"));
+    let reasons: Vec<(String, String)> = manifest["excluded"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["docid"].as_str().unwrap().into(),
+                e["reason"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    let reason = |docid: &str| {
+        let found: Vec<&str> = reasons
+            .iter()
+            .filter(|(d, _)| d == docid)
+            .map(|(_, r)| r.as_str())
+            .collect();
+        assert_eq!(found.len(), 1, "{docid}: {reasons:?}");
+        found[0].to_string()
+    };
+    assert_eq!(reasons.len(), 6, "{reasons:?}");
+    assert!(reason(RULING).contains("copyright notice of its own"));
+    assert!(reason(judgment).contains("not an ATO-authored"));
+    assert!(reason(mislabelled).contains("labelled \"Class Ruling\""));
+    for docid in [unnoticed, linked] {
+        assert!(reason(docid).contains("did not print the ATO's reuse notice"));
+    }
+    assert!(reason(advice).contains("edited version of private advice"));
+    let listing = read_json(&dist.join("rulings").join("sources.json"));
+    assert_eq!(listing["runs"][0]["left_out"].as_array().unwrap().len(), 6);
+    let removed = std::fs::read_to_string(dist.join("REMOVED.md")).unwrap();
+    assert!(removed.contains("## ATO rulings left out"));
+    for docid in [RULING, judgment, mislabelled, unnoticed, advice, linked] {
+        assert!(removed.contains(docid), "{docid}");
+    }
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+
+    // A label its docid contradicts (a Law Companion Ruling captured before the
+    // stage told them apart) fails the verifier.
+    for file in ["manifest.json", "rulings.jsonl"] {
+        edit(
+            &published.join(file),
+            "Law Companion Ruling",
+            "Practical Compliance Guideline",
+        );
+    }
+    relist(&dist);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(
+            &out,
+            "every published ruling is under the ATO notice and not private advice"
+        ),
+        "FAIL"
     );
 }

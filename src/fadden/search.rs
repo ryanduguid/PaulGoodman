@@ -683,6 +683,12 @@ fn read_rulings_run(dir: &str) -> Result<RulingsRun, Exc> {
     })
 }
 
+/// Refuse a `rulings` run directory the stage could not have written, as
+/// `search build --rulings` does; `dist` publishes only a run that passes.
+pub(super) fn check_rulings_run(dir: &str) -> Result<(), Exc> {
+    read_rulings_run(dir).map(|_| ())
+}
+
 /// One line of `rulings.jsonl`, at `place`, as the stage writes it.
 fn ruling_row(place: &str, line: &str) -> Result<RulingRow, Exc> {
     let row = pyjson::loads_standard(line).map_err(|_| refused(format!("{place} is not JSON")))?;
