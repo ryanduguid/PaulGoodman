@@ -146,12 +146,13 @@ What a published run holds:
 | `dist/rulings/<run>/rulings.jsonl` | The run's rows, byte for byte, less any document left out |
 | `dist/rulings/<run>/manifest.json` | The run's manifest, with each document left out moved to `excluded` with its reason and `rows` recounted |
 | `dist/rulings/<run>/LICENCE-NOTICE.md` | The stage's reuse notice, as the stage writes it; an edit to the run's copy is not carried |
-| `dist/rulings/sources.json` | Each run's capture date, document and row counts, the SHA-256 of each of its 3 files and the documents left out |
+| `dist/rulings/sources.json` | Each run's capture date, document and row counts, the SHA-256 of each of its 3 files and every document left out, by the stage or by `dist` (the manifest's `excluded`) |
 
 The distribution's `LICENCE-NOTICE.md` gains an `ATO rulings` section that quotes the
 notice, gives its address, says the rulings are not covered by CC BY 4.0 and that
 neither the ATO nor the Commonwealth endorses the corpus. `REMOVED.md` gains an
-`ATO rulings left out` table. Point `AUS_ACCOUNTING_RULINGS_ROOT` at `dist/rulings`. On
+`ATO rulings left out` table, with a row for each document the stage or `dist` left
+out. Point `AUS_ACCOUNTING_RULINGS_ROOT` at `dist/rulings`. On
 15 November 2026 `aus-accounting-mcp` 0.9.0 answered from a published run of 2 Taxation
 Rulings and a Class Ruling, but refused a run holding a Law Companion Ruling and a GST
 determination, as its list of families has neither label yet.
@@ -185,7 +186,8 @@ What is not published:
 or `REMOVED.md` has a rulings section: only the listed runs (at least one) and their
 3 files, their digests, the privacy patterns over every file and row, each run's
 agreement with its manifest (as `search build --rulings` checks it, with the stage's
-own notice and the run's `sources.json` entry matching its manifest), every published
+own notice and the run's `sources.json` entry rebuilt from its manifest and files),
+the catalogue's source and reuse notice, each run listed once, every published
 document's coverage by the notice (and that none is an edited version of private
 advice), `REMOVED.md` holding each left-out document's row exactly, and the licence
 notice's `ATO rulings` section.

@@ -190,14 +190,8 @@ pub fn copy(root: &str, staging: &str) -> Result<Option<Published>, Exc> {
     if listed.is_empty() {
         return Err(Exc::Runtime("rulings holds no run".into()));
     }
-    let listing = Json::obj([
-        ("source", Json::str("ATO Legal Database")),
-        ("reuse_notice", Json::str(NOTICE)),
-        ("reuse_notice_url", Json::str(COPYRIGHT_NOTICE_URL)),
-        ("runs", Json::Array(listed)),
-    ]);
     let path = pypath::join(&target, "sources.json");
-    write_new(&path, &json_bytes(&listing))?;
+    write_new(&path, &json_bytes(&listing(listed)))?;
     if private(&path, FOLDER)? {
         return Err(Exc::Runtime(
             "rulings/sources.json names a private person or holds a contact".into(),
@@ -244,17 +238,26 @@ fn copy_run(
     published
         .runs
         .push((name.to_string(), text(&manifest, "fetched_on").to_string()));
-    let listed = listed_left_out(&manifest, &left_out);
     Ok(listing_entry(
         name,
         &manifest,
         Json::Object(files.into_iter().collect()),
-        listed,
     ))
 }
 
-/// A run's entry in `rulings/sources.json`, from its published manifest.
-fn listing_entry(name: &str, manifest: &Json, files: Json, left_out: Vec<Json>) -> Json {
+/// `rulings/sources.json`, holding the entries of `runs`.
+fn listing(runs: Vec<Json>) -> Json {
+    Json::obj([
+        ("source", Json::str("ATO Legal Database")),
+        ("reuse_notice", Json::str(NOTICE)),
+        ("reuse_notice_url", Json::str(COPYRIGHT_NOTICE_URL)),
+        ("runs", Json::Array(runs)),
+    ])
+}
+
+/// A run's entry in `rulings/sources.json`, from its published manifest: every
+/// document left out, by the stage or by `dist`, is the manifest's `excluded`.
+fn listing_entry(name: &str, manifest: &Json, files: Json) -> Json {
     Json::obj([
         ("name", Json::str(name)),
         ("fetched_on", Json::str(text(manifest, "fetched_on"))),
@@ -264,7 +267,7 @@ fn listing_entry(name: &str, manifest: &Json, files: Json, left_out: Vec<Json>) 
         ),
         ("rows", manifest.at("rows").clone()),
         ("files", files),
-        ("left_out", Json::Array(left_out)),
+        ("left_out", manifest.at("excluded").clone()),
     ])
 }
 
@@ -333,12 +336,15 @@ fn leave_out(
                     ("docid", Json::str(&docid)),
                     ("reason", Json::str(&reason)),
                 ]));
-                published
-                    .left_out
-                    .push((name.to_string(), docid.clone(), reason));
                 left_out.insert(docid);
             }
         }
+    }
+    for entry in &excluded {
+        let (docid, reason) = (text(entry, "docid"), text(entry, "reason"));
+        published
+            .left_out
+            .push((name.to_string(), docid.to_string(), reason.to_string()));
     }
     let count = rows
         .iter()
@@ -355,15 +361,6 @@ fn leave_out(
         }
     }
     left_out
-}
-
-/// The manifest's exclusions for the documents `dist` left out.
-fn listed_left_out(manifest: &Json, left_out: &BTreeSet<String>) -> Vec<Json> {
-    iterate_or_empty(manifest.at("excluded"))
-        .iter()
-        .filter(|e| left_out.contains(text(e, "docid")))
-        .cloned()
-        .collect()
 }
 
 /// What the checks found under a distribution's `rulings/`.
@@ -406,7 +403,19 @@ pub fn verify(dist_root: &str) -> Result<Vec<Check>, Exc> {
     }
     let listing_path = pypath::join(&folder, "sources.json");
     let runs = if entry_kind(&folder) == "directory" && entry_kind(&listing_path) == "file" {
-        listed_runs(&load(&listing_path)?)
+        let listing_json = load(&listing_path)?;
+        let runs = listed_runs(&listing_json);
+        let names: BTreeSet<&str> = runs.iter().map(|(name, _)| name.as_str()).collect();
+        if names.len() != runs.len() {
+            found.stray.push("sources.json lists a run twice".into());
+        }
+        let rebuilt = listing(runs.iter().map(|(_, run)| run.clone()).collect());
+        if dumps_sorted(&rebuilt, None) != dumps_sorted(&listing_json, None) {
+            found
+                .stray
+                .push("sources.json's source or reuse notice".into());
+        }
+        runs
     } else {
         found.stray.push(format!("{FOLDER} has no sources.json"));
         Vec::new()
@@ -501,17 +510,13 @@ fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> 
             "{name}/LICENCE-NOTICE.md is not the stage's notice"
         ));
     }
-    // The listing's left-out documents must be ones the manifest excludes.
-    let excluded: Vec<Vec<u32>> = iterate_or_empty(manifest.at("excluded"))
-        .iter()
-        .map(|e| dumps_sorted(e, None))
-        .collect();
-    let left_out = iterate_or_empty(run.at("left_out"))
-        .iter()
-        .filter(|e| excluded.contains(&dumps_sorted(e, None)))
-        .cloned()
-        .collect();
-    let expected = listing_entry(name, &manifest, run.at("files").clone(), left_out);
+    // Rebuilt from the published manifest and bytes alone, never from the entry itself.
+    let mut files = Vec::new();
+    for file in RUN_FILES {
+        let digest = sha256(&read(&pypath::join(directory, file))?);
+        files.push((PyStr::Text(file.into()), Json::str(&digest)));
+    }
+    let expected = listing_entry(name, &manifest, Json::Object(files.into_iter().collect()));
     if dumps_sorted(&expected, None) != dumps_sorted(run, None) {
         found.runs.push(format!(
             "sources.json's entry for {name} differs from its manifest"
@@ -616,7 +621,8 @@ pub fn removed_lines(published: &Published) -> Vec<String> {
     lines
 }
 
-/// `REMOVED.md`'s table row for one document left out.
+/// `REMOVED.md`'s table row for one document left out, on one line.
 fn removed_line(run: &str, docid: &str, reason: &str) -> String {
-    format!("| {run} | {docid} | {} |", reason.replace('|', r"\|"))
+    let cell = |value: &str| value.replace('|', r"\|").replace(['\r', '\n'], " ");
+    format!("| {run} | {} | {} |", cell(docid), cell(reason))
 }

@@ -3278,6 +3278,68 @@ fn the_verifier_fails_on_a_changed_catalogue_or_a_missing_rulings_folder() {
 }
 
 #[test]
+fn the_catalogue_lists_what_the_stage_left_out_and_is_rebuilt_from_the_run() {
+    let published = || {
+        let f = fixture();
+        let advice = "EV/1099000000001";
+        let pages = vec![
+            (RULING, ruling_page(RULING, "")),
+            (advice, ruling_page(advice, "")),
+        ];
+        let source = rulings_run(&f, pages);
+        // What the stage itself left out, with a reason spanning 2 lines.
+        let path = source.join("manifest.json");
+        let mut manifest = read_json(&path);
+        manifest["excluded"].as_array_mut().unwrap().push(json!({
+            "docid": DETERMINATION, "reason": "HTTP 404\nnot found | gone"
+        }));
+        std::fs::write(&path, manifest.to_string()).unwrap();
+        let dist = publish(&f);
+        (f, dist)
+    };
+    let (f, dist) = published();
+    let removed = std::fs::read_to_string(dist.join("REMOVED.md")).unwrap();
+    let row = format!(r"| {RUN} | {DETERMINATION} | HTTP 404 not found \| gone |");
+    assert!(removed.lines().any(|l| l == row), "{removed}");
+    let listing = read_json(&dist.join("rulings").join("sources.json"));
+    assert_eq!(listing["runs"][0]["left_out"].as_array().unwrap().len(), 2);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+
+    let manifest_label = "each rulings run agrees with its manifest";
+    let tampers: [(&str, fn(&mut Value)); 4] = [
+        ("an entry dropped from left_out", |l| {
+            l["runs"][0]["left_out"].as_array_mut().unwrap().remove(0);
+        }),
+        ("a digest for a file the run lacks", |l| {
+            l["runs"][0]["files"]["raw.html"] = json!("00");
+        }),
+        ("a changed reuse notice", |l| {
+            l["reuse_notice"] = json!("Free to use; endorsed by the ATO.");
+        }),
+        ("the run listed twice", |l| {
+            let run = l["runs"][0].clone();
+            l["runs"].as_array_mut().unwrap().push(run);
+        }),
+    ];
+    for (i, (tamper, change)) in tampers.into_iter().enumerate() {
+        let (f, dist) = published();
+        let path = dist.join("rulings").join("sources.json");
+        let mut listing = read_json(&path);
+        change(&mut listing);
+        std::fs::write(&path, listing.to_string()).unwrap();
+        let (code, out) = verify(&f);
+        assert_eq!(code, 1, "{tamper}: {out}");
+        let label = if i < 2 {
+            manifest_label
+        } else {
+            "rulings holds only the listed runs and their files"
+        };
+        assert_eq!(status(&out, label), "FAIL", "{tamper}: {out}");
+    }
+}
+
+#[test]
 fn removed_md_must_hold_each_left_out_row() {
     // The same document left out of 2 runs needs 2 rows.
     let f = fixture();
