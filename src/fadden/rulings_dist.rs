@@ -494,7 +494,7 @@ fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> 
         found.stray.push(format!("{name}: {}", entries.join(" ")));
         return Ok(());
     }
-    verify_files(directory, name, run, found)?;
+    let files = verify_files(directory, name, run, found)?;
     match check_rulings_run(directory) {
         Ok(()) => {}
         Err(Exc::Value { message, .. }) => {
@@ -511,12 +511,7 @@ fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> 
         ));
     }
     // Rebuilt from the published manifest and bytes alone, never from the entry itself.
-    let mut files = Vec::new();
-    for file in RUN_FILES {
-        let digest = sha256(&read(&pypath::join(directory, file))?);
-        files.push((PyStr::Text(file.into()), Json::str(&digest)));
-    }
-    let expected = listing_entry(name, &manifest, Json::Object(files.into_iter().collect()));
+    let expected = listing_entry(name, &manifest, files);
     if dumps_sorted(&expected, None) != dumps_sorted(run, None) {
         found.runs.push(format!(
             "sources.json's entry for {name} differs from its manifest"
@@ -538,13 +533,22 @@ fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> 
     Ok(())
 }
 
-/// Each of a run's files against its listed digest and the privacy patterns.
-fn verify_files(directory: &str, name: &str, run: &Json, found: &mut Findings) -> Result<(), Exc> {
+/// Each of a run's files against its listed digest and the privacy patterns;
+/// returns the files' digests as `rulings/sources.json` lists them.
+fn verify_files(
+    directory: &str,
+    name: &str,
+    run: &Json,
+    found: &mut Findings,
+) -> Result<Json, Exc> {
+    let mut digests = Vec::new();
     for file in RUN_FILES {
         let path = pypath::join(directory, file);
-        if run.at("files").at(file).as_str() != Some(sha256(&read(&path)?).as_str()) {
+        let digest = sha256(&read(&path)?);
+        if run.at("files").at(file).as_str() != Some(digest.as_str()) {
             found.digests.push(format!("{name}/{file}"));
         }
+        digests.push((PyStr::Text(file.into()), Json::str(&digest)));
         match private(&path, name) {
             Ok(false) => {}
             Ok(true) => found.private.push(format!("{name}/{file}")),
@@ -554,7 +558,7 @@ fn verify_files(directory: &str, name: &str, run: &Json, found: &mut Findings) -
             Err(error) => return Err(error),
         }
     }
-    Ok(())
+    Ok(Json::Object(digests.into_iter().collect()))
 }
 
 fn report(found: &Findings, noticed: bool) -> Vec<Check> {
