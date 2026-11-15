@@ -846,19 +846,7 @@ pub fn run(
     let mut manifest_bytes = text_bytes(&dumps_sorted(&manifest, Some(2)));
     manifest_bytes.push(b'\n');
     write_new(&out.join("manifest.json"), &manifest_bytes)?;
-    let licence = format!(
-        "# ATO Legal Database material\n\n\
-         The rows in rulings.jsonl are derived from documents published by the Australian \
-         Taxation Office on its Legal Database. They are reproduced under the ATO copyright \
-         notice ({COPYRIGHT_NOTICE_URL}):\n\n\
-         > {NOTICE}\n\n\
-         Copyright in the source documents remains with the Australian Taxation Office for \
-         the Commonwealth of Australia. Neither the ATO nor the Commonwealth endorses this \
-         corpus. The rows are not the authorised text; read the source document at its \
-         source_url before relying on it. An edited version of private advice cannot be \
-         relied on by anyone.\n"
-    );
-    write_new(&out.join("LICENCE-NOTICE.md"), licence.as_bytes())?;
+    write_new(&out.join("LICENCE-NOTICE.md"), licence_notice().as_bytes())?;
     run.print(&format!(
         "rulings: {} documents, {} rows, {} excluded -> {out}",
         documents.len(),
@@ -872,6 +860,22 @@ pub fn run(
         run.eprint(&format!("  excluded {docid}: {reason}"));
     }
     Ok(Ok(i32::from(!excluded.is_empty())))
+}
+
+/// The `LICENCE-NOTICE.md` every run holds, which `dist` publishes with it.
+pub fn licence_notice() -> String {
+    format!(
+        "# ATO Legal Database material\n\n\
+         The rows in rulings.jsonl are derived from documents published by the Australian \
+         Taxation Office on its Legal Database. They are reproduced under the ATO copyright \
+         notice ({COPYRIGHT_NOTICE_URL}):\n\n\
+         > {NOTICE}\n\n\
+         Copyright in the source documents remains with the Australian Taxation Office for \
+         the Commonwealth of Australia. Neither the ATO nor the Commonwealth endorses this \
+         corpus. The rows are not the authorised text; read the source document at its \
+         source_url before relying on it. An edited version of private advice cannot be \
+         relied on by anyone.\n"
+    )
 }
 
 /// A line for each captured document's withdrawal notice, then what a notice leaves

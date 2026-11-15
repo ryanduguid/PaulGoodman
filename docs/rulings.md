@@ -145,7 +145,7 @@ What a published run holds:
 | --- | --- |
 | `dist/rulings/<run>/rulings.jsonl` | The run's rows, byte for byte, less any document left out |
 | `dist/rulings/<run>/manifest.json` | The run's manifest, with each document left out moved to `excluded` with its reason and `rows` recounted |
-| `dist/rulings/<run>/LICENCE-NOTICE.md` | The stage's reuse notice, unchanged |
+| `dist/rulings/<run>/LICENCE-NOTICE.md` | The stage's reuse notice, as the stage writes it; an edit to the run's copy is not carried |
 | `dist/rulings/sources.json` | Each run's capture date, document and row counts, the SHA-256 of each of its 3 files and the documents left out |
 
 The distribution's `LICENCE-NOTICE.md` gains an `ATO rulings` section that quotes the
@@ -181,12 +181,14 @@ What is not published:
   number, so a representative named without one is not found; `docs/scope.md` lists the
   patterns' other limits.
 
-`dist_verify` adds 7 checks when `dist/rulings/` exists: only the listed runs and their
+`dist_verify` adds 7 checks when `dist/rulings/` exists, or when the licence notice
+or `REMOVED.md` has a rulings section: only the listed runs (at least one) and their
 3 files, their digests, the privacy patterns over every file and row, each run's
-agreement with its manifest (as `search build --rulings` checks it), every published
+agreement with its manifest (as `search build --rulings` checks it, with the stage's
+own notice and the run's `sources.json` entry matching its manifest), every published
 document's coverage by the notice (and that none is an edited version of private
-advice), `REMOVED.md` listing each document left out, and the
-licence notice's `ATO rulings` section.
+advice), `REMOVED.md` holding each left-out document's row exactly, and the licence
+notice's `ATO rulings` section.
 
 The reuse terms were read again on 15 November 2026 at 08:34 AEDT at
 <https://www.ato.gov.au/copyright>, which redirects to the notice above ('Last updated

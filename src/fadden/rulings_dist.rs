@@ -19,7 +19,7 @@ use super::compilations::{Check, names};
 use super::corpus_paths::{child, linked};
 use super::dist_verify::entry_kind;
 use super::pii;
-use super::rulings::{COPYRIGHT_NOTICE_URL, EDITED_VERSION, NOTICE, family_of};
+use super::rulings::{COPYRIGHT_NOTICE_URL, EDITED_VERSION, NOTICE, family_of, licence_notice};
 use super::search::check_rulings_run;
 use super::{Exc, json_error};
 use crate::pyjson::{self, Json, PyStr};
@@ -33,6 +33,9 @@ pub const FOLDER: &str = "rulings";
 
 /// The heading of LICENCE-NOTICE.md's section on the published rulings.
 pub const NOTICE_HEADING: &str = "## ATO rulings";
+
+/// The heading of REMOVED.md's section on the rulings left out.
+const REMOVED_HEADING: &str = "## ATO rulings left out";
 
 /// The files a published run holds, as the rulings stage wrote them.
 const RUN_FILES: [&str; 3] = ["LICENCE-NOTICE.md", "manifest.json", "rulings.jsonl"];
@@ -164,7 +167,7 @@ fn private(path: &str, run: &str) -> Result<bool, Exc> {
 /// listing what the ATO notice does not cover. None when the corpus holds none.
 pub fn copy(root: &str, staging: &str) -> Result<Option<Published>, Exc> {
     let folder = pypath::join(root, FOLDER);
-    if std::fs::symlink_metadata(&folder).is_err() {
+    if absent(&folder)? {
         return Ok(None);
     }
     if linked(&folder)? || !pyos::isdir(&folder) {
@@ -231,25 +234,38 @@ fn copy_run(
         .collect::<Result<Vec<Json>, Exc>>()?;
     let left_out = leave_out(&mut manifest, &rows, name, published);
     let kept = kept_lines(&lines, &rows, &left_out, name)?;
-    let notice = read(&child(source, &["LICENCE-NOTICE.md"])?)?;
-    let contents = [notice, json_bytes(&manifest), kept.into_bytes()];
+    // The stage's notice as it writes it, whatever a hand edit added to the copy.
+    let contents = [
+        licence_notice().into_bytes(),
+        json_bytes(&manifest),
+        kept.into_bytes(),
+    ];
     let files = write_run(target, name, &contents)?;
-    let fetched_on = text(&manifest, "fetched_on").to_string();
-    published.runs.push((name.to_string(), fetched_on.clone()));
-    Ok(Json::obj([
+    published
+        .runs
+        .push((name.to_string(), text(&manifest, "fetched_on").to_string()));
+    let listed = listed_left_out(&manifest, &left_out);
+    Ok(listing_entry(
+        name,
+        &manifest,
+        Json::Object(files.into_iter().collect()),
+        listed,
+    ))
+}
+
+/// A run's entry in `rulings/sources.json`, from its published manifest.
+fn listing_entry(name: &str, manifest: &Json, files: Json, left_out: Vec<Json>) -> Json {
+    Json::obj([
         ("name", Json::str(name)),
-        ("fetched_on", Json::str(&fetched_on)),
+        ("fetched_on", Json::str(text(manifest, "fetched_on"))),
         (
             "documents",
             Json::Int(iterate_or_empty(manifest.at("documents")).len().into()),
         ),
         ("rows", manifest.at("rows").clone()),
-        ("files", Json::Object(files.into_iter().collect())),
-        (
-            "left_out",
-            Json::Array(listed_left_out(&manifest, &left_out)),
-        ),
-    ]))
+        ("files", files),
+        ("left_out", Json::Array(left_out)),
+    ])
 }
 
 /// The run's lines for the documents kept, each row's decoded values scanned first.
@@ -361,13 +377,33 @@ struct Findings {
     unlisted: Vec<String>,
 }
 
-/// The checks on a distribution's `rulings/`, or none when it holds none.
+/// Whether `path` does not exist; any other failure to read its metadata is an error.
+fn absent(path: &str) -> Result<bool, Exc> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(pyos::OsError::new(&e, Some(path), pyos::Style::Native).into()),
+    }
+}
+
+/// The checks on a distribution's `rulings/`, or none when it holds none and
+/// neither its licence notice nor `REMOVED.md` has a rulings section.
 pub fn verify(dist_root: &str) -> Result<Vec<Check>, Exc> {
     let folder = pypath::join(dist_root, FOLDER);
-    if std::fs::symlink_metadata(&folder).is_err() {
-        return Ok(Vec::new());
-    }
+    let section = |file: &str, heading: &str| {
+        child(dist_root, &[file])
+            .ok()
+            .and_then(|path| crate::pyio::read_text(&path).ok())
+            .is_some_and(|text| text.contains(&format!("\n{heading}\n")))
+    };
     let mut found = Findings::default();
+    if absent(&folder)? {
+        if !section("LICENCE-NOTICE.md", NOTICE_HEADING) && !section("REMOVED.md", REMOVED_HEADING)
+        {
+            return Ok(Vec::new());
+        }
+        found.stray.push(format!("{FOLDER} missing"));
+    }
     let listing_path = pypath::join(&folder, "sources.json");
     let runs = if entry_kind(&folder) == "directory" && entry_kind(&listing_path) == "file" {
         listed_runs(&load(&listing_path)?)
@@ -375,6 +411,9 @@ pub fn verify(dist_root: &str) -> Result<Vec<Check>, Exc> {
         found.stray.push(format!("{FOLDER} has no sources.json"));
         Vec::new()
     };
+    if runs.is_empty() {
+        found.stray.push("sources.json lists no run".into());
+    }
     let present = present_entries(&folder, &runs, &mut found)?;
     let removed = crate::pyio::read_text(&child(dist_root, &["REMOVED.md"])?)?;
     for (name, run) in &runs {
@@ -383,10 +422,12 @@ pub fn verify(dist_root: &str) -> Result<Vec<Check>, Exc> {
             continue;
         }
         for left in iterate_or_empty(run.at("left_out")) {
-            if !removed.contains(text(left, "docid")) {
-                found
-                    .unlisted
-                    .push(format!("{name}/{}", text(left, "docid")));
+            let (docid, reason) = (text(left, "docid"), text(left, "reason"));
+            if !removed
+                .lines()
+                .any(|l| l == removed_line(name, docid, reason))
+            {
+                found.unlisted.push(format!("{name}/{docid}"));
             }
         }
         verify_run(&pypath::join(&folder, name), name, run, &mut found)?;
@@ -455,6 +496,27 @@ fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> 
         Err(error) => return Err(error),
     }
     let manifest = load(&pypath::join(directory, "manifest.json"))?;
+    if read(&pypath::join(directory, "LICENCE-NOTICE.md"))? != licence_notice().into_bytes() {
+        found.runs.push(format!(
+            "{name}/LICENCE-NOTICE.md is not the stage's notice"
+        ));
+    }
+    // The listing's left-out documents must be ones the manifest excludes.
+    let excluded: Vec<Vec<u32>> = iterate_or_empty(manifest.at("excluded"))
+        .iter()
+        .map(|e| dumps_sorted(e, None))
+        .collect();
+    let left_out = iterate_or_empty(run.at("left_out"))
+        .iter()
+        .filter(|e| excluded.contains(&dumps_sorted(e, None)))
+        .cloned()
+        .collect();
+    let expected = listing_entry(name, &manifest, run.at("files").clone(), left_out);
+    if dumps_sorted(&expected, None) != dumps_sorted(run, None) {
+        found.runs.push(format!(
+            "sources.json's entry for {name} differs from its manifest"
+        ));
+    }
     let jsonl =
         String::from_utf8(read(&pypath::join(directory, "rulings.jsonl"))?).unwrap_or_default();
     let rows: Vec<Json> = jsonl
@@ -541,11 +603,7 @@ pub fn notice_section(published: &Published) -> String {
 
 /// REMOVED.md's section on the rulings left out, one line each.
 pub fn removed_lines(published: &Published) -> Vec<String> {
-    let mut lines = vec![
-        String::new(),
-        "## ATO rulings left out".into(),
-        String::new(),
-    ];
+    let mut lines = vec![String::new(), REMOVED_HEADING.into(), String::new()];
     if published.left_out.is_empty() {
         lines.push("No captured document was left out.".into());
         return lines;
@@ -553,10 +611,12 @@ pub fn removed_lines(published: &Published) -> Vec<String> {
     lines.push("| Run | Document | Reason |".into());
     lines.push("|---|---|---|".into());
     for (run, docid, reason) in &published.left_out {
-        lines.push(format!(
-            "| {run} | {docid} | {} |",
-            reason.replace('|', r"\|")
-        ));
+        lines.push(removed_line(run, docid, reason));
     }
     lines
+}
+
+/// `REMOVED.md`'s table row for one document left out.
+fn removed_line(run: &str, docid: &str, reason: &str) -> String {
+    format!("| {run} | {docid} | {} |", reason.replace('|', r"\|"))
 }

@@ -3178,6 +3178,110 @@ fn a_ruling_holding_a_contact_stops_the_distribution_and_fails_the_verifier() {
 }
 
 #[test]
+fn a_run_notice_edited_by_hand_is_not_published() {
+    let f = fixture();
+    let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+    let claim = "The ATO endorses this corpus.";
+    let notice = source.join("LICENCE-NOTICE.md");
+    edit(
+        &notice,
+        "relied on by anyone.",
+        &format!("relied on by anyone. {claim}"),
+    );
+    let dist = publish(&f);
+    let published = dist.join("rulings").join(RUN).join("LICENCE-NOTICE.md");
+    assert_eq!(
+        std::fs::read_to_string(&published).unwrap(),
+        rulings::licence_notice()
+    );
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+
+    edit(
+        &published,
+        "relied on by anyone.",
+        &format!("relied on by anyone. {claim}"),
+    );
+    relist(&dist);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "each rulings run agrees with its manifest"),
+        "FAIL"
+    );
+}
+
+#[test]
+fn the_verifier_fails_on_a_changed_catalogue_or_a_missing_rulings_folder() {
+    let published = || {
+        let f = fixture();
+        rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+        let dist = publish(&f);
+        (f, dist.join("rulings"))
+    };
+    // sources.json carries no digest of its own: its capture date must match the manifest.
+    let (f, rulings) = published();
+    let path = rulings.join("sources.json");
+    let mut listing = read_json(&path);
+    listing["runs"][0]["fetched_on"] = json!("2099-01-01");
+    std::fs::write(&path, listing.to_string()).unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "each rulings run agrees with its manifest"),
+        "FAIL"
+    );
+
+    // A distribution whose notice declares rulings but whose rulings folder is gone.
+    let (f, rulings) = published();
+    std::fs::remove_dir_all(&rulings).unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    let label = "rulings holds only the listed runs and their files";
+    assert_eq!(status(&out, label), "FAIL");
+
+    // An empty catalogue with its run removed.
+    let (f, rulings) = published();
+    std::fs::remove_dir_all(rulings.join(RUN)).unwrap();
+    let path = rulings.join("sources.json");
+    let mut listing = read_json(&path);
+    listing["runs"] = json!([]);
+    std::fs::write(&path, listing.to_string()).unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(status(&out, label), "FAIL");
+}
+
+#[test]
+fn removed_md_must_hold_each_left_out_row() {
+    // The same document left out of 2 runs needs 2 rows.
+    let f = fixture();
+    let advice = "EV/1099000000001";
+    for run in ["run-a", "run-b"] {
+        let pages = vec![
+            (RULING, ruling_page(RULING, "")),
+            (advice, ruling_page(advice, "")),
+        ];
+        rulings_run_named(&f, run, pages);
+    }
+    let dist = publish(&f);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    let path = dist.join("REMOVED.md");
+    let removed = std::fs::read_to_string(&path).unwrap();
+    let row = format!("| run-b | {advice} |");
+    let kept: Vec<&str> = removed.lines().filter(|l| !l.starts_with(&row)).collect();
+    assert_eq!(kept.len() + 1, removed.lines().count());
+    std::fs::write(&path, kept.join("\n") + "\n").unwrap();
+    let (code, out) = verify(&f);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        status(&out, "REMOVED.md lists every ruling left out"),
+        "FAIL"
+    );
+}
+
+#[test]
 fn no_allowlist_entry_approves_a_contact_in_a_ruling() {
     // A run named like a title the allowlist approves a phone number for.
     let f = fixture();
