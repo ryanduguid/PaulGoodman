@@ -176,8 +176,8 @@ jobs:
         run: uv run --locked --extra dev coverage report --fail-under=99  # NOSONAR: the environment is synced from uv.lock, whose dependencies install from wheels
 
   # The upload runs apart from the tests so the OIDC token is never available
-  # while test code runs. It is exempt from tests-gates: a Codecov outage must
-  # not block merges.
+  # while test code runs. It is exempt from tests-gates: main requires
+  # Codecov's own project check, which codecov.yml holds at 100%.
   codecov:
     name: upload coverage to Codecov
     needs: test
