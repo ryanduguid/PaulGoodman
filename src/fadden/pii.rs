@@ -5,8 +5,11 @@
 //! beside registration numbers, and digests of contact details (email, phone,
 //! tax file number) that never carry the identifier itself. The patterns are
 //! the Python module's, unchanged; the Python distribution stages still use it.
+use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
@@ -122,24 +125,59 @@ fn contact_value(kind: &str, value: &str) -> String {
 }
 
 /// `(kind, sha256)` for each contact in `text`, never the identifier: each
-/// match in the text as written, then each further match once HTML character
-/// references are decoded and the text is NFKC-normalised, so a full-width `@`
-/// or an `&#64;` does not hide a contact. The text as written is still read
-/// because NFKC can turn a superscript into a digit a pattern refuses to
-/// follow. Each reading's matches keep their own digests, so the digests
-/// reported are exactly those either reading gives.
+/// match in the text as written, then each further match in the text as
+/// rendered (HTML character references decoded once, then NFKC-normalised),
+/// so a full-width `@` or an `&#64;` does not hide a contact, then each further
+/// match in either text with its invisible characters removed ([`INVISIBLE`]),
+/// so a zero-width space does not hide one, then with controls removed too
+/// ([`INVISIBLE_OR_CONTROL`]), so a NUL does not, then in the rendered text as
+/// shown, in display order ([`display_order`]) with each of [`DASHES`] read as
+/// a hyphen-minus, so neither a right-to-left override nor a non-breaking
+/// hyphen does, with invisible characters removed and then with controls
+/// removed too. The rendered text is NFKC-normalised again after a removal. The text as written is still read because NFKC can
+/// turn a superscript into a digit a pattern refuses to follow, each text is
+/// still read with its invisible characters because removing one can join a
+/// contact to the text after it, and with its controls because a control
+/// beside a contact can be all that separates it from the text before it.
+/// Each reading's matches keep their own digests, so the digests reported are
+/// exactly those any reading gives.
 pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
-    let mut found = fingerprints_as_written(text);
     let rendered: String = crate::html::unescape(text).nfkc().collect();
-    if rendered != text {
-        // shortcut: a rendered match pairs with an as-written match of the same
-        // digest, not the same place, so occurrence counts can be off by the
-        // matches one reading alone finds (a contact in mixed forms counts
-        // twice). The digests reported, which the gates test, are exact.
-        // Pairing by source offset would need offsets mapped through decoding
-        // and NFKC.
+    let displayed = display_order(&rendered);
+    // A removed character can leave a pair NFKC composes, such as a letter
+    // and a combining accent a combining grapheme joiner kept apart.
+    fn composed(removed: Cow<'_, str>) -> Cow<'_, str> {
+        match removed {
+            Cow::Owned(removed) => Cow::Owned(removed.nfkc().collect()),
+            unchanged => unchanged,
+        }
+    }
+    let shown = |hidden: &Regex| -> String {
+        composed(hidden.replace_all(&displayed, "")).replace(DASHES, "-")
+    };
+    let readings: [&str; 8] = [
+        text,
+        &rendered,
+        &INVISIBLE.replace_all(text, ""),
+        &composed(INVISIBLE.replace_all(&rendered, "")),
+        &INVISIBLE_OR_CONTROL.replace_all(text, ""),
+        &composed(INVISIBLE_OR_CONTROL.replace_all(&rendered, "")),
+        &shown(&INVISIBLE),
+        &shown(&INVISIBLE_OR_CONTROL),
+    ];
+    let mut found = fingerprints_as_written(text);
+    for (i, reading) in readings.iter().enumerate().skip(1) {
+        if readings[..i].contains(reading) {
+            continue;
+        }
+        // shortcut: a further reading's match pairs with an earlier match of
+        // the same digest, not the same place, so occurrence counts can be off
+        // by the matches one reading alone finds (a contact in mixed forms
+        // counts twice). The digests reported, which the gates test, are exact.
+        // Pairing by source offset would need offsets mapped through decoding,
+        // NFKC and removal.
         let mut unmatched = found.clone();
-        for finding in fingerprints_as_written(&rendered) {
+        for finding in fingerprints_as_written(reading) {
             match unmatched.iter().position(|f| *f == finding) {
                 Some(i) => {
                     unmatched.swap_remove(i);
@@ -149,6 +187,73 @@ pub fn contact_fingerprints(text: &str) -> Vec<(&'static str, String)> {
         }
     }
     found
+}
+
+/// The characters Unicode marks `Default_Ignorable_Code_Point` or as format
+/// characters (general category `Cf`), which a renderer shows as nothing: the
+/// soft hyphen, zero-width space, non-joiner and joiner, word joiner, byte
+/// order mark, combining grapheme joiner, direction marks and controls,
+/// variation selectors, Hangul fillers, interlinear annotation marks and tag
+/// characters amongst them.
+static INVISIBLE: LazyLock<Regex> = LazyLock::new(|| {
+    // shortcut: the properties as the regex crate's Unicode tables give them
+    // (Unicode 16 in regex-syntax 0.8.11). A character that shows as a blank
+    // cell, such as U+2800 BRAILLE PATTERN BLANK, is kept: it reads as a gap,
+    // as a space does. Add such characters here if the corpus uses one inside
+    // a contact.
+    Regex::new(r"[\p{Default_Ignorable_Code_Point}\p{Cf}]").expect("pattern")
+});
+
+/// [`INVISIBLE`] and the controls (`Cc`) other than white space, which a
+/// renderer need not show, such as a NUL a JSON escape decodes to.
+static INVISIBLE_OR_CONTROL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}--\s]").expect("pattern")
+});
+
+/// The dashes NFKC keeps that a reader takes for the hyphen-minus the contact
+/// patterns accept: hyphen (NFKC's form of the non-breaking hyphen the
+/// Register's EPUBs use), figure dash, en dash and minus sign.
+const DASHES: [char; 4] = ['\u{2010}', '\u{2012}', '\u{2013}', '\u{2212}'];
+
+/// `text` in the order a renderer shows it, by the Unicode bidirectional
+/// algorithm with each paragraph one line: under a right-to-left override a
+/// contact written backwards shows forwards, and right-to-left marks can show
+/// a contact's parts in another order than they are written. A parenthesis
+/// at a right-to-left level shows mirrored (rule L4), so `(20)` written
+/// backwards shows as `(02)`. Text with no right-to-left character or control
+/// shows as written.
+fn display_order(text: &str) -> Cow<'_, str> {
+    use unicode_bidi::{BidiClass, BidiInfo, bidi_class};
+    let right_to_left = |c| {
+        matches!(
+            bidi_class(c),
+            BidiClass::R | BidiClass::AL | BidiClass::RLE | BidiClass::RLO | BidiClass::RLI
+        )
+    };
+    if !text.chars().any(right_to_left) {
+        return Cow::Borrowed(text);
+    }
+    let bidi = BidiInfo::new(text, None);
+    let mut shown = String::with_capacity(text.len());
+    for paragraph in &bidi.paragraphs {
+        let (levels, runs) = bidi.visual_runs(paragraph, paragraph.range.clone());
+        for run in runs {
+            let run_text = &text[run.clone()];
+            if levels[run.start].is_rtl() {
+                // shortcut: mirrors only the parentheses, the one mirrored
+                // pair the contact patterns use; unicode-bidi has no mirroring
+                // table.
+                shown.extend(run_text.chars().rev().map(|c| match c {
+                    '(' => ')',
+                    ')' => '(',
+                    c => c,
+                }));
+            } else {
+                shown.push_str(run_text);
+            }
+        }
+    }
+    Cow::Owned(shown)
 }
 
 /// `contact_fingerprints(text)` of the Python module: each contact match in

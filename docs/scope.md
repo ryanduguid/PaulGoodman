@@ -182,13 +182,30 @@ nested values included, so a JSON escape cannot hide a name, registration
 number or contact.
 `dist` also refuses a title with no rows, and a title name, kept or left out,
 that pairs a person with a registration number or holds an unapproved contact.
-The contact patterns read each text twice: as written, and with HTML character
-references decoded (such as `&#64;`, `&#x40;` or `&commat;` for `@`) and then
-NFKC-normalised, which folds compatibility forms such as a full-width `@` or
-full-width digits. A contact either reading finds is reported. They do not
-find a contact split across 2 strings, or one broken by a character NFKC
-keeps, such as a zero-width space. The name and registration
-number patterns read text as written.
+The contact patterns read each text 8 ways: as written; as rendered, with HTML
+character references decoded (such as `&#64;`, `&#x40;` or `&commat;` for `@`)
+and then NFKC-normalised, which folds compatibility forms such as a full-width
+`@` or full-width digits; each of those 2 with the characters a reader does not
+see removed, those Unicode marks `Default_Ignorable_Code_Point` or as format
+characters, such as a zero-width space, joiner or non-joiner, word joiner, byte
+order mark, soft hyphen, direction mark, variation selector or tag character;
+each of those 2 with controls other than white space removed as well, such as a
+NUL a JSON escape decodes to; and the rendered text as it shows, twice, with
+invisible characters removed and then with controls removed as well: in the
+order the Unicode bidirectional algorithm displays it, so a contact written
+backwards after a right-to-left override reads forwards, and with a hyphen,
+non-breaking hyphen, figure dash, en dash or minus sign read as a hyphen-minus.
+A contact any reading finds is reported. Where removing an invisible character
+joins a contact to the letters or digits beside it, the joined contact a reader
+sees is reported instead. The patterns do not find a contact broken by a
+character that shows as a gap, such as a space or U+2800 BRAILLE PATTERN BLANK,
+or one split across 2 strings: each string is read alone, as the Markdown shows
+each field on its own line. Joining each of the 160,424 pairs of adjacent values
+in the 9,439 rows of the 2026-11-11 corpus snapshot raised 306 more flags, all
+phone-number matches on section numbers and row ids and none a contact (286
+joined directly, 20 with a space between); the 1,111 rows in `tests/golden`
+raised none, and joining adjacent rows' text raised none in either. The name
+and registration number patterns read text as written.
 
 For that validated source snapshot, the `dist` stage writes `dist/`: 934 titles and
 21,596 rows, the shipped manifest's 946 titles and 21,784 rows less the 12
