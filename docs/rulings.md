@@ -29,7 +29,7 @@ other terms, so only these docid families are accepted:
 | `TXR` | Taxation Ruling |
 | `TXD` | Taxation Determination |
 | `GST` | GST ruling or determination |
-| `GSD` | GST determination |
+| `GSD` | Goods and Services Tax Determination |
 | `CLR` | Class Ruling |
 | `PRR` | Product Ruling |
 | `COG/LCR` | Law Companion Ruling |
@@ -42,9 +42,11 @@ other terms, so only these docid families are accepted:
 determinations (GSTD) sit under `GSD`. `COG` holds both Law Companion Rulings and
 Practical Compliance Guidelines, told apart by the `LCR` at the start of the docid's
 second part. Runs captured before this labelling called a Law Companion Ruling a
-Practical Compliance Guideline: capture it again, as `dist` does not publish a
-document whose label differs from its docid's family. Drafts (`COD`, `DTR` and the
-like) are not accepted.
+Practical Compliance Guideline, and runs captured before 16 November 2026 labelled a
+GST determination `GST determination`, where the Legal Database says `Goods and
+Services Tax Determination`: capture it again, as `dist` does not publish a document
+whose label differs from its docid's family. Drafts (`COD`, `DTR` and the like) are
+not accepted.
 
 Every run writes `LICENCE-NOTICE.md` with the notice and a non-endorsement statement.
 Keep it with any copy of the rows.

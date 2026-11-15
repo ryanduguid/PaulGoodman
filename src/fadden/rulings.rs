@@ -48,7 +48,10 @@ const FAMILIES: [(&str, &str); 10] = [
     ("TXR", "Taxation Ruling"),
     ("TXD", "Taxation Determination"),
     ("GST", "GST ruling or determination"),
-    ("GSD", "GST determination"),
+    // The Legal Database's name: the DC.Description of GSTD 2020/1's page,
+    // https://www.ato.gov.au/law/view/document?docid=GSD/GSTD20201/NAT/ATO/00001,
+    // read at 05:45 AEDT on 16 November 2026.
+    ("GSD", "Goods and Services Tax Determination"),
     ("CLR", "Class Ruling"),
     ("PRR", "Product Ruling"),
     ("COG", "Practical Compliance Guideline"),
