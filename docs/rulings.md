@@ -237,4 +237,9 @@ bytes as a gzip-compressed tar); their raw pages, left behind, came to 1,086,553
 
 PCG 2021/4's page, read again on 15 November 2026, declares UTF-8 (`<meta charset="utf-8">`,
 with no charset in its `Content-Type`) but writes the `×` and `÷` in 26 image titles as
-single Windows-1252 bytes, so it is not UTF-8 and the stage refuses it rather than guess.
+single Windows-1252 bytes, so it is not UTF-8 and the stage refused it. The stage now reads
+each byte that is not part of a UTF-8 sequence as Windows-1252 and records how many in
+the document's `windows_1252_bytes` in `manifest.json` (26 for PCG 2021/4, read again
+on 16 November 2026), and prints a `transcoded` line for it. It still refuses a page
+holding a byte Windows-1252 leaves undefined (0x81, 0x8D, 0x8F, 0x90 or 0x9D) or one
+that opens with a UTF-16 byte order mark. `raw/` keeps the bytes as they came.

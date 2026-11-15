@@ -359,13 +359,47 @@ pub struct Parsed {
     pub withdrawal_notice: String,
     pub paragraphs: Vec<Paragraph>,
     pub document_text: String,
+    /// Bytes that are not UTF-8, read as Windows-1252.
+    pub windows_1252_bytes: usize,
+}
+
+/// Windows-1252's characters for bytes 0x80 to 0x9F; 0 where it defines none.
+const WINDOWS_1252_80: [u16; 32] = [
+    0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039,
+    0x0152, 0, 0x017D, 0, 0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC,
+    0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+];
+
+/// A page as text, and how many of its bytes were read as Windows-1252. The Legal
+/// Database declares UTF-8, but some pages hold single Windows-1252 bytes (PCG
+/// 2021/4 writes `÷` and `×` that way in image titles), so each byte that is not
+/// part of a UTF-8 sequence is read as Windows-1252. None when a byte is one that
+/// Windows-1252 leaves undefined, or the page opens with a UTF-16 byte order mark.
+fn decode(raw: &[u8]) -> Option<(String, usize)> {
+    if raw.starts_with(b"\xff\xfe") || raw.starts_with(b"\xfe\xff") {
+        return None;
+    }
+    let mut text = String::with_capacity(raw.len());
+    let mut transcoded = 0;
+    for chunk in raw.utf8_chunks() {
+        text.push_str(chunk.valid());
+        for &byte in chunk.invalid() {
+            let point = match byte {
+                0x80..=0x9F => u32::from(WINDOWS_1252_80[usize::from(byte - 0x80)]),
+                _ => u32::from(byte),
+            };
+            text.push(char::from_u32(point).filter(|&c| c != '\0')?);
+            transcoded += 1;
+        }
+    }
+    Some((text, transcoded))
 }
 
 /// `parse_document(raw, docid)`: verify one fetched page and read its paragraphs.
 pub fn parse_document(raw: &[u8], docid: &str) -> Result<Parsed, RulingsError> {
-    let page =
-        std::str::from_utf8(raw).map_err(|_| refused(format!("{docid}: response is not UTF-8")))?;
-    let parser = LawParser::feed(page);
+    let (page, windows_1252_bytes) =
+        decode(raw).ok_or_else(|| refused(format!("{docid}: response is not UTF-8")))?;
+    let parser = LawParser::feed(&page);
     // `{k.lower(): v for k, v in parser.meta.items()}`: a later key wins.
     let mut meta: Vec<(String, String)> = Vec::new();
     for (k, v) in &parser.meta {
@@ -501,6 +535,7 @@ pub fn parse_document(raw: &[u8], docid: &str) -> Result<Parsed, RulingsError> {
         withdrawal_notice,
         paragraphs,
         document_text: norm(&parser.document_text.join(" ")),
+        windows_1252_bytes,
     })
 }
 
@@ -726,6 +761,7 @@ pub fn run(
     let mut excluded: Vec<(String, String)> = Vec::new();
     let mut rows: Vec<Vec<u32>> = Vec::new();
     let mut raw_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut transcoded: Vec<String> = Vec::new();
     for (index, docid) in targets.iter().enumerate() {
         if index > 0 && REQUEST_SPACING != 0.0 {
             http.sleep(REQUEST_SPACING);
@@ -758,7 +794,7 @@ pub fn run(
             ))));
         }
         let family = family_of(docid).map_or(Json::Null, s);
-        documents.push(object(vec![
+        let mut record = vec![
             ("docid", s(docid)),
             ("reference", s(&parsed.reference)),
             ("family", family.clone()),
@@ -774,7 +810,15 @@ pub fn run(
             ("withdrawal_status", s(parsed.withdrawal_status)),
             ("withdrawal_notice", s(&parsed.withdrawal_notice)),
             ("paragraphs", int(parsed.paragraphs.len())),
-        ]));
+        ];
+        if parsed.windows_1252_bytes > 0 {
+            record.push(("windows_1252_bytes", int(parsed.windows_1252_bytes)));
+            transcoded.push(format!(
+                "  transcoded {docid}: {} bytes that are not UTF-8 read as Windows-1252",
+                parsed.windows_1252_bytes
+            ));
+        }
+        documents.push(object(record));
         raw_files.push((raw_name, raw));
         for row in &parsed.paragraphs {
             rows.push(dumps_sorted(
@@ -856,8 +900,8 @@ pub fn run(
         rows.len(),
         excluded.len()
     ));
-    for line in withdrawal_lines(&documents) {
-        run.print(&line);
+    for line in transcoded.iter().chain(&withdrawal_lines(&documents)) {
+        run.print(line);
     }
     for (docid, reason) in &excluded {
         run.eprint(&format!("  excluded {docid}: {reason}"));

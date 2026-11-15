@@ -453,6 +453,96 @@ fn nested_blocks_repeated_anchors_and_empty_blocks() {
     assert!(error.contains("response is not UTF-8"));
 }
 
+/// `text` as UTF-8, except each listed character, written as its single byte.
+fn with_bytes(text: &str, single: &[(char, u8)]) -> Vec<u8> {
+    let mut raw = Vec::new();
+    for c in text.chars() {
+        match single.iter().find(|(k, _)| *k == c) {
+            Some(&(_, byte)) => raw.push(byte),
+            None => raw.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+        }
+    }
+    raw
+}
+
+/// PCG 2021/4's page declares UTF-8 but writes `÷` and `×` in its image titles as
+/// the single Windows-1252 bytes 0xF7 and 0xD7: 13 of each in
+/// https://www.ato.gov.au/law/view/document?docid=COG/PCG20214/NAT/ATO/00001,
+/// read at 05:44 AEDT on 16 November 2026.
+#[test]
+fn windows_1252_bytes_in_a_utf8_page_are_read_and_recorded() {
+    let extra = "<p class=\"indentlevel0\"><a name=\"P4\"></a>4. The ratio \u{2192} \
+        <img title=\"(($119,167 + $70,200) \u{f7} ($330,000 + $270,000)) \u{d7} 100 = 31.56%\" /> \
+        ($119,167 + $70,200) \u{f7} $600,000 \u{d7} 100 = 31.56%.</p>";
+    let page = page_with(Page {
+        body_extra: extra.into(),
+        ..Page::default()
+    });
+    // The ÷ and × as Windows-1252 bytes; the arrow stays UTF-8.
+    let raw = with_bytes(&page, &[('\u{f7}', 0xF7), ('\u{d7}', 0xD7)]);
+    assert!(std::str::from_utf8(&raw).is_err());
+    let parsed = rulings::parse_document(&raw, DOCID).unwrap();
+    assert_eq!(parsed.windows_1252_bytes, 4);
+    assert_eq!(
+        parsed.paragraphs[3].text,
+        "4. The ratio \u{2192} ($119,167 + $70,200) \u{f7} $600,000 \u{d7} 100 = 31.56%."
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("run");
+    let response = Script::ok(&format!("{BASE_URL}{DOCID}"), "text/html", &raw);
+    let (code, state, _) = run_pages(vec![(DOCID.into(), response)], &[DOCID], &out);
+    assert_eq!(code, 0);
+    assert_eq!(manifest(&out)["documents"][0]["windows_1252_bytes"], 4);
+    assert_eq!(
+        std::fs::read(out.join(manifest(&out)["documents"][0]["raw_file"].as_str().unwrap()))
+            .unwrap(),
+        raw
+    );
+    let printed = String::from_utf8(state.stdout).unwrap();
+    assert!(printed.contains(&format!(
+        "  transcoded {DOCID}: 4 bytes that are not UTF-8 read as Windows-1252"
+    )));
+
+    // A document read as UTF-8 records nothing.
+    let clean = tempfile::tempdir().unwrap();
+    let out = clean.path().join("run");
+    let (_, state, _) = run_pages(vec![served(DOCID, &page)], &[DOCID], &out);
+    assert!(
+        manifest(&out)["documents"][0]
+            .get("windows_1252_bytes")
+            .is_none()
+    );
+    assert!(
+        !String::from_utf8(state.stdout)
+            .unwrap()
+            .contains("transcoded")
+    );
+}
+
+/// A byte Windows-1252 leaves undefined, or a UTF-16 byte order mark, is still
+/// refused: the page is neither UTF-8 nor Windows-1252.
+#[test]
+fn bytes_that_are_neither_utf8_nor_windows_1252_are_refused() {
+    let page = page();
+    for undefined in [0x81, 0x8D, 0x8F, 0x90, 0x9D] {
+        let raw = with_bytes(
+            &page.replace("A second", "A \u{1}second"),
+            &[('\u{1}', undefined)],
+        );
+        let error = rulings::parse_document(&raw, DOCID).unwrap_err().0;
+        assert!(
+            error.contains("response is not UTF-8"),
+            "{undefined:#x}: {error}"
+        );
+    }
+    for mark in [b"\xff\xfe", b"\xfe\xff"] {
+        let raw = [&mark[..], page.as_bytes()].concat();
+        let error = rulings::parse_document(&raw, DOCID).unwrap_err().0;
+        assert!(error.contains("response is not UTF-8"), "{mark:?}: {error}");
+    }
+}
+
 fn ev_page() -> String {
     format!(
         r##"<html><head>
