@@ -15,9 +15,8 @@ use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
 
-use super::compilations::{Check, names};
+use super::compilations::names;
 use super::corpus_paths::{child, linked};
-use super::dist_verify::entry_kind;
 use super::pii;
 use super::rulings::{COPYRIGHT_NOTICE_URL, EDITED_VERSION, NOTICE, family_of, licence_notice};
 use super::search::check_rulings_run;
@@ -27,6 +26,9 @@ use crate::pyos;
 use crate::pypath;
 use crate::pyre;
 use crate::pyvalue::dumps_sorted;
+
+mod verify;
+pub use verify::verify;
 
 /// The folder under a corpus root, and so under a distribution.
 pub const FOLDER: &str = "rulings";
@@ -363,17 +365,6 @@ fn leave_out(
     left_out
 }
 
-/// What the checks found under a distribution's `rulings/`.
-#[derive(Default)]
-struct Findings {
-    stray: Vec<String>,
-    digests: Vec<String>,
-    private: Vec<String>,
-    runs: Vec<String>,
-    uncovered: Vec<String>,
-    unlisted: Vec<String>,
-}
-
 /// Whether `path` does not exist; any other failure to read its metadata is an error.
 fn absent(path: &str) -> Result<bool, Exc> {
     match std::fs::symlink_metadata(path) {
@@ -383,208 +374,11 @@ fn absent(path: &str) -> Result<bool, Exc> {
     }
 }
 
-/// The checks on a distribution's `rulings/`, or none when it holds none and
-/// neither its licence notice nor `REMOVED.md` has a rulings section.
-pub fn verify(dist_root: &str) -> Result<Vec<Check>, Exc> {
-    let folder = pypath::join(dist_root, FOLDER);
-    let section = |file: &str, heading: &str| {
-        child(dist_root, &[file])
-            .ok()
-            .and_then(|path| crate::pyio::read_text(&path).ok())
-            .is_some_and(|text| text.contains(&format!("\n{heading}\n")))
-    };
-    let mut found = Findings::default();
-    if absent(&folder)? {
-        if !section("LICENCE-NOTICE.md", NOTICE_HEADING) && !section("REMOVED.md", REMOVED_HEADING)
-        {
-            return Ok(Vec::new());
-        }
-        found.stray.push(format!("{FOLDER} missing"));
-    }
-    let listing_path = pypath::join(&folder, "sources.json");
-    let runs = if entry_kind(&folder) == "directory" && entry_kind(&listing_path) == "file" {
-        let listing_json = load(&listing_path)?;
-        let runs = listed_runs(&listing_json);
-        let names: BTreeSet<&str> = runs.iter().map(|(name, _)| name.as_str()).collect();
-        if names.len() != runs.len() {
-            found.stray.push("sources.json lists a run twice".into());
-        }
-        let rebuilt = listing(runs.iter().map(|(_, run)| run.clone()).collect());
-        if dumps_sorted(&rebuilt, None) != dumps_sorted(&listing_json, None) {
-            found
-                .stray
-                .push("sources.json's source or reuse notice".into());
-        }
-        runs
-    } else {
-        found.stray.push(format!("{FOLDER} has no sources.json"));
-        Vec::new()
-    };
-    if runs.is_empty() {
-        found.stray.push("sources.json lists no run".into());
-    }
-    let present = present_entries(&folder, &runs, &mut found)?;
-    let removed = crate::pyio::read_text(&child(dist_root, &["REMOVED.md"])?)?;
-    for (name, run) in &runs {
-        if !present.contains(name) {
-            found.stray.push(format!("{name} missing"));
-            continue;
-        }
-        for left in iterate_or_empty(run.at("left_out")) {
-            let (docid, reason) = (text(left, "docid"), text(left, "reason"));
-            if !removed
-                .lines()
-                .any(|l| l == removed_line(name, docid, reason))
-            {
-                found.unlisted.push(format!("{name}/{docid}"));
-            }
-        }
-        verify_run(&pypath::join(&folder, name), name, run, &mut found)?;
-    }
-    if entry_kind(&listing_path) == "file" && private(&listing_path, FOLDER)? {
-        found.private.push("sources.json".into());
-    }
-    let notice = crate::pyio::read_text(&child(dist_root, &["LICENCE-NOTICE.md"])?)?;
-    let noticed = notice.contains(&format!("\n{NOTICE_HEADING}\n")) && notice.contains(NOTICE);
-    Ok(report(&found, noticed))
-}
-
-/// The entries of `rulings/`, recording each that is neither its listing nor a
-/// listed run.
-fn present_entries(
-    folder: &str,
-    runs: &[(String, Json)],
-    found: &mut Findings,
-) -> Result<Vec<String>, Exc> {
-    if entry_kind(folder) != "directory" {
-        return Ok(Vec::new());
-    }
-    let present = names(folder)?;
-    for entry in &present {
-        if entry != "sources.json" && !runs.iter().any(|(n, _)| n == entry) {
-            found.stray.push(entry.clone());
-        }
-    }
-    Ok(present)
-}
-
 fn iterate_or_empty(value: &Json) -> &[Json] {
     match value {
         Json::Array(items) => items,
         _ => &[],
     }
-}
-
-/// `rulings/sources.json`'s runs, by name.
-fn listed_runs(listing: &Json) -> Vec<(String, Json)> {
-    iterate_or_empty(listing.at("runs"))
-        .iter()
-        .map(|run| (text(run, "name").to_string(), run.clone()))
-        .collect()
-}
-
-/// One listed run: its files, their digests and privacy, its agreement with its
-/// manifest, and the coverage of every document it publishes.
-fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> Result<(), Exc> {
-    let entries = names(directory)?;
-    let regular = entries
-        .iter()
-        .all(|e| entry_kind(&pypath::join(directory, e)) == "file");
-    if entries != RUN_FILES || !regular {
-        found.stray.push(format!("{name}: {}", entries.join(" ")));
-        return Ok(());
-    }
-    let files = verify_files(directory, name, run, found)?;
-    match check_rulings_run(directory) {
-        Ok(()) => {}
-        Err(Exc::Value { message, .. }) => {
-            // Coverage is read from a run that agrees with its manifest.
-            found.runs.push(message);
-            return Ok(());
-        }
-        Err(error) => return Err(error),
-    }
-    let manifest = load(&pypath::join(directory, "manifest.json"))?;
-    if read(&pypath::join(directory, "LICENCE-NOTICE.md"))? != licence_notice().into_bytes() {
-        found.runs.push(format!(
-            "{name}/LICENCE-NOTICE.md is not the stage's notice"
-        ));
-    }
-    // Rebuilt from the published manifest and bytes alone, never from the entry itself.
-    let expected = listing_entry(name, &manifest, files);
-    if dumps_sorted(&expected, None) != dumps_sorted(run, None) {
-        found.runs.push(format!(
-            "sources.json's entry for {name} differs from its manifest"
-        ));
-    }
-    let jsonl =
-        String::from_utf8(read(&pypath::join(directory, "rulings.jsonl"))?).unwrap_or_default();
-    let rows: Vec<Json> = jsonl
-        .lines()
-        .filter_map(|l| pyjson::loads_standard(l).ok())
-        .collect();
-    for document in iterate_or_empty(manifest.at("documents")) {
-        let docid = text(document, "docid");
-        let own: Vec<&Json> = rows.iter().filter(|r| text(r, "docid") == docid).collect();
-        if let Some(reason) = reason_left_out(document, &own) {
-            found.uncovered.push(format!("{name}/{docid}: {reason}"));
-        }
-    }
-    Ok(())
-}
-
-/// Each of a run's files against its listed digest and the privacy patterns;
-/// returns the files' digests as `rulings/sources.json` lists them.
-fn verify_files(
-    directory: &str,
-    name: &str,
-    run: &Json,
-    found: &mut Findings,
-) -> Result<Json, Exc> {
-    let mut digests = Vec::new();
-    for file in RUN_FILES {
-        let path = pypath::join(directory, file);
-        let digest = sha256(&read(&path)?);
-        if run.at("files").at(file).as_str() != Some(digest.as_str()) {
-            found.digests.push(format!("{name}/{file}"));
-        }
-        digests.push((PyStr::Text(file.into()), Json::str(&digest)));
-        match private(&path, name) {
-            Ok(false) => {}
-            Ok(true) => found.private.push(format!("{name}/{file}")),
-            Err(error) if pii::unreadable(&error) => {
-                found.private.push(format!("{name}/{file} unreadable"));
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(Json::Object(digests.into_iter().collect()))
-}
-
-fn report(found: &Findings, noticed: bool) -> Vec<Check> {
-    fn check(label: &'static str, items: &[String]) -> Check {
-        let shown: Vec<&str> = items.iter().take(5).map(String::as_str).collect();
-        (label, items.is_empty(), shown.join(", "))
-    }
-    vec![
-        check(
-            "rulings holds only the listed runs and their files",
-            &found.stray,
-        ),
-        check("rulings files match their listed digests", &found.digests),
-        check("no rulings file names people or contacts", &found.private),
-        check("each rulings run agrees with its manifest", &found.runs),
-        check(
-            "every published ruling is under the ATO notice and not private advice",
-            &found.uncovered,
-        ),
-        check("REMOVED.md lists every ruling left out", &found.unlisted),
-        (
-            "licence notice covers the ATO rulings",
-            noticed,
-            String::new(),
-        ),
-    ]
 }
 
 /// LICENCE-NOTICE.md's section on the published rulings.
