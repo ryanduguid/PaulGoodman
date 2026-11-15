@@ -300,6 +300,16 @@ fn the_verifier_fails_on_each_claim_it_reports_as_passing() {
     expect("no row names private individuals");
     std::fs::write(&rows, with_text(contact)).unwrap();
     assert!(!expect("no unapproved contact identifiers").contains(contact));
+    // Broken by a zero-width space or an escaped NUL, or written backwards
+    // under a right-to-left override, which shows it forwards.
+    for hidden in [
+        "new-con\u{200b}tact@example.test",
+        "new-contact@exa\u{0}mple.test",
+        "\u{202e}tset.elpmaxe@tcatnoc-wen\u{202c}",
+    ] {
+        std::fs::write(&rows, with_text(hidden)).unwrap();
+        expect("no unapproved contact identifiers");
+    }
     std::fs::write(&rows, "[]\n").unwrap();
     expect("every JSONL row parses");
     std::fs::write(&rows, b"\xff\xfe").unwrap();
@@ -2822,6 +2832,23 @@ fn a_root_row_hiding_a_contact_or_a_name_behind_json_escapes_is_refused() {
         &format!("{}\n", row.to_string().replace('@', "\\u0040")),
     );
     refused_keeping_dist(&f, "no unapproved contact identifiers");
+}
+
+#[test]
+fn a_root_row_hiding_a_contact_behind_an_invisible_character_is_refused() {
+    // An unapproved email address broken by an escaped zero-width joiner or NUL.
+    for invisible in ["\\u200d", "\\u0000"] {
+        let f = fixture();
+        let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                         "kind": "section", "text": "Write to alice@example.org."});
+        let line = row.to_string().replace(
+            "alice@example.org",
+            &format!("alice@exa{invisible}mple.org"),
+        );
+        write(&public_rows(&f.root), &format!("{line}\n"));
+        refused(&f, "no unapproved contact identifiers");
+        assert!(!f.dist().exists());
+    }
 }
 
 #[test]
