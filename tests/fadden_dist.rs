@@ -3307,6 +3307,25 @@ fn removed_md_must_hold_each_left_out_row() {
 }
 
 #[test]
+fn a_ruling_hiding_a_contact_behind_an_invisible_character_stops_the_distribution() {
+    // An email address broken by an escaped zero-width joiner or NUL, added
+    // after the stage scanned the run.
+    for invisible in ["\\u200d", "\\u0000"] {
+        let f = fixture();
+        let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+        edit(
+            &source.join("rulings.jsonl"),
+            "A fabricated paragraph.",
+            &format!("Write to alice@exa{invisible}mple.org."),
+        );
+        let (code, _, err) = stage(&f, "dist");
+        assert_eq!(code, 1, "{invisible}: {err}");
+        assert!(err.contains("holds a contact"), "{err}");
+        assert!(!f.dist().exists());
+    }
+}
+
+#[test]
 fn no_allowlist_entry_approves_a_contact_in_a_ruling() {
     // A run named like a title the allowlist approves a phone number for.
     let f = fixture();
