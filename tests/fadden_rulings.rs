@@ -466,7 +466,9 @@ fn with_bytes(text: &str, single: &[(char, u8)]) -> Vec<u8> {
 }
 
 /// PCG 2021/4's page declares UTF-8 but writes `÷` and `×` in its image titles as
-/// the single Windows-1252 bytes 0xF7 and 0xD7 (26 of them, read 16 November 2026).
+/// the single Windows-1252 bytes 0xF7 and 0xD7: 13 of each in
+/// https://www.ato.gov.au/law/view/document?docid=COG/PCG20214/NAT/ATO/00001,
+/// read at 05:44 AEDT on 16 November 2026.
 #[test]
 fn windows_1252_bytes_in_a_utf8_page_are_read_and_recorded() {
     let extra = "<p class=\"indentlevel0\"><a name=\"P4\"></a>4. The ratio \u{2192} \
