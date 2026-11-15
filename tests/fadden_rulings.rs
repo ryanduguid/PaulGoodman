@@ -592,7 +592,10 @@ fn law_companion_rulings_and_gst_determinations_carry_their_own_family() {
             "COG/PCG20241/NAT/ATO/00001",
             "Practical Compliance Guideline",
         ),
-        ("GSD/GSTD20201/NAT/ATO/00001", "GST determination"),
+        (
+            "GSD/GSTD20201/NAT/ATO/00001",
+            "Goods and Services Tax Determination",
+        ),
         ("GST/GSTR20231/NAT/ATO/00001", "GST ruling or determination"),
     ] {
         assert_eq!(rulings::family_of(docid), Some(family), "{docid}");
