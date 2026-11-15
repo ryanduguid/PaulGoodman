@@ -3183,6 +3183,7 @@ fn a_run_notice_edited_by_hand_is_not_published() {
     let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
     let claim = "The ATO endorses this corpus.";
     let notice = source.join("LICENCE-NOTICE.md");
+    let original = std::fs::read_to_string(&notice).unwrap();
     edit(
         &notice,
         "relied on by anyone.",
@@ -3190,10 +3191,7 @@ fn a_run_notice_edited_by_hand_is_not_published() {
     );
     let dist = publish(&f);
     let published = dist.join("rulings").join(RUN).join("LICENCE-NOTICE.md");
-    assert_eq!(
-        std::fs::read_to_string(&published).unwrap(),
-        rulings::licence_notice()
-    );
+    assert_eq!(std::fs::read_to_string(&published).unwrap(), original);
     let (code, out) = verify(&f);
     assert_eq!(code, 0, "{out}");
 
