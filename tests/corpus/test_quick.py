@@ -376,14 +376,59 @@ class QuickTests(unittest.TestCase):
                 else:
                     quick.check_windows(rows)
 
-    def test_a_date_must_be_a_1_july(self) -> None:
-        for bad in ("2025-03-01", "2025-7-01", "2025-02-30"):
+    def build_on(self, versions: dict[str | None, list[tuple[str, ...]]], *dates: str) -> None:
+        """The command run with each date, the Register answering from `versions`."""
+        argv = ["--out", str(self.out)]
+        for on in dates:
+            argv += ["--in-force-on", on]
+        with Stages(versions=versions).patched(), \
+                mock.patch.object(quick, "rust_binary", return_value="bin"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(quick.main(argv), 0)
+
+    def held_on(self, on: str) -> list[tuple[str, str, str]]:
+        rows = json.loads((self.out / "compilations" / on / "build" / "manifest_md.json")
+                          .read_text(encoding="utf-8"))
+        return [(row["id"], row["versionStart"], row["current_version_start"]) for row in rows]
+
+    def test_a_mid_year_date_holds_the_compilation_in_force_that_day(self) -> None:
+        # The Register's ITAA 1997 history read on 17 November 2026 has compilations
+        # starting on 27 August and 1 October 2026, so a 1 July alone misses some.
+        itaa97 = quick.PRESET[0]
+        self.build_on({None: [(itaa97, "2026-10-01")],
+                       "2025-03-15": [(itaa97, "2024-07-01", "2025-08-01")]}, "2025-03-15")
+        self.assertEqual([path.name for path in (self.out / "compilations").iterdir()],
+                         ["2025-03-15"])
+        self.assertEqual(self.held_on("2025-03-15"), [(itaa97, "2024-07-01", "2025-08-01")])
+
+    def test_a_date_on_a_compilation_boundary_holds_the_one_starting_that_day(self) -> None:
+        """The window ending on the date and the one starting on it meet without overlap."""
+        itaa97 = quick.PRESET[0]
+        self.build_on({None: [(itaa97, "2026-10-01")],
+                       "2025-03-15": [(itaa97, "2024-07-01", "2025-08-01")],
+                       "2025-08-01": [(itaa97, "2025-08-01", "2026-10-01")]},
+                      "2025-08-01", "2025-03-15")
+        self.assertEqual(self.held_on("2025-03-15"), [(itaa97, "2024-07-01", "2025-08-01")])
+        self.assertEqual(self.held_on("2025-08-01"), [(itaa97, "2025-08-01", "2026-10-01")])
+
+    def test_a_date_that_is_not_a_valid_yyyy_mm_dd_is_refused_with_its_reason(self) -> None:
+        # A date out of range keeps datetime's reason, whose wording varies by Python version.
+        cases = (
+            ("2025-7-01", "'2025-7-01' is not a date as YYYY-MM-DD\n"),
+            ("20250315", "'20250315' is not a date as YYYY-MM-DD\n"),
+            ("2025-W11-6", "'2025-W11-6' is not a date as YYYY-MM-DD\n"),
+            ("2025-02-30", "'2025-02-30' is not a date: day "),
+            ("2025-13-01", "'2025-13-01' is not a date: month "),
+            ("0000-01-01", "'0000-01-01' is not a date: year "),
+        )
+        for bad, reason in cases:
             printed = io.StringIO()
-            with mock.patch.object(quick, "rust_binary", return_value="bin"), \
+            with self.subTest(date=bad), \
+                    mock.patch.object(quick, "rust_binary", return_value="bin"), \
                     contextlib.redirect_stderr(printed), self.assertRaises(SystemExit) as stop:
                 quick.main(["--out", str(self.out), "--in-force-on", bad])
             self.assertEqual(stop.exception.code, 2)
-            self.assertIn("is not a 1 July as YYYY-07-01", printed.getvalue())
+            self.assertIn(f"argument --in-force-on: {reason}", printed.getvalue())
         self.assertFalse(self.staging().exists())
 
     def test_each_date_given_reaches_the_build(self) -> None:

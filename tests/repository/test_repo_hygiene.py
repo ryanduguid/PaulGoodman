@@ -113,10 +113,10 @@ def test_readme_routes_agents_to_the_published_corpus_snapshot() -> None:
 
 def test_readme_offers_earlier_compilations_with_their_limits() -> None:
     # `quick --in-force-on` was documented only in BUILD.md, so a README reader
-    # never learnt that a build can hold a past 1 July's compilations.
+    # never learnt that a build can hold a past date's compilations.
     readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
 
-    assert "`--in-force-on YYYY-07-01`" in readme
+    assert "`--in-force-on YYYY-MM-DD`" in readme
     assert "1 July 2020" in readme
     assert "BUILD.md#earlier-compilations" in readme
 
