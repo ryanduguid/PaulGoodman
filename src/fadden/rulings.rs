@@ -109,6 +109,11 @@ pub fn family_of(docid: &str) -> Option<&'static str> {
         .map(|(_, family)| *family)
 }
 
+/// Whether `docid` has the shape of a Legal Database docid, as `load_targets` requires.
+pub fn is_docid(docid: &str) -> bool {
+    pyre::re(DOCID, 0).search(docid).is_some()
+}
+
 /// `_norm(text)`: whitespace runs as one space, stripped.
 fn norm(text: &str) -> String {
     py::strip(&pyre::re(r"\s+", 0).sub(" ", text)).to_string()
@@ -675,11 +680,10 @@ pub fn load_targets(path: &str) -> Result<Vec<String>, TargetsError> {
             items.len()
         )));
     }
-    let docid_re = pyre::re(DOCID, 0);
     let mut targets = Vec::new();
     for item in &items {
         let docid = PyStr::from_code_points(item.clone());
-        let valid = docid.as_str().filter(|d| docid_re.search(d).is_some());
+        let valid = docid.as_str().filter(|d| is_docid(d));
         let Some(docid) = valid else {
             return Err(refuse(format!(
                 "{} is not a Legal Database docid",

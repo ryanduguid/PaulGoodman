@@ -471,6 +471,8 @@ and rate metadata are escaped as literal Markdown.
 
 `python -m fadden rulings TARGETS.json --out NEW_DIR` fetches up to 100 named ATO-authored Legal Database documents and writes paragraph JSONL with a reuse notice. It is separate from the legislation pipeline and does not touch `./corpus/`. Scope, reuse basis, fetch rules and the data dictionary are in [docs/rulings.md](docs/rulings.md). A run written under the corpus's `rulings/<run>/` is published by `dist` to `dist/rulings/`, less what the ATO's notice does not cover, and checked by `dist_verify` ([publishing a run](docs/rulings.md#publishing-a-run)).
 
+`python -m fadden rulings_targets FEED --out TARGETS.json` writes that target list from the ATO's 'All Rulings and Determinations' RSS feed, a saved copy or its URL, keeping only the families `rulings` accepts; it fetches nothing but the feed ([targets from the ATO's feed](docs/rulings.md#targets-from-the-atos-feed)).
+
 ## Searching a built corpus
 
 `python -m fadden search` indexes a finished corpus root into one SQLite file and

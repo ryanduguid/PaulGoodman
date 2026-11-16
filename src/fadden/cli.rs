@@ -7,7 +7,7 @@ use std::io::Write;
 use super::{
     Run, as_at, authorities, capture_register, compare_builds, discover, dist, dist_verify,
     extract, finalize, live_evidence, monitor_contract, pii_scan, probe13, publication_bundles,
-    rates, rulings, search, versions, witness,
+    rates, rulings, rulings_targets, search, versions, witness,
 };
 use crate::argparse::Exit;
 
@@ -15,7 +15,7 @@ use crate::argparse::Exit;
 /// `capture_register` and `export_live_evidence_bundles` are here for
 /// verification only: `python -m fadden` still runs their Python stages,
 /// which the publication workflow uses.
-pub const STAGES: [&str; 20] = [
+pub const STAGES: [&str; 21] = [
     "as_at",
     "authorities",
     "capture_register",
@@ -33,12 +33,13 @@ pub const STAGES: [&str; 20] = [
     "probe13",
     "rates",
     "rulings",
+    "rulings_targets",
     "search",
     "versions",
     "witness",
 ];
 
-const USAGE: &str = "usage: fadden {as_at,authorities,capture_register,compare_builds,discover,dist,dist_verify,export_live_evidence_bundles,export_monitor_contract,export_publication_bundles,extract,finalize,pii_scan,pii_scan2,probe13,rates,rulings,search,versions,witness} [arguments ...]\n";
+const USAGE: &str = "usage: fadden {as_at,authorities,capture_register,compare_builds,discover,dist,dist_verify,export_live_evidence_bundles,export_monitor_contract,export_publication_bundles,extract,finalize,pii_scan,pii_scan2,probe13,rates,rulings,rulings_targets,search,versions,witness} [arguments ...]\n";
 
 /// Text-mode output: newlines become the platform's line separator.
 fn text_mode(bytes: &[u8]) -> Vec<u8> {
@@ -68,6 +69,7 @@ pub fn main(argv: &[String]) -> i32 {
         Some((stage, rest)) if stage == "compare_builds" => compare_builds::main(rest, &mut run),
         Some((stage, rest)) if stage == "rates" => rates::main(rest, &mut run),
         Some((stage, rest)) if stage == "rulings" => rulings::main(rest, &mut run),
+        Some((stage, rest)) if stage == "rulings_targets" => rulings_targets::main(rest, &mut run),
         Some((stage, rest)) if stage == "search" => search::main(rest, &mut run),
         Some((stage, rest)) if stage == "pii_scan" => pii_scan::main(rest, &mut run),
         Some((stage, rest)) if stage == "pii_scan2" => pii_scan::main2(rest, &mut run),
