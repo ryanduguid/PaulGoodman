@@ -93,9 +93,9 @@ The index stores `superseded_from` from schema 3, so an index built earlier is r
 
 ### Earlier compilations
 
-A build can also hold earlier compilations: `quick --in-force-on YYYY-07-01` ([BUILD.md](../BUILD.md#earlier-compilations)) adds each preset Act's compilation in force on that 1 July. This is the contract a consumer reads:
+A build can also hold earlier compilations: `quick --in-force-on YYYY-MM-DD` ([BUILD.md](../BUILD.md#earlier-compilations)) adds each preset Act's compilation in force on that date. This is the contract a consumer reads:
 
-- Each earlier compilation lives at `compilations/<name>/markdown/<register id>/sections.jsonl` under the corpus root, `<name>` being the 1 July (`YYYY-07-01`) it was resolved for. A build without the option has no `compilations/` folder.
+- Each earlier compilation lives at `compilations/<name>/markdown/<register id>/sections.jsonl` under the corpus root, `<name>` being the date (`YYYY-MM-DD`) it was resolved for. A build without the option has no `compilations/` folder.
 - Its rows have exactly the format of the root's `markdown/`, with `compilation_date` the version's start, `version_is_current` false and `superseded_from` the start of the next version. In the root that flag marks a title with no published compilation for the version in force; here it marks a compilation that a later one replaced.
 - Each compilation is held once: the root holds the current one, and a date holds only compilations that neither the root nor an earlier date holds. The windows of one title therefore never overlap, so at most one covers a date.
 - `row_id`s repeat across compilations of a title, so a row is identified by its folder as well as its `row_id`.
