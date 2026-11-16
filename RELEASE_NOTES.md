@@ -1,4 +1,6 @@
-# Unreleased
+# v0.6.0
+
+This candidate contains the corpus builder source. It excludes generated legislation and live evidence.
 
 - `rulings` reads a page that declares UTF-8 but holds single Windows-1252 bytes, as PCG 2021/4 does, where it refused it as not UTF-8. Each such byte is read as Windows-1252, the manifest records the count in the document's `windows_1252_bytes` and the run prints a `transcoded` line. A byte Windows-1252 leaves undefined or a UTF-16 byte order mark is still refused.
 - `dist` publishes each `rulings` run under the corpus's `rulings/<run>/` to `dist/rulings/<run>/`: its rows, manifest and reuse notice, without the raw pages, and `rulings/sources.json` with each file's SHA-256. A document the ATO's copyright notice does not cover (another family, a page that did not print the notice, a label its docid contradicts, or text carrying a copyright notice of its own), and any edited version of private advice, is left out and listed in the manifest and `REMOVED.md`; a row holding a contact or a name beside a registration number stops `dist`. `LICENCE-NOTICE.md` gains an `ATO rulings` section quoting the notice and saying neither the ATO nor the Commonwealth endorses the corpus, and `dist_verify` adds 7 checks. A corpus without `rulings/` publishes as before (`docs/rulings.md`, 'Publishing a run'; #313).
