@@ -401,8 +401,12 @@ class QuickTests(unittest.TestCase):
                          ["2025-03-15"])
         self.assertEqual(self.held_on("2025-03-15"), [(itaa97, "2024-07-01", "2025-08-01")])
 
-    def test_a_date_on_a_compilation_boundary_holds_the_one_starting_that_day(self) -> None:
-        """The window ending on the date and the one starting on it meet without overlap."""
+    def test_windows_meeting_on_a_mid_year_date_are_both_held(self) -> None:
+        """The window ending on the date and the one starting on it meet without overlap.
+
+        Which version the Register resolution picks on a boundary is `versions`' rule,
+        tested in tests/fadden_versions.rs; the fake Register here answers it.
+        """
         itaa97 = quick.PRESET[0]
         self.build_on({None: [(itaa97, "2026-10-01")],
                        "2025-03-15": [(itaa97, "2024-07-01", "2025-08-01")],
