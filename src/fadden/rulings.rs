@@ -109,6 +109,11 @@ pub fn family_of(docid: &str) -> Option<&'static str> {
         .map(|(_, family)| *family)
 }
 
+/// Whether `docid` has the shape of a Legal Database docid, as `load_targets` requires.
+pub fn is_docid(docid: &str) -> bool {
+    pyre::re(DOCID, 0).search(docid).is_some()
+}
+
 /// `_norm(text)`: whitespace runs as one space, stripped.
 fn norm(text: &str) -> String {
     py::strip(&pyre::re(r"\s+", 0).sub(" ", text)).to_string()
@@ -582,20 +587,26 @@ pub fn fetch(
 ) -> Result<Result<(Vec<u8>, String), RulingsError>, Exc> {
     // Validated docids hold only characters `quote(docid, safe="/")` keeps.
     let url = format!("{BASE_URL}{docid}");
+    Ok(match get(http, &url)? {
+        Ok(response) => verify(docid, response),
+        Err(failure) => Err(refused(format!("{docid}: fetch failed ({failure})"))),
+    })
+}
+
+/// `url` fetched within `http::TRIES` attempts and `MAX_BYTES`, or the last failure
+/// (`HTTP <code>` or the transport error's name). A rate limit, server fault or
+/// transport failure is retried; any other status is not.
+pub fn get(http: &mut dyn Http, url: &str) -> Result<Result<http::Response, String>, Exc> {
     let mut failure = "no attempt made".to_string();
-    let mut response = None;
     let mut request = http::Request::default();
     for number in 1..=http::TRIES {
         http::attempt(http, number);
-        match http.get(&url, Some(MAX_BYTES + 1), &mut request) {
-            Ok(r) => {
-                response = Some(r);
-                break;
-            }
+        match http.get(url, Some(MAX_BYTES + 1), &mut request) {
+            Ok(response) => return Ok(Ok(response)),
             Err(Failure::Status(code)) => {
                 failure = format!("HTTP {code}");
                 if code != 429 && code < 500 {
-                    return Ok(Err(refused(format!("{docid}: fetch failed ({failure})"))));
+                    break;
                 }
             }
             Err(Failure::Transport(name)) => failure = name,
@@ -604,10 +615,7 @@ pub fn fetch(
             }
         }
     }
-    let Some(response) = response else {
-        return Ok(Err(refused(format!("{docid}: fetch failed ({failure})"))));
-    };
-    Ok(verify(docid, response))
+    Ok(Err(failure))
 }
 
 /// The fetched page for `docid`, or why it is refused.
@@ -675,11 +683,10 @@ pub fn load_targets(path: &str) -> Result<Vec<String>, TargetsError> {
             items.len()
         )));
     }
-    let docid_re = pyre::re(DOCID, 0);
     let mut targets = Vec::new();
     for item in &items {
         let docid = PyStr::from_code_points(item.clone());
-        let valid = docid.as_str().filter(|d| docid_re.search(d).is_some());
+        let valid = docid.as_str().filter(|d| is_docid(d));
         let Some(docid) = valid else {
             return Err(refuse(format!(
                 "{} is not a Legal Database docid",

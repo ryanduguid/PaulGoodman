@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<?xml-stylesheet type="text/xsl" href="/law/view/misc/atorss.xsl"?>
+<!-- Fabricated items in the shape of 'ATO - All Rulings and Determinations',
+     https://www.ato.gov.au/law/view/rss?fileid=pbr_all.rss, read on 17 November 2026. -->
+<rss version="2.0">
+	<channel>
+		<title><![CDATA[ATO - All Rulings and Determinations]]></title>
+		<link>https://www.ato.gov.au</link>
+		<description><![CDATA[]]></description>
+		<language>en-au</language>
+		<pubDate>Thu, 01 Jan 2099 06:05:38 +1100</pubDate>
+		<image>
+			<url>https://www.ato.gov.au/law/view/images/ato_inline_white.gif</url>
+			<title>Australian Taxation Office - Legal Database</title>
+			<link>https://www.ato.gov.au</link>
+		</image>
+		<item>
+			<title><![CDATA[TR 2099/1]]></title>
+			<description><![CDATA[Income tax: a fabricated ruling (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=TXR/TR20991/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[TR 2099/1A1 - Addendum]]></title>
+			<description><![CDATA[Income tax: an addendum to the fabricated ruling (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=TXR/TR20991A1/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[International issues]]></title>
+			<description><![CDATA[A family the rulings stage does not take (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=TDP/TDP20991/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[TR 2099/D1]]></title>
+			<description><![CDATA[Income tax: a fabricated draft ruling (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=DTR/TR2099D1/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[GSTD 2099/1]]></title>
+			<description><![CDATA[Goods and services tax: a fabricated determination (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=GSD/GSTD20991/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[CR 2099/89]]></title>
+			<description><![CDATA[A fabricated class ruling (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=CLR/CR209989/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[LCR 2099/1]]></title>
+			<description><![CDATA[A fabricated Law Companion Ruling (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=COG/LCR20991/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[TR 2099/1]]></title>
+			<description><![CDATA[The first item again, with its docid in lower case (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=txr/tr20991/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[An item with no link]]></title>
+			<description><![CDATA[Nothing to target (Published on 1 January 2099)]]></description>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[TD 2099/2]]></title>
+			<description><![CDATA[A link carrying more than a docid (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=TXD/TD20992/NAT/ATO/00001&amp;print=1</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[TD 2099/1]]></title>
+			<description><![CDATA[A description quoting <link>https://www.ato.gov.au/law/view/document?docid=PRR/PR20991/NAT/ATO/00001</link> (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=TXD/TD20991/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[PS LA 2099/1]]></title>
+			<description><![CDATA[A link written as CDATA (Published on 1 January 2099)]]></description>
+			<link><![CDATA[https://www.ato.gov.au/law/view/document?docid=PSR/PSLA20991/NAT/ATO/00001]]></link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+		<item>
+			<title><![CDATA[PCG 2099/D1]]></title>
+			<description><![CDATA[A fabricated draft guideline (Published on 1 January 2099)]]></description>
+			<link>https://www.ato.gov.au/law/view/document?docid=DPC/PCG2099D1/NAT/ATO/00001</link>
+			<pubDate>Thu, 01 Jan 2099 00:00:09 +1100</pubDate>
+		</item>
+	</channel>
+</rss>

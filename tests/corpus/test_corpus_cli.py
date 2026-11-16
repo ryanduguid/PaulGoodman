@@ -134,6 +134,7 @@ class FaddenCliTests(unittest.TestCase):
                 "capture_register",
                 "export_live_evidence_bundles",
                 "rulings",
+                "rulings_targets",
                 "as_at",
                 "compare_builds",
                 "search",

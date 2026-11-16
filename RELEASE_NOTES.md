@@ -1,6 +1,7 @@
 # Unreleased
 
 - `quick --in-force-on` takes any date as `YYYY-MM-DD`, where it took only a 1 July, and holds each preset Act's compilation in force on that date: the one starting on or before it and ending after it, so on the day one compilation ends the one starting that day applies. Compilations do not start only on 1 July: the Income Tax Assessment Act 1997's newest 3 started on 1 July, 27 August and 1 October 2026. A date that is not a valid `YYYY-MM-DD` is refused with its reason before anything is fetched.
+- `rulings_targets FEED --out TARGETS.json` writes a `rulings` target list from an ATO Legal Database RSS feed, such as 'ATO - All Rulings and Determinations', from a saved copy or one fetch of its URL. It lists, in the feed's order and up to 100, each docid in a family `rulings` accepts, and prints each item it refuses (a draft, another family, a repeat or one past the cap) with its reason. An item whose link it cannot read is printed as malformed and makes it exit 1 after writing the rest; a feed whose items cannot be told apart, or with a namespace-prefixed item tag, writes nothing.
 
 # v0.6.0
 

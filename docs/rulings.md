@@ -54,8 +54,10 @@ Keep it with any copy of the rows.
 ## Scope and safety
 
 - **Named targets only.** `TARGETS.json` is a JSON array of distinct docids, at most
-  100 a run. There is no discovery crawl. A larger harvest needs its own
-  authorisation, a stated page cap and a purpose before the cap changes.
+  100 a run, written by hand or by `rulings_targets` from the ATO's feed
+  ([below](#targets-from-the-atos-feed)). There is no discovery crawl. A larger
+  harvest needs its own authorisation, a stated page cap and a purpose before the
+  cap changes.
 - **New directory every run.** `--out` must not exist. The stage never overwrites,
   repairs or deletes an earlier run, and keeps each page's exact bytes under `raw/`
   beside their SHA-256 in `manifest.json`.
@@ -77,6 +79,36 @@ Keep it with any copy of the rows.
 - **Not committed, not published.** Like the rest of the corpus, run output stays
   out of git. `dist` packages a run for publication ([Publishing a run](#publishing-a-run));
   publishing it is a separate decision a person makes.
+
+## Targets from the ATO's feed
+
+`python -m fadden rulings_targets FEED --out TARGETS.json` writes a target list from
+an ATO Legal Database RSS feed, such as 'ATO - All Rulings and Determinations' at
+<https://www.ato.gov.au/law/view/rss?fileid=pbr_all.rss>. `FEED` is a saved copy or
+a feed URL under `https://www.ato.gov.au/law/view/rss`, fetched as `rulings` fetches a
+page (its user agent, at most 8 MiB and 3 attempts) and refused if it redirects
+elsewhere or is not XML. Nothing else is fetched. `--out` must not exist.
+
+Each item's `<link>` names a document as `.../law/view/document?docid=<docid>`. In
+the feed's order, a docid becomes a target when its family is one `rulings` accepts,
+until 100 are listed. The stage refuses, and prints with its reason:
+
+- a draft, whose number carries a `D` after the year (`DTR/TR2025D1/...` is
+  TR 2025/D1, `DPC/PCG2025D1/...` is PCG 2025/D1);
+- any other family, such as the `TDP` item the feed held on 17 November 2026;
+- a docid already listed, ignoring case;
+- every target past the 100th.
+
+An item whose link it cannot read (none, more than one, markup or an unknown entity
+in it, or a link that is not a Legal Database document) is printed as malformed with
+its number and reason, and makes the stage exit 1 after writing the rest. A feed
+whose items cannot be told apart, that has an item tag with a namespace prefix (such
+as `<atom:item>`, which the stage does not read) or that is not RSS writes nothing.
+
+The list holds identifiers only, so nothing from the ATO's pages is copied into it;
+the feed itself is ATO material under the notice above. On 17 November 2026 at
+06:25 AEDT the feed (HTTP 200, `application/rss+xml`) held 8 items, from which the
+stage listed 7 targets and refused the `TDP` item. Review the list before a run.
 
 ## Output
 

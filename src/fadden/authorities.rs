@@ -231,12 +231,12 @@ pub fn render(export: &Export) -> String {
     pyjson::dumps(&top, Layout::Indented) + "\n"
 }
 
-fn read(path: &str) -> Result<Vec<u8>, Exc> {
+pub(super) fn read(path: &str) -> Result<Vec<u8>, Exc> {
     std::fs::read(PyPath::new(path).fs())
         .map_err(|e| Exc::value(format!("cannot read {path}: {e}")))
 }
 
-fn write_new(path: &str, text: &str) -> Result<(), Exc> {
+pub(super) fn write_new(path: &str, text: &str) -> Result<(), Exc> {
     let target = PyPath::new(path).fs();
     let fail = |e: std::io::Error| Exc::value(format!("cannot write {path}: {e}"));
     let mut file = std::fs::File::create_new(&target).map_err(fail)?;
