@@ -587,20 +587,26 @@ pub fn fetch(
 ) -> Result<Result<(Vec<u8>, String), RulingsError>, Exc> {
     // Validated docids hold only characters `quote(docid, safe="/")` keeps.
     let url = format!("{BASE_URL}{docid}");
+    Ok(match get(http, &url)? {
+        Ok(response) => verify(docid, response),
+        Err(failure) => Err(refused(format!("{docid}: fetch failed ({failure})"))),
+    })
+}
+
+/// `url` fetched within `http::TRIES` attempts and `MAX_BYTES`, or the last failure
+/// (`HTTP <code>` or the transport error's name). A rate limit, server fault or
+/// transport failure is retried; any other status is not.
+pub fn get(http: &mut dyn Http, url: &str) -> Result<Result<http::Response, String>, Exc> {
     let mut failure = "no attempt made".to_string();
-    let mut response = None;
     let mut request = http::Request::default();
     for number in 1..=http::TRIES {
         http::attempt(http, number);
-        match http.get(&url, Some(MAX_BYTES + 1), &mut request) {
-            Ok(r) => {
-                response = Some(r);
-                break;
-            }
+        match http.get(url, Some(MAX_BYTES + 1), &mut request) {
+            Ok(response) => return Ok(Ok(response)),
             Err(Failure::Status(code)) => {
                 failure = format!("HTTP {code}");
                 if code != 429 && code < 500 {
-                    return Ok(Err(refused(format!("{docid}: fetch failed ({failure})"))));
+                    break;
                 }
             }
             Err(Failure::Transport(name)) => failure = name,
@@ -609,10 +615,7 @@ pub fn fetch(
             }
         }
     }
-    let Some(response) = response else {
-        return Ok(Err(refused(format!("{docid}: fetch failed ({failure})"))));
-    };
-    Ok(verify(docid, response))
+    Ok(Err(failure))
 }
 
 /// The fetched page for `docid`, or why it is refused.

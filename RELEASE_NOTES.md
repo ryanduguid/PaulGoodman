@@ -1,3 +1,7 @@
+# Unreleased
+
+- `rulings_targets FEED --out TARGETS.json` writes a `rulings` target list from an ATO Legal Database RSS feed, such as 'ATO - All Rulings and Determinations', from a saved copy or one fetch of its URL. It lists, in the feed's order and up to 100, each docid in a family `rulings` accepts, and prints each item it refuses (a draft, another family, a repeat or one past the cap) with its reason. An item whose link it cannot read is printed as malformed and makes it exit 1 after writing the rest; a feed whose items cannot be told apart writes nothing.
+
 # v0.6.0
 
 This candidate contains the corpus builder source. It excludes generated legislation and live evidence.

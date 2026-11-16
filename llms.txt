@@ -9,7 +9,7 @@
 - **Python**: the development checkout requires 3.14 or later. Tests run on Python 3.14 and 3.15 on Ubuntu, plus Windows 3.14 coverage for the supported live-evidence export boundary. The radar's Rust tests, Clippy and formatting run on Ubuntu and Windows.
 
 ## Corpus builder (`fadden`)
-- **Stages**: `discover`, `versions`, `download`, `probe13`, `retry13`, `extract`, `pii_scan`, `pii_scan2`, `finalize`, `rates`, `check_current`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles`, `capture_register`, `export_live_evidence_bundles`, plus the separate `rulings`, `as_at`, `compare_builds`, `search`, `authorities` and `witness` stages, and `quick`, which runs the fetch, build and index stages for a preset of 9 principal Acts. `BUILD.md` documents the order and the operating boundaries.
+- **Stages**: `discover`, `versions`, `download`, `probe13`, `retry13`, `extract`, `pii_scan`, `pii_scan2`, `finalize`, `rates`, `check_current`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles`, `capture_register`, `export_live_evidence_bundles`, plus the separate `rulings`, `rulings_targets`, `as_at`, `compare_builds`, `search`, `authorities` and `witness` stages, and `quick`, which runs the fetch, build and index stages for a preset of 9 principal Acts. `BUILD.md` documents the order and the operating boundaries.
 - **Deterministic output root**: no environment variable selects it. In a source checkout the generated files live under `./corpus/`; a deployed build uses the parent of the `build/` directory holding the stage modules.
 - **Privacy gates**: `pii_scan` and `pii_scan2` run before `finalize`, which refuses to run without `pii_flagged.json`. Twelve titles are disciplinary registers naming private individuals.
 - **ATO rulings (`rulings`)**: fetches up to 100 named ATO-authored Legal Database documents (rulings, determinations, practical compliance guidelines, decision impact statements and edited private advice) into paragraph JSONL with the ATO reuse notice. It never touches `./corpus/` and excludes any document that matches a personal-data pattern. Rows with a withdrawal notice stay in the output, and a run prints each notice with a warning that it may preserve reliance for an earlier period.
@@ -31,7 +31,7 @@
 - **Human in the loop**: it generates deterministic change candidates. It establishes no current law, legal effect, workflow update or client action.
 
 ## What talks to the network, and when
-Documented network access is 7 builder stages that reach the Federal Register and `rulings`, which reaches the ATO Legal Database. The review queue itself makes no network request.
+Documented network access is 7 builder stages that reach the Federal Register, and `rulings` and `rulings_targets`, which reach the ATO Legal Database. The review queue itself makes no network request.
 - `discover` waits 3 seconds after each keyword and collection query and 2 seconds between full pages; its request count depends on the matching titles, plus 1 request for the reviewed named titles in `docs/scope.md`. `versions` resolves up to 8 titles a request: for 946 titles with no ambiguous groups, 119 resolution requests plus 1 diagnostic, with 178.5 seconds of fixed pauses (`BUILD.md`).
 - `download` fetches one EPUB per title through `curl`, sleeping 10 seconds between titles to honour the Register's `robots.txt` Crawl-delay. All 946 titles take about 2 hours 40 minutes, and titles already downloaded at the same version are skipped.
 - `probe13` reads version history for the titles `download` recorded as `no_epub`, and `retry13` downloads the latest published compilation for those it can recover.
@@ -39,6 +39,7 @@ Documented network access is 7 builder stages that reach the Federal Register an
 - `capture_register` observes every title in a manifest against the Register and retains the exact bounded HTTP 200 response bytes behind each decision. The 946-title manifest needs at least 946 requests, an enforced 1.5-second gap makes a no-retry run about 24 minutes, redirects are refused, the socket timeout is 90 seconds and each title gets at most 3 attempts. No API key is required.
 - `quick` makes no request of its own: it runs `versions`, `download` and, for a title with no published document, `probe13` and `retry13`, on its 9 Acts.
 - `rulings` fetches only the named targets, one request a second, HTML only, at most 8 MiB a page, from `https://www.ato.gov.au`. There is no discovery crawl.
+- `rulings_targets` reads one saved Legal Database RSS feed, or fetches one feed URL under `https://www.ato.gov.au/law/view/rss`, and writes only the docids `rulings` accepts.
 - `as_at`, `authorities`, `compare_builds`, `search`, `witness`, `extract`, `pii_scan`, `pii_scan2`, `finalize`, `rates`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles` and `export_live_evidence_bundles` make no request at all. The monitor and publication exporters project facts a caller has already collected.
 
 ## Docs

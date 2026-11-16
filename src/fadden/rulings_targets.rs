@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-use super::http::{self, Failure, Http};
+use super::http::{self, Http};
 use super::rulings::{self, BASE_URL, MAX_BYTES, MAX_TARGETS};
 use super::{Exc, Run, authorities};
 use crate::argparse::{Action, Exit, Get, Parser};
@@ -200,29 +200,6 @@ pub fn entries(feed: &str) -> Result<Vec<Entry>, String> {
     Ok(out)
 }
 
-/// The feed at a Legal Database feed URL, or why it was not fetched.
-fn fetch(http: &mut dyn Http, url: &str) -> Result<Result<Vec<u8>, String>, Exc> {
-    let mut failure = "no attempt made".to_string();
-    let mut request = http::Request::default();
-    for number in 1..=http::TRIES {
-        http::attempt(http, number);
-        match http.get(url, Some(MAX_BYTES + 1), &mut request) {
-            Ok(response) => return Ok(verify(response)),
-            Err(Failure::Status(code)) => {
-                failure = format!("HTTP {code}");
-                if code != 429 && code < 500 {
-                    break;
-                }
-            }
-            Err(Failure::Transport(name)) => failure = name,
-            Err(Failure::Uncaught { class, message }) => {
-                return Err(http::uncaught(class, message));
-            }
-        }
-    }
-    Ok(Err(format!("fetching the feed failed ({failure})")))
-}
-
 /// Whether `url` is a Legal Database feed on `https://www.ato.gov.au`.
 fn is_feed_url(url: &str) -> bool {
     pyurl::urlsplit(url).is_ok_and(|parts| {
@@ -259,7 +236,10 @@ fn read_feed(http: &mut dyn Http, feed: &str) -> Result<Vec<u8>, Exc> {
             "{feed} is not a Legal Database feed at https://www.ato.gov.au{FEED_PATH}"
         )));
     }
-    fetch(http, feed)?.map_err(Exc::value)
+    rulings::get(http, feed)?
+        .map_err(|failure| format!("fetching the feed failed ({failure})"))
+        .and_then(verify)
+        .map_err(Exc::value)
 }
 
 /// Read `feed` (a saved file or a Legal Database feed URL) and write its targets
