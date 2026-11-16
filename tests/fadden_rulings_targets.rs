@@ -196,6 +196,7 @@ fn malformed_items_are_each_reported() {
             "<item><link/></item>",
             "it has 1 <link> tags, not one element",
         ),
+        ("<item/>", "it has 0 <link> tags, not one element"),
         (
             "<item></link><link></item>",
             "its <link> element is not closed",
@@ -238,6 +239,11 @@ fn a_feed_whose_items_cannot_be_told_apart_writes_nothing() {
             "it has an unclosed CDATA section",
         ),
         ("<html><body></body></html>", "it is not an RSS feed"),
+        // An item the item pattern cannot see must stop the stage, not vanish.
+        (
+            "<rss><channel><atom:item><link>https://www.ato.gov.au/law/view/document?docid=TXR/TR20991/NAT/ATO/00001</link></atom:item></channel></rss>",
+            "it has a prefixed item tag \"<atom:item\" at byte 14, which this stage does not read",
+        ),
     ];
     for (feed, reason) in cases {
         let dir = tempfile::tempdir().unwrap();

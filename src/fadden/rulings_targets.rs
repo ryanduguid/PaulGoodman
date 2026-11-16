@@ -31,7 +31,10 @@ const FEED_PATH: &str = "/law/view/rss";
 // shortcut: patterns over the flat RSS 2.0 the Legal Database serves, not an XML
 // parser; an item they cannot read is reported as malformed, never dropped. Use an
 // XML crate if the feed gains namespaces, nested items or links in attributes.
-static ITEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<(/?)item\b[^>]*>").unwrap());
+static ITEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<(/?)item\b([^>]*)>").unwrap());
+/// An item tag with a namespace prefix, which `ITEM` would not see.
+static PREFIXED_ITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"</?[^\s<>/:!?]+:item\b").unwrap());
 static LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<(/?)link\b[^>]*>").unwrap());
 /// A draft's number, as in `DTR/TR2025D1/NAT/ATO/00001` (TR 2025/D1) and
 /// `DPC/PCG2025D1/NAT/ATO/00001` (PCG 2025/D1), both read on 17 November 2026.
@@ -79,11 +82,20 @@ fn masked(feed: &str) -> Result<String, String> {
 
 /// Each item's span in the feed, or why the items cannot be told apart.
 fn item_spans(masked: &str) -> Result<Vec<(usize, usize)>, String> {
+    if let Some(tag) = PREFIXED_ITEM.find(masked) {
+        return Err(format!(
+            "it has a prefixed item tag {:?} at byte {}, which this stage does not read",
+            tag.as_str(),
+            tag.start()
+        ));
+    }
     let mut spans = Vec::new();
     let mut open: Option<usize> = None;
     for tag in ITEM.captures_iter(masked) {
         let whole = tag.get(0).unwrap();
         match (tag[1].is_empty(), open) {
+            // An empty `<item/>` is an item with no link, reported as malformed.
+            (true, None) if tag[2].ends_with('/') => spans.push((whole.end(), whole.end())),
             (true, None) => open = Some(whole.end()),
             (false, Some(start)) => {
                 spans.push((start, whole.start()));

@@ -102,7 +102,8 @@ until 100 are listed. The stage refuses, and prints with its reason:
 An item whose link it cannot read (none, more than one, markup or an unknown entity
 in it, or a link that is not a Legal Database document) is printed as malformed with
 its number and reason, and makes the stage exit 1 after writing the rest. A feed
-whose items cannot be told apart, or that is not RSS, writes nothing.
+whose items cannot be told apart, that has an item tag with a namespace prefix (such
+as `<atom:item>`, which the stage does not read) or that is not RSS writes nothing.
 
 The list holds identifiers only, so nothing from the ATO's pages is copied into it;
 the feed itself is ATO material under the notice above. On 17 November 2026 at
