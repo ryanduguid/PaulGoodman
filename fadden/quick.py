@@ -11,8 +11,8 @@ the Australian Accounting MCP server reads, so the stages run in a sibling
 `<folder>.building` and the folder appears only once every preset Act is indexed.
 Nothing is fetched from anywhere but the Register and nothing is published.
 
-`--in-force-on YYYY-07-01` also holds, under `compilations/<date>/`, each preset
-Act's compilation in force on that 1 July, where the build holds no other copy of it.
+`--in-force-on YYYY-MM-DD` also holds, under `compilations/<date>/`, each preset
+Act's compilation in force on that date, where the build holds no other copy of it.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import argparse
 import contextlib
 import datetime
 import json
+import re
 import shutil
 import sqlite3
 import sys
@@ -190,13 +191,13 @@ def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
 
 
 def in_force_date(value: str) -> str:
-    """A 1 July as YYYY-07-01, which names its compilations/ folder."""
+    """A date as YYYY-MM-DD, as `versions --in-force-on` takes it; it names its folder."""
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a date as YYYY-MM-DD")
     try:
-        valid = datetime.date.fromisoformat(value).isoformat() == value
-    except ValueError:
-        valid = False
-    if not valid or not value.endswith("-07-01"):
-        raise argparse.ArgumentTypeError(f"{value!r} is not a 1 July as YYYY-07-01")
+        datetime.date.fromisoformat(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a date: {error}") from None
     return value
 
 
@@ -227,8 +228,8 @@ def main(argv: Sequence[str]) -> int:
     )
     parser.add_argument("--out", required=True, help="an absent or empty folder")
     parser.add_argument(
-        "--in-force-on", action="append", default=[], type=in_force_date, metavar="YYYY-07-01",
-        help="also hold each Act's earlier compilation in force on this 1 July; repeat for more",
+        "--in-force-on", action="append", default=[], type=in_force_date, metavar="YYYY-MM-DD",
+        help="also hold each Act's earlier compilation in force on this date; repeat for more",
     )
     args = parser.parse_args(argv)
     binary = rust_binary()
