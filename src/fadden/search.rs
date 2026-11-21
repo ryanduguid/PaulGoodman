@@ -1932,6 +1932,203 @@ fn field<'a>(pairs: &'a [(String, Json)], name: &str) -> &'a Json {
         .map_or(&Json::Null, |(_, v)| v)
 }
 
+/// One `refs` reference, `kind`, `to_key`, `citation`, `cited_act` and
+/// `to_register_id`, as `refs` reports it: with the rows it reaches.
+fn cited_entry(connection: &Connection, reference: &[(String, Json)]) -> Result<Json, Exc> {
+    let to = field(reference, "to_register_id").clone();
+    let kind = field(reference, "kind").as_str().unwrap_or_default();
+    let key = field(reference, "to_key").as_str().unwrap_or_default();
+    let targets = match &to {
+        Json::Str(PyStr::Text(target)) => rows_of(
+            connection,
+            &target_sql(kind),
+            &[Sql::Text(target.clone()), Sql::Text(key.into())],
+        )?
+        .into_iter()
+        .map(object)
+        .collect(),
+        _ => Vec::new(),
+    };
+    Ok(object(vec![
+        ("kind".into(), field(reference, "kind").clone()),
+        ("key".into(), field(reference, "to_key").clone()),
+        ("citation".into(), field(reference, "citation").clone()),
+        ("cited_act".into(), field(reference, "cited_act").clone()),
+        ("register_id".into(), to),
+        ("rows".into(), Json::Array(targets)),
+    ]))
+}
+
+/// Each `define` hit with `refers_to`: the provisions its definition cites, read and
+/// resolved as `build` reads a row's references, so `has the meaning given by
+/// section 9-5` reaches the row of section 9-5.
+pub fn follow_definitions(connection: &Connection, hits: Vec<Json>) -> Result<Vec<Json>, Exc> {
+    let names = title_names(connection)?;
+    let lookup = |name: &str| names.get(name).filter(|rid| *rid != SHARED_NAME).cloned();
+    hits.into_iter()
+        .map(|hit| {
+            let text = hit
+                .at("definition")
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let own = hit.at("register_id").as_str().map(str::to_string);
+            let mut cited = Vec::new();
+            for (kind, key, act, citation, end) in citations(&text) {
+                let to = cited_title(&text, end, act.as_deref(), own.as_deref(), lookup);
+                let reference = vec![
+                    ("kind".to_string(), Json::str(&kind)),
+                    ("to_key".into(), Json::str(&key)),
+                    ("citation".into(), Json::str(&citation)),
+                    (
+                        "cited_act".into(),
+                        act.as_deref().map_or(Json::Null, Json::str),
+                    ),
+                    (
+                        "to_register_id".into(),
+                        to.as_deref().map_or(Json::Null, Json::str),
+                    ),
+                ];
+                cited.push(cited_entry(connection, &reference)?);
+            }
+            Ok(with_field(hit, "refers_to", Json::Array(cited)))
+        })
+        .collect()
+}
+
+/// Titles whose asterisked terms take their meaning from another title's definitions
+/// when their own define none: TAA 1953 s 3AA(2) gives an expression in Schedule 1
+/// the meaning it has in the ITAA 1997 (read in the 2026-11-18 snapshot).
+const TERMS_FROM: [(&str, &str); 1] = [("C1953A00001", "C2004A05138")];
+/// Where a stored term's qualifier starts: `cost base` of `cost base of a CGT asset`.
+const TERM_QUALIFIER: &str = r",| (?:of|in|for|to|from|with|by|on) (?:a|an|the|any|another)\b";
+const TERM_WORD: &str = r"[\w‐‑&'’-]+";
+/// A term never runs past these, nor into the next asterisk.
+const TERM_STOP: [char; 10] = [',', ';', ':', '.', '(', ')', '[', ']', '\n', '*'];
+
+/// The forms of a folded term to look up: as written, then singular.
+fn term_forms(key: &str) -> Vec<String> {
+    let mut forms = vec![key.to_string()];
+    if let Some(stem) = key.strip_suffix("ies") {
+        forms.push(format!("{stem}y"));
+    }
+    if let Some(stem) = key.strip_suffix("es") {
+        forms.push(stem.to_string());
+    }
+    if let Some(stem) = key.strip_suffix('s') {
+        forms.push(stem.to_string());
+    }
+    forms
+}
+
+/// The defined terms a row marks with an asterisk, each with the definitions it
+/// reaches, and how many asterisks reached none. Most defined terms are marked by an
+/// asterisk at their start (ITAA 1997 s 2-10, GST Act s 3-1), so where a term ends is
+/// read here: the longest run of following words, up to punctuation, that is a term
+/// the row's title defines (else one `TERMS_FROM` names), as written or singular;
+/// failing that, the longest that is such a term without its qualifier, reported as
+/// `"match": "without qualifier"`.
+pub fn defined_terms(connection: &Connection, row_id: &str) -> Result<(Vec<Json>, usize), Exc> {
+    let sql = "SELECT register_id, text FROM rows WHERE row_id = ?";
+    let Some(row) = rows_of(connection, sql, &[Sql::Text(row_id.into())])?
+        .into_iter()
+        .next()
+    else {
+        return Err(refused(format!("{row_id} is not in the index")));
+    };
+    let rid = field(&row, "register_id").as_str().unwrap_or_default();
+    let text = field(&row, "text").as_str().unwrap_or_default();
+    let mut scopes = vec![rid.to_string()];
+    scopes.extend(
+        TERMS_FROM
+            .iter()
+            .filter(|(from, _)| *from == rid)
+            .map(|(_, to)| to.to_string()),
+    );
+    let qualifier = pyre::re(TERM_QUALIFIER, 0);
+    let word = pyre::re(TERM_WORD, 0);
+    let (mut wholes, mut qualified) = (Vec::new(), Vec::new());
+    for scope in &scopes {
+        let (mut whole, mut heads) = (BTreeMap::new(), BTreeMap::new());
+        for found in rows_of(
+            connection,
+            "SELECT d.term, d.term_key, d.row_id, r.register_id, r.heading FROM definitions d \
+JOIN rows r ON r.row_id = d.row_id WHERE r.register_id = ? ORDER BY r.id, d.position",
+            &[Sql::Text(scope.clone())],
+        )? {
+            let key = field(&found, "term_key")
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let head = qualifier.split(&key)[0].trim().to_string();
+            let entry = object(
+                found
+                    .into_iter()
+                    .filter(|(name, _)| name != "term_key")
+                    .collect(),
+            );
+            if head != key && !head.is_empty() {
+                heads
+                    .entry(head)
+                    .or_insert_with(Vec::new)
+                    .push(entry.clone());
+            }
+            whole.entry(key).or_insert_with(Vec::new).push(entry);
+        }
+        wholes.push(whole);
+        qualified.push(heads);
+    }
+    let tables: Vec<_> = wholes
+        .iter()
+        .map(|table| (false, table))
+        .chain(qualified.iter().map(|table| (true, table)))
+        .collect();
+    let mut terms: Vec<(String, Json)> = Vec::new();
+    let mut unresolved = 0;
+    for (at, _) in text.match_indices('*') {
+        let rest = &text[at + 1..];
+        let span = &rest[..rest.find(TERM_STOP).unwrap_or(rest.len())];
+        let words: Vec<String> = word
+            .findall(span)
+            .into_iter()
+            .take(MAX_TERM_WORDS)
+            .collect();
+        if !span.starts_with(|c: char| c.is_alphanumeric()) || words.is_empty() {
+            continue;
+        }
+        let found = tables.iter().find_map(|(by_head, table)| {
+            (1..=words.len()).rev().find_map(|n| {
+                let written = words[..n].join(" ");
+                term_forms(&term_key(&written))
+                    .iter()
+                    .find_map(|form| table.get(form))
+                    .map(|definitions| (*by_head, written, definitions.clone()))
+            })
+        });
+        let Some((by_head, written, definitions)) = found else {
+            unresolved += 1;
+            continue;
+        };
+        let key = term_key(&written);
+        if terms.iter().any(|(seen, _)| *seen == key) {
+            continue;
+        }
+        let matched = if by_head { "without qualifier" } else { "term" };
+        terms.push((
+            key,
+            object(vec![
+                ("term".into(), Json::str(&written)),
+                ("match".into(), Json::str(matched)),
+                ("definitions".into(), Json::Array(definitions)),
+            ]),
+        ));
+    }
+    Ok((
+        terms.into_iter().map(|(_, term)| term).collect(),
+        unresolved,
+    ))
+}
+
 /// What `row_id` cites, and rows that cite its section, Division or Subdivision.
 pub fn refs(connection: &Connection, row_id: &str) -> Result<Json, Exc> {
     let found = rows_of(
@@ -1948,39 +2145,7 @@ pub fn refs(connection: &Connection, row_id: &str) -> Result<Json, Exc> {
         "SELECT * FROM refs WHERE from_row_id = ? ORDER BY rowid",
         &[Sql::Text(row_id.into())],
     )? {
-        let to = field(&reference, "to_register_id").clone();
-        let kind = field(&reference, "kind")
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let targets = match &to {
-            Json::Null => Vec::new(),
-            Json::Str(PyStr::Text(target)) => rows_of(
-                connection,
-                &target_sql(&kind),
-                &[
-                    Sql::Text(target.clone()),
-                    Sql::Text(
-                        field(&reference, "to_key")
-                            .as_str()
-                            .unwrap_or_default()
-                            .into(),
-                    ),
-                ],
-            )?
-            .into_iter()
-            .map(object)
-            .collect(),
-            _ => Vec::new(),
-        };
-        outbound.push(object(vec![
-            ("kind".into(), field(&reference, "kind").clone()),
-            ("key".into(), field(&reference, "to_key").clone()),
-            ("citation".into(), field(&reference, "citation").clone()),
-            ("cited_act".into(), field(&reference, "cited_act").clone()),
-            ("register_id".into(), to),
-            ("rows".into(), Json::Array(targets)),
-        ]));
+        outbound.push(cited_entry(connection, &reference)?);
     }
     let sql_value = |value: &Json| match value {
         Json::Str(PyStr::Text(s)) => Sql::Text(s.clone()),
@@ -2614,6 +2779,7 @@ fn parser() -> Parser {
                 .arg(Action::positional("term").one_or_more())
                 .arg(Action::option("--title").help("look only in this register id"))
                 .arg(Action::option("--as-at").metavar("DATE").help(AS_AT_HELP))
+                .arg(Action::flag("--follow").help("also list the provisions each definition cites"))
                 .arg(Action::flag("--json"))
         })
         .sub(
@@ -2622,6 +2788,10 @@ fn parser() -> Parser {
             |p| {
                 p.arg(Action::positional("index"))
                     .arg(Action::positional("row_id"))
+                    .arg(
+                        Action::flag("--terms")
+                            .help("also list the asterisked defined terms the row uses"),
+                    )
                     .arg(Action::flag("--json"))
             },
         )
@@ -3052,6 +3222,11 @@ fn execute_define(
         Some(report) => report.hits.clone(),
         None => define(connection, &term, title.as_deref())?,
     };
+    let found = if args.flag("follow") {
+        follow_definitions(connection, found)?
+    } else {
+        found
+    };
     if args.flag("json") {
         for item in &found {
             run.print_points(&dumps_line(item, false))?;
@@ -3066,6 +3241,11 @@ fn execute_define(
         run.print(&format!("{} ({}, {})", s("term"), s("act"), s("heading")));
         run.print(&format!("   {}", describe(item)));
         run.print(&format!("   {}", s("definition").replace("\n\n", "\n   ")));
+        if let Json::Array(cited) = item.at("refers_to") {
+            for reference in cited {
+                run.print(&format!("  {}", describe_reference(reference)));
+            }
+        }
     }
     if found.is_empty() && refused_code(dated.as_ref()) == 0 {
         run.print(
@@ -3108,7 +3288,12 @@ fn execute_refs(
     run: &mut Run,
 ) -> Result<i32, Exc> {
     let row_id = args.str("row_id").unwrap_or_default();
-    let report = refs(connection, &row_id)?;
+    let mut report = refs(connection, &row_id)?;
+    if args.flag("terms") {
+        let (terms, unresolved) = defined_terms(connection, &row_id)?;
+        report = with_field(report, "terms", Json::Array(terms));
+        report = with_field(report, "unresolved_terms", Json::Int(unresolved.into()));
+    }
     if args.flag("json") {
         run.print_points(&dumps_line(&report, false))?;
         return Ok(0);
@@ -3122,6 +3307,33 @@ fn execute_refs(
     if let Json::Array(cites) = report.at("cites") {
         for reference in cites {
             run.print(&describe_reference(reference));
+        }
+    }
+    if let Json::Array(terms) = report.at("terms") {
+        for term in terms {
+            let Json::Array(definitions) = term.at("definitions") else {
+                continue;
+            };
+            let places: Vec<String> = definitions
+                .iter()
+                .map(|d| format!("{} ({})", s(d.at("row_id")), s(d.at("heading"))))
+                .collect();
+            let qualifier = if term.at("match").as_str() == Some("term") {
+                ""
+            } else {
+                ", matched without its qualifier"
+            };
+            run.print(&format!(
+                "  uses *{}{qualifier}: defined in {}",
+                s(term.at("term")),
+                places.join(", ")
+            ));
+        }
+        let unresolved = s(report.at("unresolved_terms"));
+        if unresolved != "0" {
+            run.print(&format!(
+                "  {unresolved} asterisked terms matched no definition this index reads"
+            ));
         }
     }
     if let Json::Array(sources) = report.at("cited_by") {

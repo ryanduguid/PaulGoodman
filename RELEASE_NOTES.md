@@ -1,5 +1,6 @@
 # Unreleased
 
+- `search define --follow` lists the provisions each definition cites, with the rows they reach, so the GST Act's `taxable supply` reaches sections 9-5, 78-50, 84-5 and 105-5. `search refs --terms` lists the asterisked defined terms a row uses and where each is defined, reading where each term ends from the title's own definitions (the ITAA 1997's for the TAA 1953). Both read the existing index; no rebuild is needed. Coverage is measured in `docs/build-evidence.md`.
 - Relicensed Ryan Duguid's original work under Apache-2.0. Earlier releases keep their original terms.
 
 # v0.7.0

@@ -487,7 +487,9 @@ python -m fadden search query search.sqlite general deductions --limit 5
 python -m fadden search query search.sqlite losses outgoings incurred deductible --stem --limit 5
 python -m fadden search query search.sqlite 8-1 --title C2004A05138
 python -m fadden search define search.sqlite assessable income
+python -m fadden search define search.sqlite taxable supply --title C2004A00446 --follow
 python -m fadden search refs search.sqlite C2004A05138:0035:8-1
+python -m fadden search refs search.sqlite C2004A00446:0025:9-5 --terms
 python -m fadden search cite-check search.sqlite draft.md --title C2004A05138
 python -m fadden search quote search.sqlite C2004A05138:0035:8-1 'You can deduct from your assessable income'
 python -m fadden search query search.sqlite general deductions --as-at 2026-07-15
@@ -541,6 +543,24 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   reads only `8-1`. A range such as `sections 8-1 to 8-10` reads only its
   first item. A Subdivision named by letter alone (`Subdivision B`) is not
   read, because the same letter recurs across Divisions of one title.
+- `define --follow` adds `refers_to` to each definition: the provisions its text
+  cites, read and resolved as `refs` reads a row, with the rows each reaches. So the
+  GST Act's `taxable supply has the meaning given by sections 9-5, 78-50, 84-5 and
+  105-5` reaches those 4 sections. It has the same limits as `refs`: in
+  `subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment
+  Act 1936`, only `94L` reaches the ITAA 1936.
+- `refs --terms` adds `terms`: the defined terms a row marks with an asterisk, each
+  with the definitions it reaches. The asterisk marks only where a term starts (ITAA
+  1997 s 2-10, GST Act s 3-1), so `refs` takes the longest run of following words, up
+  to punctuation or the next asterisk, that the row's title defines, as written or in
+  the singular; failing that, the longest that a stored term begins with before its
+  qualifier (`cost base` of `cost base of a CGT asset`), marked `"match": "without
+  qualifier"`. A term the row's title does not define is looked up in the ITAA 1997
+  only for the TAA 1953, whose s 3AA(2) gives Schedule 1 expressions their ITAA 1997
+  meaning. `unresolved_terms` counts asterisks that reached no definition `define`
+  reads; the [measurement](docs/build-evidence.md#defined-terms-a-provision-uses)
+  gives the share. A listed term shows where the index holds a definition, not that
+  it applies to that provision.
 - `build --rulings RUN_DIR`, repeated for each `rulings` run, also reads the section,
   Division and Subdivision references in each run's paragraphs, and `refs` then lists
   under `cited_by_rulings` each ruling paragraph that cites the row's section, Division
