@@ -244,12 +244,12 @@ rows, sources.json SHA-256
 `ee30e864fbc1c96bbf61a133204a381390c1d32e410cbfb35da722b4376d644a`). A row's terms are
 counted once each; asterisks that reached no definition are counted each time.
 
-| Title | Rows with an asterisk | Every asterisk resolved | Terms resolved | Without qualifier | Asterisks unresolved |
-|---|---:|---:|---:|---:|---:|
-| ITAA 1997 (C2004A05138) | 3,735 | 1,943 | 16,367 | 2,538 | 4,972 |
-| GST Act (C2004A00446) | 675 | 421 | 2,782 | 280 | 455 |
-| TAA 1953 (C1953A00001) | 819 | 634 | 2,927 | 219 | 399 |
-| Income Tax (Transitional Provisions) Act 1997 (C2004A05128) | 5 | 0 | 0 | 0 | 9 |
+| Title | Rows with an asterisk | Every asterisk resolved | Terms resolved | Read as singular | Without qualifier | Asterisks unresolved |
+|---|---:|---:|---:|---:|---:|---:|
+| ITAA 1997 (C2004A05138) | 3,735 | 1,943 | 16,367 | 1,391 | 2,538 | 4,972 |
+| GST Act (C2004A00446) | 675 | 421 | 2,782 | 222 | 280 | 455 |
+| TAA 1953 (C1953A00001) | 819 | 634 | 2,927 | 218 | 219 | 399 |
+| Income Tax (Transitional Provisions) Act 1997 (C2004A05128) | 5 | 0 | 0 | 0 | 0 | 9 |
 
 Most unresolved asterisks start a term whose dictionary entry `define` does not read,
 such as `market value`, `head company` and `adjustable value`, or a term whose entry
