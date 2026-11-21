@@ -117,7 +117,7 @@ Index of the corpus retrieved 2099-08-01, sources.json sha256 73d95db611177211. 
 The title, dates and rows are fictional. They describe no real legislation and establish no legal effect.
 
 `search query` also matches other English forms of each word, so `taxable supplies`
-reaches `taxable supply`. Rows holding the words as typed rank first; a row only a
+reaches `taxable supply`. Rows holding the words as typed are favoured; a row only a
 word form matched is marked `*` (`stemmed: true` in JSON), and word-form matches are
 not quotation matches. `--exact` matches only the words as typed. See
 [BUILD.md](BUILD.md) for index rebuilding and the measured ranking limits.

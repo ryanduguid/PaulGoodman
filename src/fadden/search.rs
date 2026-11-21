@@ -54,7 +54,7 @@ impl SearchMode {
     }
 
     /// `QUERY_SQL` in this mode. Word forms match in the Porter table and add each
-    /// row's exact BM25, so a row holding the query's own words keeps its lead;
+    /// row's exact BM25, so a row holding the query's own words is favoured;
     /// `word_form` is 1 for a row only a word form matched. Takes the match twice.
     fn query_sql(self) -> Cow<'static, str> {
         match self {

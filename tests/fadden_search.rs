@@ -553,6 +553,20 @@ fn default_query_matches_word_forms_and_marks_them() {
     );
     assert_eq!(code, 0, "{err}");
     assert_eq!(out, "", "{out}");
+    // The title filter binds after the doubled match expression.
+    for (title, rows) in [(ACT, 1), (OTHER, 0)] {
+        let args = [
+            "query",
+            "index.sqlite",
+            "researching",
+            "--title",
+            title,
+            "--json",
+        ];
+        let (code, out, err) = cli(&args, dir);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(out.lines().count(), rows, "{out}");
+    }
     let (code, _, err) = cli(
         &["query", "index.sqlite", "research", "--exact", "--stem"],
         dir,

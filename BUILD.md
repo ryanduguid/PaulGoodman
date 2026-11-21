@@ -507,8 +507,9 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   (SQLite's Porter tokenizer, in a separate full-text index), and ranks a row
   whose section number equals a query word first, then rows from current titles
   above superseded ones, then by the word-form BM25 plus the exact BM25, each with
-  the heading weighted above the text. A row holding the words as typed therefore
-  keeps its lead over one holding only other forms. A row only a word form
+  the heading weighted above the text. A row holding the words as typed is
+  therefore favoured over one holding only other forms, though a much stronger
+  word-form match can still outrank it. A row only a word form
   matched is marked `*` in text output, which then prints the warning, and its
   JSON hit adds `stemmed: true` and `stem_boundary`. Word-form matches are not
   quotation matches, and Porter can conflate unrelated words (`universe` and
