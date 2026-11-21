@@ -17,12 +17,15 @@ The ATO copyright notice at
 > any of your services or products).
 
 Rulings, practical compliance guidelines and decision impact statements print the
-same sentence at their foot; edited versions of private advice carry a `dc.Rights`
-link to the notice instead (`http` or `https`, `www.ato.gov.au` or `ato.gov.au`,
-path `/content/corporate/about_this_site.htm`, fragment `copyright`). The stage accepts a page only when it shows the sentence
-(`licence_basis: document-notice`) or that link (`site-notice-via-dc-rights`), and
-refuses it otherwise. Legislation and court judgments are in the same database under
-other terms, so only these docid families are accepted:
+same sentence at their foot. Edited versions of private advice carry a legacy
+`dc.Rights` link (`http` or `https`, `www.ato.gov.au` or `ato.gov.au`,
+path `/content/corporate/about_this_site.htm`, fragment `copyright`). That address
+returned HTTP 404 on 21 November 2026. For local capture, the stage requires the
+printed notice or the exact legacy link, which it records as
+`site-notice-via-dc-rights`. The distribution requires the notice on the
+document itself (`licence_basis: document-notice`). Legislation and
+court judgments in the same database have separate terms. The stage accepts the
+following docid families.
 
 | docid prefix | Family |
 | --- | --- |
@@ -188,8 +191,10 @@ neither the ATO nor the Commonwealth endorses the corpus. `REMOVED.md` gains an
 `ATO rulings left out` table, with a row for each document the stage or `dist` left
 out. Point `AUS_ACCOUNTING_RULINGS_ROOT` at `dist/rulings`. On
 15 November 2026 `aus-accounting-mcp` 0.9.0 answered from a published run of 2 Taxation
-Rulings and a Class Ruling, but refused a run holding a Law Companion Ruling and a GST
-determination, as its list of families has neither label yet.
+Rulings and a Class Ruling. It refused a run holding a Law Companion Ruling and a GST
+determination. Version 0.11.0 serves Law Companion Rulings and both family labels
+for GST determinations. Filtering by either GST label finds both. This was
+verified on 21 November 2026 using fabricated runs with the published package.
 
 What is not published:
 
@@ -198,10 +203,9 @@ What is not published:
   scanned. A manifest's `raw_file` names the copy the builder kept.
 - **Anything the ATO notice does not cover.** A document is left out, and listed with
   its reason, when its docid is not one of the families above (legislation and court
-  judgments from the Legal Database, which a hand-edited run could hold), its page did
-  not print the ATO's reuse notice (`licence_basis` is not `document-notice`: the
-  `dc.Rights` link a `site-notice-via-dc-rights` page carries returned HTTP 404 on
-  15 November 2026), its family label differs from its docid's family (a Law
+  judgments from the Legal Database, which a hand-edited run could hold), its page
+  did not print the ATO's reuse notice (the required `licence_basis` is
+  `document-notice`), its family label differs from its docid's family (a Law
   Companion Ruling captured as a Practical Compliance Guideline), or its title,
   headings or text carry a copyright notice of their own (`©`, `(c) 2099`,
   `Copyright 2099` or `All rights reserved`, in any case). Third-party material quoted
