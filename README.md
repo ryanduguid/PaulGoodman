@@ -116,9 +116,11 @@ Index of the corpus retrieved 2099-08-01, sources.json sha256 73d95db611177211. 
 
 The title, dates and rows are fictional. They describe no real legislation and establish no legal effect.
 
-Use `search query --stem` to include English word forms. Results are marked as
-stemmed; word-form matches are not quotation matches. Exact search remains the
-default. See [BUILD.md](BUILD.md) for index rebuilding and the measured ranking limits.
+`search query` also matches other English forms of each word, so `taxable supplies`
+reaches `taxable supply`. Rows holding the words as typed rank first; a row only a
+word form matched is marked `*` (`stemmed: true` in JSON), and word-form matches are
+not quotation matches. `--exact` matches only the words as typed. See
+[BUILD.md](BUILD.md) for index rebuilding and the measured ranking limits.
 
 ### Search real law from an empty folder
 

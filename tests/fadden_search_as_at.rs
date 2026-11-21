@@ -223,6 +223,35 @@ fn stemmed_dates_count_word_form_matches_and_filter_before_the_limit() {
 }
 
 #[test]
+fn default_dated_search_counts_and_marks_word_form_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    let connection = search::open_index(&index).unwrap();
+    let words = ["devices".to_string()];
+    let mixed = search::query_word_forms_as_at(&connection, &words, None, 1, NEXT_VERSION).unwrap();
+    assert_eq!(mixed.hits.len(), 1);
+    assert_eq!(value(&mixed.hits[0])["register_id"], CURRENT);
+    assert_eq!(value(&mixed.hits[0])["stemmed"], true);
+    assert_eq!(value(&mixed.refusals[0])["register_id"], SUPERSEDED);
+    assert_eq!(value(&mixed.refusals[0])["matching_rows"], 1);
+    let (code, out, err) = cli(
+        dir.path(),
+        &[
+            "query",
+            &index,
+            "devices",
+            "--as-at",
+            NEXT_VERSION,
+            "--json",
+        ],
+    );
+    assert_eq!(code, 1, "{out}\n{err}");
+    let lines = json_lines(&out);
+    assert_eq!(lines[0]["stemmed"], true);
+    assert_eq!(lines[1]["as_at"]["status"], "superseded");
+}
+
+#[test]
 fn a_date_before_the_compilation_is_reported_even_when_no_word_matches() {
     let dir = tempfile::tempdir().unwrap();
     let index = build(dir.path(), Some(NEXT_VERSION));

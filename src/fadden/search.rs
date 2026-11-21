@@ -40,6 +40,8 @@ pub const STEM_NOTICE: &str = "Word-form matches are not quotation matches.";
 enum SearchMode {
     Exact,
     Stemmed,
+    /// Every word in some form, the query's own words ranked first.
+    WordForms,
 }
 
 impl SearchMode {
@@ -47,14 +49,39 @@ impl SearchMode {
     fn sql(self, exact: &'static str) -> Cow<'static, str> {
         match self {
             Self::Exact => Cow::Borrowed(exact),
-            Self::Stemmed => Cow::Owned(exact.replace("rows_fts", "rows_stem")),
+            Self::Stemmed | Self::WordForms => Cow::Owned(exact.replace("rows_fts", "rows_stem")),
         }
     }
 
-    fn mark(self, hit: Json) -> Json {
+    /// `QUERY_SQL` in this mode. Word forms match in the Porter table and add each
+    /// row's exact BM25, so a row holding the query's own words keeps its lead;
+    /// `word_form` is 1 for a row only a word form matched. Takes the match twice.
+    fn query_sql(self) -> Cow<'static, str> {
+        match self {
+            Self::WordForms => Cow::Owned(format!(
+                "WITH e AS (SELECT rowid AS id, bm25(rows_fts, 4.0, 1.0) AS score FROM rows_fts \
+                 WHERE rows_fts MATCH ?) {}",
+                QUERY_SQL
+                    .replace("AS snippet", "AS snippet, e.id IS NULL AS word_form")
+                    .replace(
+                        "bm25(rows_fts, 4.0, 1.0)",
+                        "bm25(rows_stem, 4.0, 1.0) + coalesce(e.score, 0)"
+                    )
+                    .replace(
+                        "rows_fts.rowid",
+                        "rows_fts.rowid LEFT JOIN e ON e.id = r.id"
+                    )
+                    .replace("rows_fts", "rows_stem")
+            )),
+            _ => self.sql(QUERY_SQL),
+        }
+    }
+
+    fn mark(self, hit: Json, word_form: bool) -> Json {
         match self {
             Self::Exact => hit,
-            Self::Stemmed => with_field(
+            Self::WordForms if !word_form => hit,
+            Self::Stemmed | Self::WordForms => with_field(
                 with_field(hit, "stemmed", Json::Bool(true)),
                 "stem_boundary",
                 Json::str(STEM_NOTICE),
@@ -1555,6 +1582,24 @@ pub fn query(
     )
 }
 
+/// Match every word in some English form, ranking rows that hold the query's own
+/// words first and marking each row that only a word form matched.
+pub fn query_word_forms(
+    connection: &Connection,
+    words: &[String],
+    title: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Json>, Exc> {
+    ranked(
+        connection,
+        words,
+        title,
+        limit,
+        Sql::Null,
+        SearchMode::WordForms,
+    )
+}
+
 /// Match English word forms, retaining original text and marking every hit.
 pub fn query_stemmed(
     connection: &Connection,
@@ -1592,8 +1637,9 @@ fn ranked(
     sections.sort();
     let encoded: Vec<Json> = sections.iter().map(|s| Json::str(s)).collect();
     let sections_json: String = pyvalue::points_lossy(&dumps_line(&Json::Array(encoded), true));
-    let params = [
-        Sql::Text(match_expression(words)?),
+    let expression = match_expression(words)?;
+    let mut params = vec![
+        Sql::Text(expression.clone()),
         rid.clone(),
         rid,
         only.clone(),
@@ -1601,9 +1647,18 @@ fn ranked(
         Sql::Text(sections_json),
         Sql::Integer(limit),
     ];
-    Ok(rows_of(connection, &mode.sql(QUERY_SQL), &params)?
+    if let SearchMode::WordForms = mode {
+        params.insert(0, Sql::Text(expression));
+    }
+    Ok(rows_of(connection, &mode.query_sql(), &params)?
         .into_iter()
-        .map(|row| mode.mark(hit(row)))
+        .map(|mut row| {
+            let word_form = row
+                .iter()
+                .position(|(name, _)| name == "word_form")
+                .is_some_and(|at| row.remove(at).1.truthy());
+            mode.mark(hit(row), word_form)
+        })
         .collect())
 }
 
@@ -1786,6 +1841,17 @@ pub fn query_as_at(
     date: &str,
 ) -> Result<DatedReport, Exc> {
     dated_query(connection, words, title, limit, date, SearchMode::Exact)
+}
+
+/// `query_word_forms` with the same captured-window restriction as exact search.
+pub fn query_word_forms_as_at(
+    connection: &Connection,
+    words: &[String],
+    title: Option<&str>,
+    limit: i64,
+    date: &str,
+) -> Result<DatedReport, Exc> {
+    dated_query(connection, words, title, limit, date, SearchMode::WordForms)
 }
 
 /// Word-form search with the same captured-window restriction as exact search.
@@ -2606,7 +2672,7 @@ fn parser() -> Parser {
         })
         .sub(
             "query",
-            Some("rank rows that contain every word"),
+            Some("rank rows that contain every word, in any English form"),
             query_arguments,
         )
         .sub("define", Some("look up a defined term"), |p| {
@@ -2635,7 +2701,8 @@ fn query_arguments(parser: Parser) -> Parser {
         .arg(Action::positional("words").one_or_more())
         .arg(Action::option("--title").help("search only this register id"))
         .arg(Action::option("--as-at").metavar("DATE").help(AS_AT_HELP))
-        .arg(Action::flag("--stem").help("match English word forms; not quotation matching"))
+        .arg(Action::flag("--exact").help("match only the words as typed"))
+        .arg(Action::flag("--stem").help("rank by English word forms alone"))
         .arg(
             Action::option("--limit")
                 .int()
@@ -2967,6 +3034,9 @@ fn refused_code(dated: Option<&DatedReport>) -> i32 {
     i32::from(dated.is_some_and(|report| !report.refusals.is_empty()))
 }
 
+type QueryFn = fn(&Connection, &[String], Option<&str>, i64) -> Result<Vec<Json>, Exc>;
+type DatedQueryFn = fn(&Connection, &[String], Option<&str>, i64, &str) -> Result<DatedReport, Exc>;
+
 fn query_results(
     args: &crate::argparse::Namespace,
     connection: &Connection,
@@ -2977,24 +3047,23 @@ fn query_results(
         _ => 10,
     };
     let words = list(args, "words");
-    let stemmed = args.flag("stem");
+    if args.flag("stem") && args.flag("exact") {
+        return Err(refused("--stem and --exact cannot be combined"));
+    }
+    let (plain, dated_by): (QueryFn, DatedQueryFn) = if args.flag("stem") {
+        (query_stemmed, query_stemmed_as_at)
+    } else if args.flag("exact") {
+        (query, query_as_at)
+    } else {
+        (query_word_forms, query_word_forms_as_at)
+    };
     let dated = args
         .str("as_at")
-        .map(|date| {
-            let query = if stemmed {
-                query_stemmed_as_at
-            } else {
-                query_as_at
-            };
-            query(connection, &words, title.as_deref(), limit, &date)
-        })
+        .map(|date| dated_by(connection, &words, title.as_deref(), limit, &date))
         .transpose()?;
     let hits = match &dated {
         Some(report) => report.hits.clone(),
-        None => {
-            let query = if stemmed { query_stemmed } else { query };
-            query(connection, &words, title.as_deref(), limit)?
-        }
+        None => plain(connection, &words, title.as_deref(), limit)?,
     };
     Ok((hits, dated))
 }
@@ -3016,10 +3085,22 @@ fn execute_query(
     }
     if args.flag("stem") {
         run.print(&format!("Stemmed search. {STEM_NOTICE}"));
+    } else if hits.iter().any(|hit| hit.get("stemmed").is_some()) {
+        run.print(&format!("Rows marked * matched a word form. {STEM_NOTICE}"));
     }
     for (number, hit) in hits.iter().enumerate() {
         let s = |k: &str| pyvalue::py_str(hit.get(k).unwrap_or(&Json::Null));
-        run.print(&format!("{}. {}: {}", number + 1, s("act"), s("heading")));
+        let mark = if !args.flag("stem") && hit.get("stemmed").is_some() {
+            "* "
+        } else {
+            ""
+        };
+        run.print(&format!(
+            "{}. {mark}{}: {}",
+            number + 1,
+            s("act"),
+            s("heading")
+        ));
         run.print(&format!("   {}", describe(hit)));
         run.print(&format!(
             "   {}",
