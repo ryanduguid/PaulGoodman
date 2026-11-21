@@ -552,12 +552,15 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
 - `refs --terms` adds `terms`: the defined terms a row marks with an asterisk, each
   with the definitions it reaches. The asterisk marks only where a term starts (ITAA
   1997 s 2-10, GST Act s 3-1), so `refs` takes the longest run of following words, up
-  to punctuation or the next asterisk, that the row's title defines, as written or in
-  the singular; failing that, the longest that a stored term begins with before its
-  qualifier (`cost base` of `cost base of a CGT asset`), marked `"match": "without
-  qualifier"`. A term the row's title does not define is looked up in the ITAA 1997
-  only for the TAA 1953, whose s 3AA(2) gives Schedule 1 expressions their ITAA 1997
-  meaning. `unresolved_terms` counts asterisks that reached no definition `define`
+  to punctuation or the next asterisk, that the row's title defines, as written
+  (`"match": "term"`) or in the singular (`"singular"`; `rates` tries `rate` before
+  `rat`); failing that, the longest that a stored term begins with before its
+  qualifier (`cost base` of `cost base of a CGT asset`), marked `"without
+  qualifier"`. A longer term the index does not hold therefore reads as its longest
+  defined start: `*entity status` gives `entity` if only `entity` is held. A term the
+  row's title does not define is looked up in the ITAA 1997 only for Schedule 1 of
+  the TAA 1953 (its rows numbered like `8-1`), whose s 3AA(2) gives Schedule 1
+  expressions their ITAA 1997 meaning. `unresolved_terms` counts asterisks that reached no definition `define`
   reads; the [measurement](docs/build-evidence.md#defined-terms-a-provision-uses)
   gives the share. A listed term shows where the index holds a definition, not that
   it applies to that provision.

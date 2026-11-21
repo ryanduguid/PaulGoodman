@@ -1996,27 +1996,28 @@ pub fn follow_definitions(connection: &Connection, hits: Vec<Json>) -> Result<Ve
         .collect()
 }
 
-/// Titles whose asterisked terms take their meaning from another title's definitions
-/// when their own define none: TAA 1953 s 3AA(2) gives an expression in Schedule 1
-/// the meaning it has in the ITAA 1997 (read in the 2026-11-18 snapshot).
-const TERMS_FROM: [(&str, &str); 1] = [("C1953A00001", "C2004A05138")];
+/// The title whose definitions a row's asterisked terms also use when its own title
+/// defines none. TAA 1953 s 3AA(2) gives an expression in Schedule 1 the meaning it has
+/// in the ITAA 1997 (read in the 2026-11-18 snapshot). Schedule 1's sections, and only
+/// they in that Act, are numbered like `8-1`, so a section number with a hyphen marks
+/// a Schedule 1 row.
+fn borrowed_terms(rid: &str, section_key: &str) -> Option<&'static str> {
+    (rid == "C1953A00001" && section_key.contains('-')).then_some("C2004A05138")
+}
 /// Where a stored term's qualifier starts: `cost base` of `cost base of a CGT asset`.
 const TERM_QUALIFIER: &str = r",| (?:of|in|for|to|from|with|by|on) (?:a|an|the|any|another)\b";
 const TERM_WORD: &str = r"[\w‐‑&'’-]+";
 /// A term never runs past these, nor into the next asterisk.
 const TERM_STOP: [char; 10] = [',', ';', ':', '.', '(', ')', '[', ']', '\n', '*'];
 
-/// The forms of a folded term to look up: as written, then singular.
+/// The forms of a folded term to look up: as written, then singular, dropping `s`
+/// before `es` so `rates` reads as `rate`, not `rat`.
 fn term_forms(key: &str) -> Vec<String> {
     let mut forms = vec![key.to_string()];
-    if let Some(stem) = key.strip_suffix("ies") {
-        forms.push(format!("{stem}y"));
-    }
-    if let Some(stem) = key.strip_suffix("es") {
-        forms.push(stem.to_string());
-    }
-    if let Some(stem) = key.strip_suffix('s') {
-        forms.push(stem.to_string());
+    for (plural, singular) in [("s", ""), ("es", ""), ("ies", "y")] {
+        if let Some(stem) = key.strip_suffix(plural) {
+            forms.push(format!("{stem}{singular}"));
+        }
     }
     forms
 }
@@ -2026,7 +2027,7 @@ type TermTable = BTreeMap<String, Vec<Json>>;
 
 /// A table for each title in `scopes`, then one for each keyed by the term without its
 /// qualifier; each entry is `(by_head, table)`.
-fn term_tables(connection: &Connection, scopes: &[String]) -> Result<Vec<(bool, TermTable)>, Exc> {
+fn term_tables(connection: &Connection, scopes: &[&str]) -> Result<Vec<(bool, TermTable)>, Exc> {
     let qualifier = pyre::re(TERM_QUALIFIER, 0);
     let (mut wholes, mut qualified) = (Vec::new(), Vec::new());
     for scope in scopes {
@@ -2035,7 +2036,7 @@ fn term_tables(connection: &Connection, scopes: &[String]) -> Result<Vec<(bool, 
             connection,
             "SELECT d.term, d.term_key, d.row_id, r.register_id, r.heading FROM definitions d \
 JOIN rows r ON r.row_id = d.row_id WHERE r.register_id = ? ORDER BY r.id, d.position",
-            &[Sql::Text(scope.clone())],
+            &[Sql::Text(scope.to_string())],
         )? {
             let key = field(&found, "term_key")
                 .as_str()
@@ -2061,8 +2062,12 @@ JOIN rows r ON r.row_id = d.row_id WHERE r.register_id = ? ORDER BY r.id, d.posi
 }
 
 /// The term an asterisk at the start of `span` marks: the longest run of its words found
-/// in the first table that holds one, with whether that table is keyed without qualifiers.
-fn marked_term(span: &str, tables: &[(bool, TermTable)]) -> Option<(bool, String, Vec<Json>)> {
+/// in the first table that holds one, with how it matched: `term` as written,
+/// `singular`, or `without qualifier` from a table keyed without qualifiers.
+fn marked_term(
+    span: &str,
+    tables: &[(bool, TermTable)],
+) -> Option<(&'static str, String, Vec<Json>)> {
     let words: Vec<String> = pyre::re(TERM_WORD, 0)
         .findall(span)
         .into_iter()
@@ -2071,10 +2076,17 @@ fn marked_term(span: &str, tables: &[(bool, TermTable)]) -> Option<(bool, String
     tables.iter().find_map(|(by_head, table)| {
         (1..=words.len()).rev().find_map(|n| {
             let written = words[..n].join(" ");
-            term_forms(&term_key(&written))
+            let forms = term_forms(&term_key(&written));
+            let (at, definitions) = forms
                 .iter()
-                .find_map(|form| table.get(form))
-                .map(|definitions| (*by_head, written, definitions.clone()))
+                .enumerate()
+                .find_map(|(at, form)| table.get(form).map(|found| (at, found.clone())))?;
+            let how = match (by_head, at) {
+                (true, _) => "without qualifier",
+                (false, 0) => "term",
+                (false, _) => "singular",
+            };
+            Some((how, written, definitions))
         })
     })
 }
@@ -2083,11 +2095,11 @@ fn marked_term(span: &str, tables: &[(bool, TermTable)]) -> Option<(bool, String
 /// reaches, and how many asterisks reached none. Most defined terms are marked by an
 /// asterisk at their start (ITAA 1997 s 2-10, GST Act s 3-1), so where a term ends is
 /// read here: the longest run of following words, up to punctuation, that is a term
-/// the row's title defines (else one `TERMS_FROM` names), as written or singular;
-/// failing that, the longest that is such a term without its qualifier, reported as
-/// `"match": "without qualifier"`.
+/// the row's title defines (else the title `borrowed_terms` names), as written or
+/// singular; failing that, the longest that is such a term without its qualifier. A
+/// longer term the index does not hold therefore reads as its longest defined start.
 pub fn defined_terms(connection: &Connection, row_id: &str) -> Result<(Vec<Json>, usize), Exc> {
-    let sql = "SELECT register_id, text FROM rows WHERE row_id = ?";
+    let sql = "SELECT register_id, section_key, text FROM rows WHERE row_id = ?";
     let Some(row) = rows_of(connection, sql, &[Sql::Text(row_id.into())])?
         .into_iter()
         .next()
@@ -2096,13 +2108,11 @@ pub fn defined_terms(connection: &Connection, row_id: &str) -> Result<(Vec<Json>
     };
     let rid = field(&row, "register_id").as_str().unwrap_or_default();
     let text = field(&row, "text").as_str().unwrap_or_default();
-    let mut scopes = vec![rid.to_string()];
-    scopes.extend(
-        TERMS_FROM
-            .iter()
-            .filter(|(from, _)| *from == rid)
-            .map(|(_, to)| to.to_string()),
-    );
+    let section = field(&row, "section_key").as_str().unwrap_or_default();
+    let scopes: Vec<&str> = [Some(rid), borrowed_terms(rid, section)]
+        .into_iter()
+        .flatten()
+        .collect();
     let tables = term_tables(connection, &scopes)?;
     let mut terms: Vec<(String, Json)> = Vec::new();
     let mut unresolved = 0;
@@ -2112,7 +2122,7 @@ pub fn defined_terms(connection: &Connection, row_id: &str) -> Result<(Vec<Json>
         if !span.starts_with(|c: char| c.is_alphanumeric()) {
             continue;
         }
-        let Some((by_head, written, definitions)) = marked_term(span, &tables) else {
+        let Some((how, written, definitions)) = marked_term(span, &tables) else {
             unresolved += 1;
             continue;
         };
@@ -2120,12 +2130,11 @@ pub fn defined_terms(connection: &Connection, row_id: &str) -> Result<(Vec<Json>
         if terms.iter().any(|(seen, _)| *seen == key) {
             continue;
         }
-        let matched = if by_head { "without qualifier" } else { "term" };
         terms.push((
             key,
             object(vec![
                 ("term".into(), Json::str(&written)),
-                ("match".into(), Json::str(matched)),
+                ("match".into(), Json::str(how)),
                 ("definitions".into(), Json::Array(definitions)),
             ]),
         ));
@@ -3308,10 +3317,10 @@ fn print_terms(report: &Json, run: &mut Run) {
             .iter()
             .map(|d| format!("{} ({})", s(d.at("row_id")), s(d.at("heading"))))
             .collect();
-        let qualifier = if term.at("match").as_str() == Some("term") {
-            ""
-        } else {
-            ", matched without its qualifier"
+        let qualifier = match term.at("match").as_str() {
+            Some("singular") => ", read in the singular",
+            Some("without qualifier") => ", matched without its qualifier",
+            _ => "",
         };
         run.print(&format!(
             "  uses *{}{qualifier}: defined in {}",

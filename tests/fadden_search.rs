@@ -1481,7 +1481,7 @@ fn refs_terms_reads_where_each_asterisked_term_ends() {
     assert_eq!(
         found,
         [
-            ("approved gadgets", "term"),
+            ("approved gadgets", "singular"),
             ("widget", "term"),
             ("R&D entity", "term"),
             ("cost base", "without qualifier"),
@@ -1525,6 +1525,50 @@ fn refs_terms_reads_where_each_asterisked_term_ends() {
 }
 
 #[test]
+fn a_plural_term_prefers_dropping_s_and_says_it_was_read_as_singular() {
+    let c = case();
+    let mut titles = sample_titles();
+    let rows = &mut titles.get_mut(ACT).unwrap().1;
+    rows.push(row(
+        ACT,
+        6,
+        Some("6"),
+        &format!(
+            "rat means a rodent.\n\nrate means a percentage.\n\n\
+             levy has the meaning given by sections 2{NBH}1 and 3{NBH}1."
+        ),
+        "6 Definitions",
+        None,
+    ));
+    rows.push(row(ACT, 7, Some("7"), "The *rates apply.", "7 Rates", None));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let (terms, _) = search::defined_terms(&connection, &format!("{ACT}:0007:7")).unwrap();
+    let terms = values(terms);
+    assert_eq!(terms[0]["match"], "singular");
+    assert_eq!(terms[0]["definitions"][0]["term"], "rate");
+    // A definition naming a list of sections reaches each of them.
+    let args = ["define", "index.sqlite", "levy", "--follow", "--json"];
+    let (code, out, err) = cli(&args, c.out.parent().unwrap());
+    assert_eq!(code, 0, "{err}");
+    let hit: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    let reached: Vec<&Value> = hit["refers_to"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| &r["rows"][0]["row_id"])
+        .collect();
+    assert_eq!(
+        reached,
+        [
+            &json!(format!("{ACT}:0002:2{NBH}1")),
+            &json!(format!("{ACT}:0003:3{NBH}1"))
+        ]
+    );
+}
+
+#[test]
 fn schedule_1_terms_fall_back_to_the_itaa_1997_dictionary() {
     const TAA: &str = "C1953A00001";
     let c = case();
@@ -1547,14 +1591,24 @@ fn schedule_1_terms_fall_back_to_the_itaa_1997_dictionary() {
         TAA,
         (
             "Taxation Administration Act 1953",
-            vec![row(
-                TAA,
-                1,
-                Some(&format!("8{NBH}1")),
-                "An *entity must keep records.",
-                "8\u{2011}1 Records",
-                None,
-            )],
+            vec![
+                row(
+                    TAA,
+                    1,
+                    Some(&format!("8{NBH}1")),
+                    "An *entity must keep records.",
+                    "8\u{2011}1 Records",
+                    None,
+                ),
+                row(
+                    TAA,
+                    2,
+                    Some("8AA"),
+                    "An *entity outside Schedule 1.",
+                    "8AA Other",
+                    None,
+                ),
+            ],
         ),
     );
     write_corpus(&c.root, &titles, &[]);
@@ -1566,6 +1620,9 @@ fn schedule_1_terms_fall_back_to_the_itaa_1997_dictionary() {
     assert_eq!(unresolved, 0);
     assert_eq!(terms[0]["term"], "entity");
     assert_eq!(terms[0]["definitions"][0]["register_id"], ITAA);
+    // Only Schedule 1 borrows the ITAA 1997's meanings (TAA 1953 s 3AA(2)).
+    let outside = search::defined_terms(&connection, &format!("{TAA}:0002:8AA")).unwrap();
+    assert_eq!(outside, (vec![], 1));
     // The ITAA 1997 itself does not borrow from the TAA.
     assert!(search::defined_terms(&connection, &format!("{ITAA}:0001:995{NBH}1")).is_ok());
     assert!(search::defined_terms(&connection, "C2099A09999:0001:1").is_err());
