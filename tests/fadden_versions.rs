@@ -361,6 +361,20 @@ fn resolved(module: &Path) -> Value {
         .unwrap()
 }
 
+fn later_history(id: &str) -> Vec<Value> {
+    (0..60)
+        .map(|n| {
+            version(
+                id,
+                &format!("{}-01-01", 2100 - n),
+                Some(&format!("{}-01-01", 2101 - n)),
+                n == 0,
+                Some("C2099C00009"),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn a_date_resolves_the_version_whose_window_holds_it() {
     let co = checkout(&titles(2));
@@ -436,18 +450,9 @@ fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
                 ],
                 // Made after the date.
                 "C2099A00003" => vec![version(&id, "2025-01-01", None, true, Some("C2025C00002"))],
-                // 60 versions, all after the date: the page cannot reach it.
-                "C2099A00004" => (0..60)
-                    .map(|n| {
-                        version(
-                            &id,
-                            &format!("{}-01-01", 2100 - n),
-                            Some(&format!("{}-01-01", 2101 - n)),
-                            n == 0,
-                            Some("C2099C00009"),
-                        )
-                    })
-                    .collect(),
+                // The history page ends too soon, but the dated result is empty.
+                "C2099A00004" if url.contains("$top=60&") => later_history(&id),
+                "C2099A00004" => vec![],
                 _ => vec![
                     version(&id, "2024-07-01", None, true, Some("C2024C00003")),
                     version(
@@ -469,7 +474,7 @@ fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
         "   skipped C2099A00001: in force now, so the default build holds it\n",
         "   skipped C2099A00002: the Register published no compilation for the version in force then\n",
         "   skipped C2099A00003: no version was in force then\n",
-        "   skipped C2099A00004: its newest 60 versions all start after the date\n",
+        "   skipped C2099A00004: no version was in force then\n",
         "   skipped C2099A00005: the version then starts after the current one, so is not in force yet\n",
         "   skipped C2099A00006: the version then starts after the current one, so is not in force yet\n",
         "\nresolved: 1   failed: 0\n",
@@ -480,6 +485,118 @@ fn a_title_with_nothing_earlier_to_fetch_is_listed_and_left_out() {
     assert_eq!(rows.as_array().unwrap().len(), 1);
     assert_eq!(rows[0]["id"], rid(7));
     assert_eq!(rows[0]["current_version_start"], "2024-07-01");
+    assert_eq!(calls(&s), (8, 8));
+}
+
+#[test]
+fn an_older_compilation_is_resolved_after_the_history_page_runs_out() {
+    for short_page in [false, true] {
+        let co = checkout(&titles(1));
+        let mut s = Script {
+            answer: |url: &str| {
+                let id = history_of(url);
+                if url.contains("$top=60&") {
+                    let mut history = later_history(&id);
+                    history[59]["start"] = json!("2020-09-03T00:00:00");
+                    if short_page {
+                        return Ok(json!({
+                            "value": &history[59..],
+                            "@odata.nextLink": "unused"
+                        })
+                        .to_string());
+                    }
+                    return Ok(json!({"value": history}).to_string());
+                }
+                let mut earlier = version(
+                    &id,
+                    "2020-07-01",
+                    Some("2020-09-03"),
+                    false,
+                    Some("C2020C00257"),
+                );
+                earlier["compilationNumber"] = json!("170");
+                Ok(json!({"value": [earlier]}).to_string())
+            },
+            events: Vec::new(),
+        };
+        let (result, stdout) = in_force(&mut s, &co.module, "2020-07-01");
+        result.unwrap();
+        assert_eq!(calls(&s), (2, 2));
+        assert_eq!(s.events[1], "sleep 1.5");
+        assert_eq!(
+            s.events[2],
+            "GET https://api.prod.legislation.gov.au/v1/versions?$top=2&$filter=\
+             titleId%20eq%20%27C2099A00001%27%20and%20start%20le%202020-07-01T00%3A00%3A00\
+             %20and%20%28end%20eq%20null%20or%20end%20gt%202020-07-01T00%3A00%3A00%29\
+             &$select=titleId,start,end,isCurrent,compilationNumber,registerId"
+        );
+        let rows = resolved(&co.module);
+        assert_eq!(rows[0]["id"], rid(1));
+        assert_eq!(rows[0]["compilationRegisterId"], "C2020C00257");
+        assert_eq!(rows[0]["compilationNumber"], "170");
+        assert_eq!(rows[0]["versionStart"], "2020-07-01");
+        assert_eq!(rows[0]["current_version_start"], "2020-09-03");
+        assert!(stdout.contains("\nresolved: 1   failed: 0\n"), "{stdout}");
+    }
+}
+
+#[test]
+fn an_unreliable_dated_result_keeps_the_old_manifest() {
+    for bad in [
+        "503",
+        "no value",
+        "continuation",
+        "overlap",
+        "expired",
+        "wrong title",
+        "unknown current",
+    ] {
+        let co = checkout(&titles(1));
+        let manifest = co.module.join("acts_resolved.json");
+        std::fs::write(&manifest, "old").unwrap();
+        let mut s = Script {
+            answer: |url: &str| {
+                let id = history_of(url);
+                if url.contains("$top=60&") {
+                    // A continuation can also make a short page incomplete.
+                    return Ok(json!({"value": [], "@odata.nextLink": "unused"}).to_string());
+                }
+                let mut row = version(
+                    &id,
+                    "2024-01-01",
+                    Some("2025-01-01"),
+                    false,
+                    Some("C2024C00001"),
+                );
+                let payload = match bad {
+                    "503" => return Err(Failure::Status(503)),
+                    "no value" => json!({}),
+                    "continuation" => json!({"value": [], "@odata.nextLink": "unused"}),
+                    "overlap" => json!({"value": [row, row]}),
+                    _ => {
+                        match bad {
+                            "expired" => row["end"] = json!("2024-06-30T00:00:00"),
+                            "wrong title" => row["titleId"] = json!(rid(2)),
+                            "unknown current" => row["isCurrent"] = json!("false"),
+                            _ => unreachable!(),
+                        }
+                        json!({"value": [row]})
+                    }
+                };
+                Ok(payload.to_string())
+            },
+            events: Vec::new(),
+        };
+        let (result, stdout) = in_force(&mut s, &co.module, "2024-06-30");
+        assert!(result.is_err(), "{bad}: {stdout}");
+        assert!(
+            stdout.contains("   FAILED C2099A00001 Act 0001\n"),
+            "{bad}: {stdout}"
+        );
+        let gets = if bad == "503" { 4 } else { 2 };
+        assert_eq!(calls(&s), (gets, 2), "{bad}");
+        assert_eq!(std::fs::read_to_string(manifest).unwrap(), "old", "{bad}");
+    }
 }
 
 #[test]
