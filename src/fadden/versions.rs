@@ -498,33 +498,14 @@ fn resolve_in_force_on(
         let rid = register_id(getitem(title, "id")?)?;
         let payload = http::fetch_json(http, &probe13::history_url(&rid))?;
         http.sleep(RESOLUTION_DELAY);
-        let payload = payload.as_ref().unwrap_or(&Json::Null);
-        let outcome = version_rows(payload, &rid).and_then(|versions| version_on(&versions, on));
-        let outcome = match outcome {
-            Ok(Err(DatedSkip::Omitted(PAGE_TOO_SHORT))) => older_version_on(http, &rid, on),
-            Ok(Err(DatedSkip::Omitted(NOT_IN_FORCE))) if has_continuation(payload) => {
-                older_version_on(http, &rid, on)
-            }
-            other => other,
-        };
-        match outcome {
-            Ok(Ok((version, start, end))) => {
-                let mut record = title.clone();
-                set_field(&mut record, "versionStart", Json::str(&start));
-                set_field(
-                    &mut record,
-                    "compilationNumber",
-                    version
-                        .get("compilationNumber")
-                        .cloned()
-                        .unwrap_or(Json::Null),
-                );
-                let document = compilation_id(&version)?.map_or(Json::Null, |d| Json::str(&d));
-                set_field(&mut record, "compilationRegisterId", document);
-                set_field(&mut record, "version_is_current", Json::Bool(false));
-                set_field(&mut record, "current_version_start", Json::str(&end));
-                resolved.push(record);
-            }
+        match dated_record(
+            http,
+            title,
+            &rid,
+            on,
+            payload.as_ref().unwrap_or(&Json::Null),
+        ) {
+            Ok(Ok(record)) => resolved.push(record),
             Ok(Err(reason)) => skipped.push((rid, reason)),
             Err(Exc::Value { .. }) => failed.push(title.clone()),
             Err(other) => return Err(other),
@@ -545,6 +526,51 @@ fn resolve_in_force_on(
         return finish(scratch, resolved, &failed, run);
     }
     check_resolution(resolved.len(), &failed, run)?;
+    write_dated_resolution(scratch, on, resolved, skipped)
+}
+
+fn dated_record(
+    http: &mut dyn Http,
+    title: &Json,
+    rid: &str,
+    on: &str,
+    payload: &Json,
+) -> Result<Result<Json, DatedSkip>, Exc> {
+    let versions = version_rows(payload, rid)?;
+    let outcome = match version_on(&versions, on)? {
+        Err(DatedSkip::Omitted(PAGE_TOO_SHORT)) => older_version_on(http, rid, on)?,
+        Err(DatedSkip::Omitted(NOT_IN_FORCE)) if has_continuation(payload) => {
+            older_version_on(http, rid, on)?
+        }
+        other => other,
+    };
+    let (version, start, end) = match outcome {
+        Ok(resolved) => resolved,
+        Err(skip) => return Ok(Err(skip)),
+    };
+    let mut record = title.clone();
+    set_field(&mut record, "versionStart", Json::str(&start));
+    set_field(
+        &mut record,
+        "compilationNumber",
+        version
+            .get("compilationNumber")
+            .cloned()
+            .unwrap_or(Json::Null),
+    );
+    let document = compilation_id(&version)?.map_or(Json::Null, |id| Json::str(&id));
+    set_field(&mut record, "compilationRegisterId", document);
+    set_field(&mut record, "version_is_current", Json::Bool(false));
+    set_field(&mut record, "current_version_start", Json::str(&end));
+    Ok(Ok(record))
+}
+
+fn write_dated_resolution(
+    scratch: &str,
+    on: &str,
+    resolved: Vec<Json>,
+    skipped: Vec<(String, DatedSkip)>,
+) -> Result<(), Exc> {
     let mut current = Vec::new();
     let mut omissions = Vec::new();
     for (rid, skip) in skipped {

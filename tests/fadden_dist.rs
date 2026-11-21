@@ -2427,9 +2427,9 @@ fn a_requested_date_with_no_compilation_keeps_its_omissions_in_the_distribution(
     rewrite(&source, |src| {
         src["historical_omissions"][0]["omissions"][0]["reason"] = json!("Register unavailable");
     });
-    let (code, out) = verify(&f);
+    let (code, out, err) = stage(&f, "dist_verify");
     assert_ne!(code, 0, "{out}");
-    assert!(out.contains("invalid historical omission"), "{out}");
+    assert!(err.contains("invalid historical omission"), "{err}");
 }
 
 /// A change to a dated folder, or to a published distribution.
