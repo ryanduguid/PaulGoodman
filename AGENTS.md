@@ -60,7 +60,7 @@ Python inputs replayed by that harness and checked against the original schema-2
 hashes before export. The logical oracle preserves original data and FTS postings,
 adds independently generated native SQLite Porter postings and permits only the
 documented version and captured-window column changes. Other file hashes remain
-frozen. Search query usage also includes the new `--stem` flag.
+frozen. Search query usage also includes the `--exact` and `--stem` flags.
 The `compare_builds` cases follow its stricter behaviour instead (the module doc of
 `tests/fadden_golden.rs` says what changed), so regenerating them from the base revision
 would undo it. One input departs from that stricter Python too: a lone surrogate in a

@@ -522,6 +522,122 @@ fn stemmed_search_is_opt_in_and_keeps_original_words_and_provenance() {
 }
 
 #[test]
+fn default_query_matches_word_forms_and_marks_them() {
+    let c = case();
+    let _connection = built(&c);
+    let dir = c.out.parent().unwrap();
+    let (code, out, err) = cli(&["query", "index.sqlite", "researching", "--json"], dir);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let hits: Vec<Value> = out
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(hits.len(), 1, "{out}");
+    assert_eq!(hits[0]["row_id"], format!("{ACT}:0003:3{NBH}1"));
+    assert_eq!(hits[0]["stemmed"], true);
+    assert_eq!(hits[0]["stem_boundary"], search::STEM_NOTICE);
+    assert!(hits[0].get("word_form").is_none(), "{out}");
+    let (code, out, err) = cli(&["query", "index.sqlite", "researching"], dir);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("matched a word form"), "{out}");
+    assert!(out.contains("1. * Sample Levy Act 2099"), "{out}");
+    let (code, out, err) = cli(&["query", "index.sqlite", "research", "--json"], dir);
+    assert_eq!(code, 0, "{err}");
+    assert!(!out.contains("stemmed"), "{out}");
+    let (code, out, err) = cli(&["query", "index.sqlite", "research"], dir);
+    assert_eq!(code, 0, "{err}");
+    assert!(!out.contains("word form") && !out.contains("* "), "{out}");
+    let (code, out, err) = cli(
+        &["query", "index.sqlite", "researching", "--exact", "--json"],
+        dir,
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "", "{out}");
+    // The title filter binds after the doubled match expression.
+    for (title, rows) in [(ACT, 1), (OTHER, 0)] {
+        let args = [
+            "query",
+            "index.sqlite",
+            "researching",
+            "--title",
+            title,
+            "--json",
+        ];
+        let (code, out, err) = cli(&args, dir);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(out.lines().count(), rows, "{out}");
+    }
+    let (code, _, err) = cli(
+        &["query", "index.sqlite", "research", "--exact", "--stem"],
+        dir,
+    );
+    assert_ne!(code, 0);
+    assert!(
+        err.contains("--stem and --exact cannot be combined"),
+        "{err}"
+    );
+}
+
+#[test]
+fn word_forms_rank_the_query_words_above_other_forms() {
+    let c = case();
+    let mut titles = sample_titles();
+    let rows = &mut titles.get_mut(ACT).unwrap().1;
+    rows.push(row(
+        ACT,
+        6,
+        Some("6"),
+        "A deduction is allowed.",
+        "6 Allowance",
+        None,
+    ));
+    rows.push(row(
+        ACT,
+        7,
+        Some("7"),
+        "Deducting, deducted and deducts: deducting again.",
+        "7 Deducting",
+        None,
+    ));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let words = ["deduction".to_string()];
+    let ids = |hits: Vec<Json>| -> Vec<(Value, Value)> {
+        values(hits)
+            .iter()
+            .map(|h| {
+                (
+                    h["row_id"].clone(),
+                    h.get("stemmed").cloned().unwrap_or(Value::Null),
+                )
+            })
+            .collect()
+    };
+    let (exact, form) = (
+        json!(format!("{ACT}:0006:6")),
+        json!(format!("{ACT}:0007:7")),
+    );
+    // Porter alone ranks the row full of other forms first.
+    assert_eq!(
+        ids(search::query_stemmed(&connection, &words, None, 10).unwrap())[0].0,
+        form
+    );
+    assert_eq!(
+        ids(search::query_word_forms(&connection, &words, None, 10).unwrap()),
+        [(exact.clone(), Value::Null), (form.clone(), json!(true))]
+    );
+    assert_eq!(
+        ids(search::query_word_forms(&connection, &words, None, 1).unwrap()),
+        [(exact.clone(), Value::Null)]
+    );
+    assert_eq!(
+        ids(search::query(&connection, &words, None, 10).unwrap()),
+        [(exact, Value::Null)]
+    );
+}
+
+#[test]
 fn stemmed_search_keeps_title_limit_and_literal_query_contracts() {
     let c = case();
     let _connection = built(&c);
@@ -1995,10 +2111,12 @@ struct ReferenceResult {
     refused_correctly: bool,
 }
 
+const MODES: [&str; 3] = ["exact", "stemmed", "word_forms"];
+
 fn reference_result(
     connection: &rusqlite::Connection,
     question: [&str; 6],
-    stemmed: bool,
+    mode: &str,
 ) -> ReferenceResult {
     let [query, rid, section, _, date, expected] = question;
     let present: bool = connection
@@ -2022,10 +2140,10 @@ fn reference_result(
     );
     let words: Vec<String> = query.split_whitespace().map(str::to_string).collect();
     if date != "-" {
-        let query = if stemmed {
-            search::query_stemmed_as_at
-        } else {
-            search::query_as_at
+        let query = match mode {
+            "stemmed" => search::query_stemmed_as_at,
+            "word_forms" => search::query_word_forms_as_at,
+            _ => search::query_as_at,
         };
         let report = query(connection, &words, Some(rid), 10, date).unwrap();
         let refusal = report
@@ -2049,10 +2167,10 @@ fn reference_result(
             refused_correctly,
         };
     }
-    let query = if stemmed {
-        search::query_stemmed
-    } else {
-        search::query
+    let query = match mode {
+        "stemmed" => search::query_stemmed,
+        "word_forms" => search::query_word_forms,
+        _ => search::query,
     };
     let hits = values(query(connection, &words, None, 10).unwrap());
     let rank = hits.iter().position(|hit| {
@@ -2080,14 +2198,14 @@ fn reference_scoring_separates_retrieval_failure_from_missing_source() {
     let found = reference_result(
         &connection,
         ["research", ACT, "3-1", "base", "-", "hit"],
-        false,
+        "exact",
     );
     assert_eq!(found.rank, Some(0));
     assert!(!found.missing_source);
     let failed = reference_result(
         &connection,
         ["absentword", ACT, "3-1", "base", "-", "hit"],
-        false,
+        "exact",
     );
     assert_eq!(failed.rank, None);
     assert!(!failed.missing_source);
@@ -2101,10 +2219,10 @@ fn reference_scoring_separates_retrieval_failure_from_missing_source() {
             "-",
             "missing_source",
         ],
-        false,
+        "exact",
     );
     assert!(missing.missing_source);
-    for stemmed in [false, true] {
+    for mode in MODES {
         let refused = reference_result(
             &connection,
             [
@@ -2115,7 +2233,7 @@ fn reference_scoring_separates_retrieval_failure_from_missing_source() {
                 "2099-06-30",
                 "before_compilation",
             ],
-            stemmed,
+            mode,
         );
         assert!(refused.refused_correctly);
         assert_eq!(refused.rows, 0);
@@ -2137,13 +2255,13 @@ fn reference_questions_on_a_real_index() {
         )
         .unwrap();
     println!("REFERENCE_SOURCES {source_digest}");
-    for stemmed in [false, true] {
+    for mode in MODES {
         let mut results = BTreeMap::<&str, Vec<([&str; 6], ReferenceResult)>>::new();
         for question in reference_questions() {
-            let result = reference_result(&connection, question, stemmed);
+            let result = reference_result(&connection, question, mode);
             println!(
                 "REFERENCE_CASE {}",
-                json!({"stemmed": stemmed, "query": question[0], "class": question[3], "expected": question[5], "rank": result.rank.map(|r| r + 1), "rows": result.rows, "missing_source": result.missing_source, "refused_correctly": result.refused_correctly})
+                json!({"mode": mode, "query": question[0], "class": question[3], "expected": question[5], "rank": result.rank.map(|r| r + 1), "rows": result.rows, "missing_source": result.missing_source, "refused_correctly": result.refused_correctly})
             );
             results
                 .entry(question[3])
@@ -2175,7 +2293,7 @@ fn reference_questions_on_a_real_index() {
             let wrong_refusals = dated.iter().filter(|r| !r.refused_correctly).count();
             println!(
                 "REFERENCE_SUMMARY {}",
-                json!({"stemmed": stemmed, "class": class, "cases": records.len(), "retrieval_denominator": retrieval.len(), "hit_at_1": hit(1), "hit_at_5": hit(5), "hit_at_10": hit(10), "mrr_at_10": (!retrieval.is_empty()).then(|| reciprocal / retrieval.len() as f64), "retrieval_failures": retrieval.iter().filter(|r| r.rank.is_none()).count(), "no_results": retrieval.iter().filter(|r| r.rows == 0).count(), "missing_sources": records.iter().filter(|(_, r)| r.missing_source).count(), "dated_denominator": dated.len(), "dated_false_matches": false_matches, "wrong_refusals": wrong_refusals})
+                json!({"mode": mode, "class": class, "cases": records.len(), "retrieval_denominator": retrieval.len(), "hit_at_1": hit(1), "hit_at_5": hit(5), "hit_at_10": hit(10), "mrr_at_10": (!retrieval.is_empty()).then(|| reciprocal / retrieval.len() as f64), "retrieval_failures": retrieval.iter().filter(|r| r.rank.is_none()).count(), "no_results": retrieval.iter().filter(|r| r.rows == 0).count(), "missing_sources": records.iter().filter(|(_, r)| r.missing_source).count(), "dated_denominator": dated.len(), "dated_false_matches": false_matches, "wrong_refusals": wrong_refusals})
             );
             assert_eq!(false_matches, 0, "{class}: uncaptured text returned");
             assert_eq!(wrong_refusals, 0, "{class}: expected refusal missing");

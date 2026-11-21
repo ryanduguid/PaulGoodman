@@ -1,5 +1,6 @@
 # Unreleased
 
+- `search query` also matches other English forms of each word, so `taxable supplies` reaches `taxable supply`. Rows holding the words as typed are favoured; a row only a word form matched is marked `*` in text and `stemmed: true` in JSON. `--exact` keeps the earlier exact-only search; `--stem` is unchanged. Measured in `docs/build-evidence.md`: base-form top-five hits stay at 21 of 32, and inflected top-ten hits rise from 1 to 7 of 14.
 - Relicensed Ryan Duguid's original work under Apache-2.0. Earlier releases keep their original terms.
 
 # v0.7.0

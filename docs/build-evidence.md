@@ -177,11 +177,44 @@ in an ordinary ranked result. Amendment and version cases test capture windows;
 they do not establish historical amendment text or provision applicability.
 
 Stemming raises inflected top-five hits from 1 to 7 of 14 here, but lowers the
-original base-form top-five count from 21 to 15 of 32. It stays opt-in. Porter can
+original base-form top-five count from 21 to 15 of 32, so it stayed opt-in. Porter can
 also conflate unrelated words, as the fabricated universe/university regression
 shows. These are ranks on this question set, not general recall, legal
 correctness or evidence that a quotation matches. Definitions and quotation
 checks remain exact.
+
+### Word forms by default
+
+Measured on 22 November 2026 over the published `corpus-2026-11-18` snapshot: the
+same 9 titles and compilations as above, 9,439 rows, sources.json SHA-256
+`ee30e864fbc1c96bbf61a133204a381390c1d32e410cbfb35da722b4376d644a`. Its extraction
+differs from the retained inputs above, so its `sections.jsonl` digests do too.
+`search query` now matches word forms and ranks by the Porter BM25 plus the exact
+BM25; `--exact` and `--stem` keep the 2 earlier rankers. The 8 dated cases were left
+out of this run, because this snapshot's later retrieval date moves their capture
+windows; the scoring is otherwise the ignored test's.
+
+| Ranker and class | Queries | Hit at 1 | Hit at 5 | Hit at 10 | MRR at 10 |
+|---|---:|---:|---:|---:|---:|
+| `--exact`, original base | 32 | 8 | 21 | 23 | 0.395 |
+| `--stem`, original base | 32 | 6 | 15 | 23 | 0.303 |
+| Default, original base | 32 | 8 | 21 | 24 | 0.394 |
+| `--exact`, original inflected | 14 | 1 | 1 | 1 | 0.071 |
+| `--stem`, original inflected | 14 | 2 | 7 | 9 | 0.262 |
+| Default, original inflected | 14 | 2 | 4 | 7 | 0.211 |
+| `--exact`, additional | 44 | 18 | 30 | 35 | 0.532 |
+| `--stem`, additional | 44 | 18 | 31 | 34 | 0.526 |
+| Default, additional | 44 | 18 | 30 | 35 | 0.542 |
+
+The default keeps every base and additional query's top-five and top-ten outcome
+that `--exact` had and adds one base query at rank 10; 3 queries each fall one
+place within the top 5 (`taxable supply` from 4 to 5, `creditable acquisition`
+from 2 to 3, `property benefits` from 1 to 2). It finds 6 more inflected queries in
+the top 10 than `--exact`, but 3 fewer in the top 5 than `--stem`, which ranks by
+word forms alone. Each BM25 has weight 1, a plain sum. Exact weights of 0.25 to 4
+were tried on these questions; lower ones lost base top-five hits (18 of 32 at
+0.25 and 0.5) and higher ones lost inflected ones (3 of 14 at 2 and 4), so these
+counts are not held-out evidence.
 
 Reproduce the paired measurement by rebuilding these retained corpus inputs to
 a new index and running the ignored `reference_questions_on_a_real_index` test
