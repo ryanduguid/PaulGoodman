@@ -360,13 +360,12 @@ const NOT_IN_FORCE: &str = "no version was in force then";
 const PAGE_TOO_SHORT: &str = "its newest 60 versions all start after the date";
 const NOT_STARTED: &str = "the version then starts after the current one, so is not in force yet";
 
+type DatedVersion = Result<(Json, String, String), &'static str>;
+
 /// The version of a title in force on `on`: the one with `start <= on < end`,
 /// the Register's `end` being the next version's start. `Err` names why there
 /// is nothing to fetch.
-fn version_on(
-    versions: &[Json],
-    on: &str,
-) -> Result<Result<(Json, String, String), &'static str>, Exc> {
+fn version_on(versions: &[Json], on: &str) -> Result<DatedVersion, Exc> {
     let mut found: Option<(&Json, String, Option<String>)> = None;
     let mut earliest: Option<String> = None;
     for version in versions {
@@ -399,8 +398,10 @@ fn version_on(
             NOT_IN_FORCE
         }));
     };
-    if version.get("isCurrent").is_some_and(Json::truthy) {
-        return Ok(Err(IN_FORCE_NOW));
+    match version.get("isCurrent") {
+        Some(Json::Bool(true)) => return Ok(Err(IN_FORCE_NOW)),
+        Some(Json::Bool(false)) => {}
+        _ => return Err(Exc::value("invalid Register version isCurrent")),
     }
     // Besides the current version, only one that starts after it is open-ended.
     let Some(end) = end else {
@@ -412,8 +413,41 @@ fn version_on(
     Ok(Ok((version.clone(), start, end)))
 }
 
+fn has_continuation(payload: &Json) -> bool {
+    payload
+        .get("@odata.nextLink")
+        .is_some_and(|value| !matches!(value, Json::Null))
+}
+
+fn older_version_on(http: &mut dyn Http, rid: &str, on: &str) -> Result<DatedVersion, Exc> {
+    // The Register takes a date-time without a zone. Two rows suffice to detect
+    // an ambiguous result because every returned window must hold the date.
+    let at = format!("{on}T00:00:00");
+    let condition =
+        format!("titleId eq '{rid}' and start le {at} and (end eq null or end gt {at})");
+    let url = format!(
+        "{API}/versions?$top=2&$filter={}&$select=titleId,start,end,isCurrent,compilationNumber,registerId",
+        quote(&condition)
+    );
+    let payload = http::fetch_json(http, &url)?;
+    http.sleep(RESOLUTION_DELAY);
+    let payload = payload.as_ref().unwrap_or(&Json::Null);
+    let versions = version_rows(payload, rid)?;
+    if versions.len() > 1 || has_continuation(payload) {
+        return Err(Exc::value("ambiguous Register versions on the date"));
+    }
+    let outcome = version_on(&versions, on)?;
+    if !versions.is_empty() && matches!(outcome, Err(NOT_IN_FORCE)) {
+        return Err(Exc::value(
+            "Register version does not hold the requested date",
+        ));
+    }
+    Ok(outcome)
+}
+
 /// Resolve the version of each principal title in force on `on`, one history
-/// request per title, writing an earlier compilation's `acts_resolved.json`:
+/// request per title and a dated lookup if the history runs short. Write an
+/// earlier compilation's `acts_resolved.json`:
 /// `version_is_current` false and `current_version_start` the next version's
 /// start. A title with nothing to fetch for the date is listed and left out;
 /// a failed lookup fails the stage, as for current versions.
@@ -423,6 +457,9 @@ pub fn run_in_force_on(
     on: &str,
     run: &mut Run,
 ) -> Result<(), Exc> {
+    if !is_date(on) {
+        return Err(Exc::value("--in-force-on must be a date as YYYY-MM-DD"));
+    }
     require_builder_layout(&script_dir_in(scratch, "versions.py")?)?;
     let (_, principal) = principal_titles(scratch)?;
     let (mut resolved, mut failed, mut skipped) = (Vec::new(), Vec::new(), Vec::new());
@@ -430,8 +467,13 @@ pub fn run_in_force_on(
         let rid = register_id(getitem(title, "id")?)?;
         let payload = http::fetch_json(http, &probe13::history_url(&rid))?;
         http.sleep(RESOLUTION_DELAY);
-        let outcome = version_rows(payload.as_ref().unwrap_or(&Json::Null), &rid)
-            .and_then(|versions| version_on(&versions, on));
+        let payload = payload.as_ref().unwrap_or(&Json::Null);
+        let outcome = version_rows(payload, &rid).and_then(|versions| version_on(&versions, on));
+        let outcome = match outcome {
+            Ok(Err(PAGE_TOO_SHORT)) => older_version_on(http, &rid, on),
+            Ok(Err(NOT_IN_FORCE)) if has_continuation(payload) => older_version_on(http, &rid, on),
+            other => other,
+        };
         match outcome {
             Ok(Ok((version, start, end))) => {
                 let mut record = title.clone();
