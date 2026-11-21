@@ -484,7 +484,8 @@ makes no request.
 python -m fadden search build corpus --out search.sqlite
 python -m fadden search build corpus --out search.sqlite --rulings rulings-run
 python -m fadden search query search.sqlite general deductions --limit 5
-python -m fadden search query search.sqlite losses outgoings incurred deductible --stem --limit 5
+python -m fadden search query search.sqlite losses outgoings incurred deductible --limit 5
+python -m fadden search query search.sqlite general deductions --exact --limit 5
 python -m fadden search query search.sqlite 8-1 --title C2004A05138
 python -m fadden search define search.sqlite assessable income
 python -m fadden search define search.sqlite taxable supply --title C2004A00446 --follow
@@ -504,18 +505,24 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   Any failure stops the build and writes nothing. The destination must not
   exist. The index records the SHA-256 of `sources.json` and of every
   `sections.jsonl` and `<register_id>.md` it read.
-- `query` requires every word and ranks a row whose section number equals a
-  query word first, then rows from current titles above superseded ones, then by
-  BM25 with the heading weighted above the text.
+- `query` requires every word, in the form typed or another English form of it
+  (SQLite's Porter tokenizer, in a separate full-text index), and ranks a row
+  whose section number equals a query word first, then rows from current titles
+  above superseded ones, then by the word-form BM25 plus the exact BM25, each with
+  the heading weighted above the text. A row holding the words as typed is
+  therefore favoured over one holding only other forms, though a much stronger
+  word-form match can still outrank it. A row only a word form
+  matched is marked `*` in text output, which then prints the warning, and its
+  JSON hit adds `stemmed: true` and `stem_boundary`. Word-form matches are not
+  quotation matches, and Porter can conflate unrelated words (`universe` and
+  `university`).
   Text is NFKC-normalised for matching, so `8-1` matches the Register's `8<U+2011>1`.
   Each hit prints its `row_id`, compilation, current status, retrieval date and
   Register page; `--json` adds the row text and the file digests.
-- `query --stem` opts into English word-form matching with SQLite's Porter
-  tokenizer in a separate full-text index. It uses the same title filter,
-  section/current-title priority and limit, and works with `--as-at`. JSON hits
-  add `stemmed: true` and `stem_boundary`; text output includes the warning even
-  with no hits. Word-form matches are not quotation matches. Porter can conflate
-  unrelated words and can worsen rankings, so exact search remains the default.
+- `query --exact` matches only the words as typed and ranks by the exact BM25.
+  `query --stem` ranks by the word-form BM25 alone and marks every hit, with the
+  warning printed even with no hits. Each works with the title filter, limit and
+  `--as-at`; they cannot be combined.
   Definitions and quotation checks do not stem words. See the paired
   [reference measurements](docs/build-evidence.md#word-form-search-reference-set).
   Index schema 4 adds the separate table; rebuild schema 3 or earlier with
