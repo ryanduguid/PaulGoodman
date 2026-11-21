@@ -2408,6 +2408,30 @@ fn a_corpus_without_compilations_publishes_as_before() {
     assert!(!out.contains("compilation"), "{out}");
 }
 
+#[test]
+fn a_requested_date_with_no_compilation_keeps_its_omissions_in_the_distribution() {
+    let f = fixture();
+    let report = json!([{"in_force_on": "1901-01-01", "omissions": [{
+        "register_id": PUBLIC_ID, "reason": "no version was in force then"
+    }]}]);
+    let source = f.root.join("sources.json");
+    let mut source_manifest = read_json(&source);
+    source_manifest["historical_omissions"] = report.clone();
+    write(&source, &source_manifest.to_string());
+    let output = publish(&f);
+    assert!(!output.join("compilations").exists());
+    let source = output.join("sources.json");
+    assert_eq!(read_json(&source)["historical_omissions"], report);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    rewrite(&source, |src| {
+        src["historical_omissions"][0]["omissions"][0]["reason"] = json!("Register unavailable");
+    });
+    let (code, out, err) = stage(&f, "dist_verify");
+    assert_ne!(code, 0, "{out}");
+    assert!(err.contains("invalid historical omission"), "{err}");
+}
+
 /// A change to a dated folder, or to a published distribution.
 type DatedChange = fn(&Path);
 

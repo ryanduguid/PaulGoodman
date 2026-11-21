@@ -940,3 +940,71 @@ fn discover_matches_python() {
 fn versions_matches_python() {
     family("versions");
 }
+
+#[cfg(feature = "fake-http")]
+#[test]
+fn dated_cli_keeps_a_complete_report_and_an_independent_legacy_manifest() {
+    use serde_json::json;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let module = scratch.path().join("fadden");
+    std::fs::create_dir(&module).unwrap();
+    std::fs::write(scratch.path().join("pyproject.toml"), "").unwrap();
+    std::fs::write(scratch.path().join("VERSION"), "").unwrap();
+    let rid = |n: u8| format!("C2099A{n:05}");
+    let titles = (1..=3)
+        .map(|n| json!({"id": rid(n), "name": format!("Act {n}"), "isPrincipal": true, "collection": "Act"}))
+        .collect::<Vec<_>>();
+    std::fs::write(module.join("titles_all.json"), json!(titles).to_string()).unwrap();
+    let report_path = module.join("dated_resolution.json");
+    let legacy_path = module.join("acts_resolved.json");
+    let script = module.join("http-script.json");
+    std::fs::write(&legacy_path, "unchanged").unwrap();
+    let first = json!({"titleId": rid(1), "start": "2024-01-01", "end": "2025-01-01",
+                       "isCurrent": false, "compilationNumber": "1", "registerId": "C2024C00001"});
+    let second = json!({"titleId": rid(2), "start": "2024-01-01", "end": null,
+                        "isCurrent": true, "compilationNumber": "1", "registerId": "C2024C00002"});
+    let run = |with_report: bool, last: Value| {
+        let responses = [json!({"value": [first]}), json!({"value": [second]}), last]
+            .map(|body| json!({"type": "application/json", "body": body.to_string()}));
+        std::fs::write(&script, json!({"responses": responses}).to_string()).unwrap();
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_fadden"));
+        command
+            .args(["versions", "--in-force-on", "2024-07-01"])
+            .env("FADDEN_MODULE_DIR", &module)
+            .env("FADDEN_FAKE_HTTP", &script)
+            .env_remove("FADDEN_FAKE_HTTP_LOG");
+        if with_report {
+            command.arg("--report-omissions");
+        }
+        command.output().unwrap()
+    };
+    let success = run(true, json!({"value": []}));
+    assert!(success.status.success(), "{success:?}");
+    let report_text = std::fs::read_to_string(&report_path).unwrap();
+    let report: Value = serde_json::from_str(&report_text).unwrap();
+    assert_eq!(report["in_force_on"], "2024-07-01");
+    assert_eq!(report["resolved"].as_array().unwrap().len(), 1);
+    assert_eq!(report["resolved"][0]["id"], rid(1));
+    assert_eq!(
+        report["current"],
+        json!([{"id": rid(2), "versionStart": "2024-01-01", "compilationRegisterId": "C2024C00002"}])
+    );
+    assert_eq!(
+        report["omissions"],
+        json!([{"register_id": rid(3), "reason": "no version was in force then"}])
+    );
+    assert_eq!(std::fs::read_to_string(&legacy_path).unwrap(), "unchanged");
+
+    let failure = run(true, json!({}));
+    assert!(!failure.status.success(), "{failure:?}");
+    assert_eq!(std::fs::read_to_string(&report_path).unwrap(), report_text);
+    assert_eq!(std::fs::read_to_string(&legacy_path).unwrap(), "unchanged");
+
+    let legacy = run(false, json!({"value": []}));
+    assert!(legacy.status.success(), "{legacy:?}");
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(&legacy_path).unwrap()).unwrap();
+    assert_eq!(manifest, report["resolved"]);
+    assert_eq!(std::fs::read_to_string(&report_path).unwrap(), report_text);
+}

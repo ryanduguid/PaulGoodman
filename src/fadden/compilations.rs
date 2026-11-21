@@ -180,6 +180,7 @@ pub fn verify(
     removed: &BTreeSet<String>,
     approved: &[Approved],
 ) -> Result<Vec<Check>, Exc> {
+    validate_omissions(src)?;
     let listed = listed_dates(src)?;
     let folder = pypath::join(dist_root, FOLDER);
     let present = std::fs::symlink_metadata(&folder).is_ok();
@@ -211,6 +212,47 @@ pub fn verify(
         &found,
         notice.contains(&format!("\n{NOTICE_HEADING}\n")),
     ))
+}
+
+/// Older distributions have no resolution report. A present report must name
+/// each requested date and omitted title once, with a genuine lookup outcome.
+pub(super) fn validate_omissions(src: &Json) -> Result<(), Exc> {
+    let Some(report) = src.get("historical_omissions") else {
+        return Ok(());
+    };
+    let Json::Array(dates) = report else {
+        return Err(Exc::value(
+            "sources.json historical_omissions must be an array",
+        ));
+    };
+    let mut seen_dates = BTreeSet::new();
+    for date in dates {
+        let on = getitem(date, "in_force_on")?
+            .as_str()
+            .and_then(|value| iso_date(value).ok())
+            .ok_or_else(|| Exc::value("historical omission needs a YYYY-MM-DD date"))?;
+        if !seen_dates.insert(on.clone()) {
+            return Err(Exc::value(format!(
+                "duplicate historical omission date {on}"
+            )));
+        }
+        let Json::Array(omissions) = getitem(date, "omissions")? else {
+            return Err(Exc::value("historical omission titles must be an array"));
+        };
+        let mut seen_titles = BTreeSet::new();
+        for omission in omissions {
+            let rid = register_id(getitem(omission, "register_id")?)?;
+            let valid_reason = getitem(omission, "reason")?
+                .as_str()
+                .is_some_and(super::versions::is_omission_reason);
+            if !seen_titles.insert(rid.clone()) || !valid_reason {
+                return Err(Exc::value(format!(
+                    "invalid historical omission for {rid} on {on}"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The listed dates that are real folders under `folder`, recording in `stray`

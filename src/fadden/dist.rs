@@ -1542,6 +1542,7 @@ fn build_distribution(paths: &Paths, staging: &str, run: &mut Run) -> Result<(),
         }
     }
     let src = load(&child(&paths.root, &["sources.json"])?)?;
+    compilations::validate_omissions(&src)?;
     let source_titles = iterate(getitem(&src, "titles")?)?;
     let mut licensed: Vec<(String, Json)> = Vec::new();
     for t in &source_titles {
