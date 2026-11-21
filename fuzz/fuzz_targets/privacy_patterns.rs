@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! Fuzz the privacy patterns the PII scans, the distribution builder and its
 //! verifier run over every title. A pattern that backtracks without bound

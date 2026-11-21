@@ -1,3 +1,7 @@
+# Unreleased
+
+- Relicensed Ryan Duguid's original work under Apache-2.0. Earlier releases keep their original terms.
+
 # v0.7.0
 
 This candidate contains the corpus builder source. It excludes generated legislation and live evidence.

@@ -1,6 +1,6 @@
 # Tax Radar AU
 
-[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/PaulGoodman/ci.yml?label=tests&style=flat&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml) [![License: Ryan Duguid Public Attribution Licence 1.0](https://img.shields.io/badge/License-Public%20Attribution%201.0-66023C.svg?labelColor=000000&style=flat&color=66023C)](LICENSE) [![Rust 1.99](https://img.shields.io/badge/rust-1.99-66023C.svg?logo=rust&logoColor=E5E4E2&labelColor=000000&style=flat&color=66023C)](https://www.rust-lang.org/)
+[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/PaulGoodman/ci.yml?label=tests&style=flat&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/License-Public%20Attribution%201.0-66023C.svg?labelColor=000000&style=flat&color=66023C)](LICENSE) [![Rust 1.99](https://img.shields.io/badge/rust-1.99-66023C.svg?logo=rust&logoColor=E5E4E2&labelColor=000000&style=flat&color=66023C)](https://www.rust-lang.org/)
 
 This is a provenance-first change-review queue. It does not answer tax questions and it does not update skills automatically.
 
@@ -144,4 +144,4 @@ cargo test --locked
 ```
 
 
-Licensed under the [Ryan Duguid Public Attribution Licence 1.0](LICENSE), the FSL-1.1-ALv2 text with a public attribution condition. You may use, modify and redistribute it for any purpose except a Competing Use as defined in LICENSE (making it available to others in a competing commercial product or service), and each version becomes available under Apache-2.0 2 years after it is made available. For versions made available from 4 November 2026, LICENSE's Public Attribution Condition applies to the FSL grant: anyone who makes a copy, port or derivative available outside their organisation must credit Ryan Duguid publicly, with a link to this repository. Internal use is exempt, and the condition does not apply to each version's Apache-2.0 licence. See [LICENSE](LICENSE) and [NOTICE](NOTICE). If you redistribute this work or build on it, keep the copyright notices in [NOTICE](NOTICE).
+Ryan Duguid's original work is licensed under the [Apache License, Version 2.0](LICENSE). When redistributing this work or a derivative, preserve the applicable attribution notices in [NOTICE](NOTICE) as required by section 4(d). Versions released before this change keep the licence they were released with.

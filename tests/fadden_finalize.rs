@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden finalize`: ported from tests/corpus/test_finalize_phases.py (since removed) and the
 //! finalize tests in tests/corpus/test_regressions.py (FinalizePiiSummaryTests,

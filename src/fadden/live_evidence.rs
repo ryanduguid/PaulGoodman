@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden/export_live_evidence_bundles.py`: deterministic live-only
 //! `evidence-bundle.v2` candidates from a verified Stage 3A capture.

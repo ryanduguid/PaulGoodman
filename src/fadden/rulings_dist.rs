@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! The `rulings` runs a corpus holds under `rulings/<run>/`, as `dist` publishes
 //! them and `dist_verify` checks them. A published run keeps the stage's
