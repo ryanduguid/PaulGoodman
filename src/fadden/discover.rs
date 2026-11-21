@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! The port of `fadden/discover.py` (removed after the port): page every in-force title whose name holds a tax
 //! keyword, across the Act, legislative instrument and notifiable instrument

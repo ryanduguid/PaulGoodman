@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! The fuzz targets' seed inputs, replayed through the same invariant checks
 //! on stable Rust, so ordinary CI catches a broken check. fuzz/README.md

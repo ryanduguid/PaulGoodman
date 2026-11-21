@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! The earlier compilations `quick --in-force-on` holds under `compilations/<date>/`,
 //! as `dist` lists them and `dist_verify` checks them. A dated folder ships its

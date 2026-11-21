@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! Schema-4 search indexes against the independently replayed base Python data.
 //! Only the version, captured-window column and Porter objects may differ.

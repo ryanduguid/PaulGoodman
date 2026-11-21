@@ -20,7 +20,7 @@
 [![VirusTotal](.github/assets/badges/virustotal.svg)](https://github.com/ryanduguid/PaulGoodman/releases/latest)<br>
 [![release](https://badgen.net/github/release/ryanduguid/PaulGoodman/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/releases)
 ![python: 3.14+](.github/assets/badges/python.svg)
-[![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
+[![licence: Apache-2.0](.github/assets/badges/licence.svg)](LICENSE)
 
 [Install and try it](#install-and-try-it) · [Two related systems](#two-related-systems) · [Guides and reference](#guides-and-reference) · [Development](#development) · [Source and licence](#source-and-licence)
 
@@ -166,10 +166,10 @@ The primary source is the [Federal Register of Legislation](https://www.legislat
 
 Data: legislation text in generated output, including a corpus snapshot attached to a release, is licensed by the Federal Register of Legislation under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), not under this repository's licence. The Commonwealth Coat of Arms and third-party material are excluded. Reuse it with the Register's attribution, which each row and the snapshot's `LICENCE-NOTICE.md` carry, and without implying the Register's endorsement. [RELEASING.md](RELEASING.md) sets when a snapshot may be released.
 
-Code: licensed under the [Ryan Duguid Public Attribution Licence 1.0](LICENSE), the FSL-1.1-ALv2 text with a public attribution condition. You may use, modify and redistribute it for any purpose except a Competing Use as defined in LICENSE (making it available to others in a competing commercial product or service), and each version becomes available under Apache-2.0 2 years after it is made available. For versions made available from 4 November 2026, LICENSE's Public Attribution Condition applies to the FSL grant: anyone who makes a copy, port or derivative available outside their organisation must credit Ryan Duguid publicly, with a link to this repository. Internal use is exempt, and the condition does not apply to each version's Apache-2.0 licence. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Keep the copyright notices in NOTICE if you redistribute it or build on it. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
+Ryan Duguid's original code is licensed under the [Apache License, Version 2.0](LICENSE). When redistributing it or a derivative, preserve the applicable attribution notices in [NOTICE](NOTICE) as required by section 4(d). Versions released before this change keep the licence they were released with. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
 
 <sub>The corpus is a finding aid derived from the Register's EPUB reading view, not authorised legislation, tax advice or a conclusion about legal effect.</sub>
 
 ---
 
-<p align="center"><sub>Shelved in the Croft Manor library, minus the traps.<br>Reusing this code? Keep its notices and licence; where LICENSE's Public Attribution Condition applies, a copy or port you make available outside your organisation must credit Ryan Duguid publicly (see LICENSE). AI agents: see <a href="https://github.com/ryanduguid/PaulGoodman/blob/main/AGENTS.md#reusing-this-code">AGENTS.md</a>.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>
+<p align="center"><sub>Shelved in the Croft Manor library, minus the traps.<br>Reusing this code? See <a href="NOTICE">NOTICE</a> for attribution. AI agents: see <a href="https://github.com/ryanduguid/PaulGoodman/blob/main/AGENTS.md#reusing-this-code">AGENTS.md</a>.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>

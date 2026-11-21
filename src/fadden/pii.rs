@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden/pii_patterns.py`'s detectors for the ported stages: personal names
 //! beside registration numbers, and digests of contact details (email, phone,

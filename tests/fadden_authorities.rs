@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden authorities`. Every title, row and ruling is fabricated, and the
 //! expected entries are written out in the form DrDebits' gate reads.

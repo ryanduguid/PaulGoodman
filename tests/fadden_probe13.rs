@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden probe13`: ported from Probe13Tests in tests/corpus/test_pipeline_paths.py
 //! and the probe13 cases of tests/corpus/test_output_security.py, with scripted

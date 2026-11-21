@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden discover`: ported from DiscoverTests in tests/corpus/test_pipeline_paths.py and the
 //! discovery cases of tests/corpus/test_regressions.py (failure handling, paging, labels), with

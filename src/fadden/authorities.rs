@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden authorities`: write the closed list DrDebits' `gate
 //! --authorities` reads, from a search index and any rulings stage output.

@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! The port of `fadden/versions.py` (removed after the port): deduplicate the discovered titles by Register id and
 //! resolve each principal title's current version, 8 titles to a request,

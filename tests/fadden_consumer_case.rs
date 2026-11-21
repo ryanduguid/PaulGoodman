@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! One fabricated consumer case, run end to end over the shipped search demo: the
 //! checks a consumer of this builder runs on a draft before relying on it, in the order

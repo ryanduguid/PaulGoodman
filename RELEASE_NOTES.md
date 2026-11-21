@@ -1,3 +1,7 @@
+# Unreleased
+
+- Relicensed Ryan Duguid's original work under Apache-2.0. Earlier releases keep their original terms.
+
 # v0.7.0
 
 This candidate contains the corpus builder source. It excludes generated legislation and live evidence.
@@ -35,7 +39,7 @@ This candidate contains the corpus builder source. It excludes generated legisla
 - `witness` compares a fixed sample of titles' EPUB sections with the Register's Word rendition (#256). `search refs` resolves ITAA 1997, ITAA 1936, TAA 1953, GST Act and FBTAA 1986 through a closed table (#264), and `query` ranks current titles above superseded ones (#246).
 - `discover` adds 3 Acts no tax keyword reaches from a reviewed list: the Major Bank Levy Act 2017, the Product Grants and Benefits Administration Act 2000 and the Venture Capital Act 2002. It stops if a listed title is no longer an in-force principal Act (`docs/scope.md`).
 - `dist` keeps custom distribution notices and supports verified corpus snapshots; the first, `corpus-2026-11-11`, is a separate release (#292).
-- Licence: versions made available from 4 November 2026 are under the Ryan Duguid Public Attribution Licence 1.0, the FSL-1.1-ALv2 text with a public attribution condition; earlier releases keep their licences (#267).
+- v0.5.0 uses the [Ryan Duguid Public Attribution Licence 1.0](https://github.com/ryanduguid/PaulGoodman/blob/v0.5.0/LICENSE), the FSL-1.1-ALv2 text with a public attribution condition; earlier releases keep their licences (#267).
 - `compare_builds` refuses a sections.jsonl row that repeats a JSON member at any depth, names another title, holds a container, section or heading that is neither text nor null (a lone surrogate counts as neither), holds a lone surrogate anywhere in its compilation number or date, or comes from a different compilation from the title's first row, and its text report lists the titles present in only one build. For such inputs it departs on purpose from the output of the Python stage at 43b5e0c.
 - Dependencies: rustix 1.1.6 for RUSTSEC-2026-0486 (#299); the fuzz workspace uses the patched SQLite (#289).
 - The release workflow is pinned to release-policy `ca5492b` (#281).

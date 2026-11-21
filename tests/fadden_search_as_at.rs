@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden search --as-at`: rows only from a title the build holds for the date, a
 //! refusal for any other. Every title and date is fabricated.

@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden rulings_targets FEED --out TARGETS.json`: the target list for a
 //! `rulings` run, from an ATO Legal Database RSS feed such as 'ATO - All Rulings

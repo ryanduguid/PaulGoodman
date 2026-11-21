@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `fadden rulings_targets`: a saved, fabricated feed in the shape of the ATO's
 //! 'All Rulings and Determinations' feed, and no network traffic.

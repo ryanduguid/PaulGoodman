@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! The PII detectors and `fadden pii_scan` / `pii_scan2`: ported from
 //! PiiNameGateTests in tests/corpus/test_regressions.py (which still covers

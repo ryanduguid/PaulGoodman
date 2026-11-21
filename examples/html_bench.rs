@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! Times `htmlparser::parse` (convert_charrefs true, as extract runs it) over
 //! the UTF-8 documents named one per stdin line; prints seconds and events.
