@@ -24,7 +24,10 @@ class Stages:
     def __init__(self, hit: str = HIT, statuses: tuple[str, ...] = ("ok",),
                  indexed: tuple[str, ...] = quick.PRESET,
                  versions: dict[str | None, list[tuple[str, ...]]] | None = None,
-                 unextracted: tuple[str, ...] = ()) -> None:
+                 unextracted: tuple[str, ...] = (),
+                 incomplete_report: bool = False,
+                 invalid_omissions: bool = False,
+                 omission_reason: str = "no version was in force then") -> None:
         self.ran: list[str] = []
         self.calls: list[tuple[str, ...]] = []
         self.hit = hit
@@ -34,6 +37,9 @@ class Stages:
         # resolves: None for the current versions, else the --in-force-on date.
         self.versions = versions or {}
         self.unextracted = unextracted
+        self.incomplete_report = incomplete_report
+        self.invalid_omissions = invalid_omissions
+        self.omission_reason = omission_reason
         self.epub_dirs: list[str] = []
 
     def stage(self, _binary: str, scratch: Path, *args: str, capture: bool = False) -> str:
@@ -41,9 +47,21 @@ class Stages:
         self.calls.append(args)
         if args[0] == "versions":
             on = args[2] if args[1:2] == ("--in-force-on",) else None
-            rows = [{"id": rid, "versionStart": start, "current_version_start": end[0] if end else None}
+            rows = [{"id": rid, "versionStart": start, "current_version_start": end[0] if end else None,
+                     "compilationRegisterId": "C2024C00001"}
                     for rid, start, *end in self.versions.get(on, [])]
-            (scratch / "acts_resolved.json").write_text(json.dumps(rows), encoding="utf-8")
+            if on is None:
+                (scratch / "acts_resolved.json").write_text(json.dumps(rows), encoding="utf-8")
+            else:
+                resolved = {row["id"] for row in rows}
+                current = [row for row in rows if row["current_version_start"] is None]
+                skipped = [{"register_id": rid, "reason": self.omission_reason}
+                           for rid in quick.PRESET if rid not in resolved]
+                report = {"in_force_on": on, "current": current,
+                          "resolved": [row for row in rows if row["current_version_start"] is not None],
+                          "omissions": {} if self.invalid_omissions else
+                          skipped[1:] if self.incomplete_report else skipped}
+                (scratch / "dated_resolution.json").write_text(json.dumps(report), encoding="utf-8")
         if args[0] == "extract":
             # The titles download left to extract, as manifest_md.json records them.
             rows = json.loads((scratch / "acts_resolved.json").read_text(encoding="utf-8"))
@@ -298,7 +316,7 @@ class QuickTests(unittest.TestCase):
             for name in (*quick.SUPPORT, "titles_all.json"):
                 self.assertTrue((scratch / name).is_file(), name)
         dated = [call for call in stages.calls if call[1:2] == ("--in-force-on",)]
-        self.assertEqual(dated, [("versions", "--in-force-on", on)
+        self.assertEqual(dated, [("versions", "--in-force-on", on, "--report-omissions")
                                  for on in ("2024-07-01", "2025-07-01", "2026-07-01")])
         after = stages.ran.index("search query") + 1
         self.assertEqual(stages.ran[after:], [
@@ -309,6 +327,18 @@ class QuickTests(unittest.TestCase):
         ])
         self.assertIn("compilations/2026-07-01: 0 to fetch, 1 already held, "
                       "8 with none to fetch, listed above\n", printed.getvalue())
+        report = json.loads((self.out / "sources.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["historical_omissions"], [
+            {"in_force_on": on, "omissions": [
+                {"register_id": rid, "reason": "no version was in force then"}
+                for rid in quick.PRESET if rid not in resolved
+            ]}
+            for on, resolved in [
+                ("2024-07-01", {itaa97, gst}),
+                ("2025-07-01", {itaa97, itaa36}),
+                ("2026-07-01", {gst}),
+            ]
+        ])
 
     def test_a_date_with_nothing_to_fetch_leaves_no_compilations_folder(self) -> None:
         versions: dict[str | None, list[tuple[str, ...]]] = {None: [(quick.PRESET[0], "2026-10-01")]}
@@ -316,6 +346,39 @@ class QuickTests(unittest.TestCase):
             quick.build("fadden-bin", self.out, ["2025-07-01"])
         self.assertFalse((self.out / "compilations").exists())
         self.assertTrue((self.out / "sources.json").is_file())
+        report = json.loads((self.out / "sources.json").read_text(encoding="utf-8"))
+        [date] = report["historical_omissions"]
+        self.assertEqual(date["in_force_on"], "2025-07-01")
+        self.assertEqual(len(date["omissions"]), len(quick.PRESET))
+
+    def test_an_incomplete_resolution_report_prevents_publication(self) -> None:
+        with Stages(incomplete_report=True).patched():
+            with self.assertRaisesRegex(quick.QuickError, "incomplete title resolution report"):
+                quick.build("fadden-bin", self.out, ["2025-07-01"])
+        self.assertFalse(self.out.exists())
+
+    def test_an_invalid_omission_reason_prevents_publication(self) -> None:
+        with Stages(omission_reason="Register unavailable").patched():
+            with self.assertRaisesRegex(quick.QuickError, "invalid omission reason"):
+                quick.build("fadden-bin", self.out, ["2025-07-01"])
+        self.assertFalse(self.out.exists())
+
+    def test_a_non_array_omissions_bucket_prevents_publication(self) -> None:
+        current = [(rid, "2024-01-01") for rid in quick.PRESET]
+        with Stages(versions={None: current, "2025-07-01": current}, invalid_omissions=True).patched():
+            with self.assertRaisesRegex(quick.QuickError, "invalid title resolution report"):
+                quick.build("fadden-bin", self.out, ["2025-07-01"])
+        self.assertFalse(self.out.exists())
+
+    def test_a_date_that_needs_a_missing_current_compilation_is_not_published(self) -> None:
+        rid = quick.PRESET[0]
+        versions: dict[str | None, list[tuple[str, ...]]] = {
+            None: [(rid, "2024-01-01")], "2025-07-01": [(rid, "2025-01-01")],
+        }
+        with Stages(versions=versions).patched():
+            with self.assertRaisesRegex(quick.QuickError, "current compilation missing"):
+                quick.build("fadden-bin", self.out, ["2025-07-01"])
+        self.assertFalse(self.out.exists())
 
     def test_a_date_missing_a_title_it_fetched_is_not_published(self) -> None:
         itaa97 = quick.PRESET[0]

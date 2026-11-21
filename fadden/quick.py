@@ -48,6 +48,11 @@ MODULE = Path(__file__).resolve().parent
 # What pii_scan2 and finalize read beside the stage files.
 SUPPORT = ("pii_contact_allowlist.json", "check_current.py", "corpus_paths.py", "http_fetch.py")
 SMOKE_QUERY = ("general", "deductions")
+OMISSION_REASONS = (
+    "the Register published no compilation for the version in force then",
+    "no version was in force then",
+    "the version then starts after the current one, so is not in force yet",
+)
 FAILURES = (OSError, ValueError, RuntimeError, sqlite3.Error)
 
 
@@ -152,27 +157,42 @@ def check_windows(rows: list[dict[str, Any]]) -> None:
 def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
     """Each date's earlier compilations under compilations/<date>/, in the root's layout.
 
-    `versions --in-force-on` leaves out, with its reason, a title whose version on the
-    date is the current one or cannot be fetched; a compilation the root or an earlier
-    date already holds is left out here, and the windows of one title must not overlap.
-    A date left with nothing to fetch gets no folder.
+    The root must already hold any current compilation the date uses. A compilation
+    already fetched for another date is reused, and the windows of one title must
+    not overlap. A date left with nothing to fetch gets no folder.
     """
     scratch = staging / "build"
     titles = json.loads((scratch / "titles_all.json").read_text(encoding="utf-8"))
+    expected = {title["id"] for title in titles}
     rows = extracted(scratch)
+    root_current = {(row["id"], row["versionStart"], row.get("compilationRegisterId"))
+                    for row in rows if row.get("current_version_start") is None}
+    omissions = []
     folder = staging / "compilations"
     for on in sorted(set(dates)):
         build = folder / on
         scratch = build / "build"
         lay_out(scratch, titles)
-        stage(binary, scratch, "versions", "--in-force-on", on)
+        stage(binary, scratch, "versions", "--in-force-on", on, "--report-omissions")
+        report = json.loads((scratch / "dated_resolution.json").read_text(encoding="utf-8"))
+        resolved, current, skipped = (report.get(key) for key in ("resolved", "current", "omissions"))
+        if not all(isinstance(bucket, list) for bucket in (resolved, current, skipped)):
+            raise QuickError(f"compilations/{on} has an invalid title resolution report")
+        ids = [row["id"] for row in resolved + current] + [row["register_id"] for row in skipped]
+        if report["in_force_on"] != on or len(ids) != len(expected) or set(ids) != expected:
+            raise QuickError(f"compilations/{on} has an incomplete title resolution report")
+        if any(row.get("reason") not in OMISSION_REASONS for row in skipped):
+            raise QuickError(f"compilations/{on} has an invalid omission reason")
+        if any((row["id"], row["versionStart"], row["compilationRegisterId"]) not in root_current
+               or row["versionStart"] > on for row in current):
+            raise QuickError(f"compilations/{on} needs a current compilation missing from the root")
+        omissions.append({"in_force_on": on, "omissions": skipped})
         target = scratch / "acts_resolved.json"
-        resolved = json.loads(target.read_text(encoding="utf-8"))
         kept = {(row["id"], row["versionStart"]) for row in rows}
         wanted = [row for row in resolved if (row["id"], row["versionStart"]) not in kept]
         print(f"compilations/{on}: {len(wanted)} to fetch, "
-              f"{len(resolved) - len(wanted)} already held, "
-              f"{len(titles) - len(resolved)} with none to fetch, listed above")
+              f"{len(current) + len(resolved) - len(wanted)} already held, "
+              f"{len(skipped)} with none to fetch, listed above")
         if not wanted:
             shutil.rmtree(build)
             continue
@@ -188,6 +208,10 @@ def add_compilations(binary: str, staging: Path, dates: Sequence[str]) -> None:
     check_windows(rows)
     if folder.is_dir() and not any(folder.iterdir()):
         folder.rmdir()
+    sources = staging / "sources.json"
+    source = json.loads(sources.read_text(encoding="utf-8"))
+    source["historical_omissions"] = omissions
+    download.write_json_atomic(str(sources), source, indent=1)
 
 
 def in_force_date(value: str) -> str:

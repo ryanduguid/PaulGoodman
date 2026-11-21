@@ -325,9 +325,18 @@ pub fn run(http: &mut dyn Http, scratch: &str, run: &mut Run) -> Result<(), Exc>
 
 /// Report the resolution and write `acts_resolved.json`, or refuse to.
 fn finish(scratch: &str, resolved: Vec<Json>, failed: &[Json], run: &mut Run) -> Result<(), Exc> {
+    check_resolution(resolved.len(), failed, run)?;
+    write_json_atomic(
+        &pypath::join(scratch, "acts_resolved.json"),
+        &Json::Array(resolved),
+        Some(1),
+        RESOLVED_DEPTH,
+    )
+}
+
+fn check_resolution(resolved: usize, failed: &[Json], run: &mut Run) -> Result<(), Exc> {
     run.print(&format!(
-        "\nresolved: {}   failed: {}",
-        resolved.len(),
+        "\nresolved: {resolved}   failed: {}",
         failed.len()
     ));
     for title in failed.iter().take(10) {
@@ -345,12 +354,7 @@ fn finish(scratch: &str, resolved: Vec<Json>, failed: &[Json], run: &mut Run) ->
             failed.len()
         )));
     }
-    write_json_atomic(
-        &pypath::join(scratch, "acts_resolved.json"),
-        &Json::Array(resolved),
-        Some(1),
-        RESOLVED_DEPTH,
-    )
+    Ok(())
 }
 
 /// Why a title has no earlier compilation to fetch for a date.
@@ -360,7 +364,19 @@ const NOT_IN_FORCE: &str = "no version was in force then";
 const PAGE_TOO_SHORT: &str = "its newest 60 versions all start after the date";
 const NOT_STARTED: &str = "the version then starts after the current one, so is not in force yet";
 
-type DatedVersion = Result<(Json, String, String), &'static str>;
+pub(super) fn is_omission_reason(reason: &str) -> bool {
+    matches!(reason, NO_DOCUMENT | NOT_IN_FORCE | NOT_STARTED)
+}
+
+enum DatedSkip {
+    Current {
+        start: String,
+        document: Option<String>,
+    },
+    Omitted(&'static str),
+}
+
+type DatedVersion = Result<(Json, String, String), DatedSkip>;
 
 /// The version of a title in force on `on`: the one with `start <= on < end`,
 /// the Register's `end` being the next version's start. `Err` names why there
@@ -392,23 +408,28 @@ fn version_on(versions: &[Json], on: &str) -> Result<DatedVersion, Exc> {
     let Some((version, start, end)) = found else {
         let truncated =
             versions.len() >= probe13::HISTORY_PAGE && earliest.is_some_and(|e| on < e.as_str());
-        return Ok(Err(if truncated {
+        return Ok(Err(DatedSkip::Omitted(if truncated {
             PAGE_TOO_SHORT
         } else {
             NOT_IN_FORCE
-        }));
+        })));
     };
     match version.get("isCurrent") {
-        Some(Json::Bool(true)) => return Ok(Err(IN_FORCE_NOW)),
+        Some(Json::Bool(true)) => {
+            return Ok(Err(DatedSkip::Current {
+                start,
+                document: compilation_id(version)?,
+            }));
+        }
         Some(Json::Bool(false)) => {}
         _ => return Err(Exc::value("invalid Register version isCurrent")),
     }
     // Besides the current version, only one that starts after it is open-ended.
     let Some(end) = end else {
-        return Ok(Err(NOT_STARTED));
+        return Ok(Err(DatedSkip::Omitted(NOT_STARTED)));
     };
     if compilation_id(version)?.is_none() {
-        return Ok(Err(NO_DOCUMENT));
+        return Ok(Err(DatedSkip::Omitted(NO_DOCUMENT)));
     }
     Ok(Ok((version.clone(), start, end)))
 }
@@ -437,7 +458,7 @@ fn older_version_on(http: &mut dyn Http, rid: &str, on: &str) -> Result<DatedVer
         return Err(Exc::value("ambiguous Register versions on the date"));
     }
     let outcome = version_on(&versions, on)?;
-    if !versions.is_empty() && matches!(outcome, Err(NOT_IN_FORCE)) {
+    if !versions.is_empty() && matches!(outcome, Err(DatedSkip::Omitted(NOT_IN_FORCE))) {
         return Err(Exc::value(
             "Register version does not hold the requested date",
         ));
@@ -457,6 +478,16 @@ pub fn run_in_force_on(
     on: &str,
     run: &mut Run,
 ) -> Result<(), Exc> {
+    resolve_in_force_on(http, scratch, on, false, run)
+}
+
+fn resolve_in_force_on(
+    http: &mut dyn Http,
+    scratch: &str,
+    on: &str,
+    report: bool,
+    run: &mut Run,
+) -> Result<(), Exc> {
     if !is_date(on) {
         return Err(Exc::value("--in-force-on must be a date as YYYY-MM-DD"));
     }
@@ -470,8 +501,10 @@ pub fn run_in_force_on(
         let payload = payload.as_ref().unwrap_or(&Json::Null);
         let outcome = version_rows(payload, &rid).and_then(|versions| version_on(&versions, on));
         let outcome = match outcome {
-            Ok(Err(PAGE_TOO_SHORT)) => older_version_on(http, &rid, on),
-            Ok(Err(NOT_IN_FORCE)) if has_continuation(payload) => older_version_on(http, &rid, on),
+            Ok(Err(DatedSkip::Omitted(PAGE_TOO_SHORT))) => older_version_on(http, &rid, on),
+            Ok(Err(DatedSkip::Omitted(NOT_IN_FORCE))) if has_continuation(payload) => {
+                older_version_on(http, &rid, on)
+            }
             other => other,
         };
         match outcome {
@@ -501,10 +534,46 @@ pub fn run_in_force_on(
         "in force on {on}: {} principal title(s)",
         principal.len()
     ));
-    for (rid, reason) in &skipped {
+    for (rid, skip) in &skipped {
+        let reason = match skip {
+            DatedSkip::Current { .. } => IN_FORCE_NOW,
+            DatedSkip::Omitted(reason) => reason,
+        };
         run.print(&format!("   skipped {rid}: {reason}"));
     }
-    finish(scratch, resolved, &failed, run)
+    if !report {
+        return finish(scratch, resolved, &failed, run);
+    }
+    check_resolution(resolved.len(), &failed, run)?;
+    let mut current = Vec::new();
+    let mut omissions = Vec::new();
+    for (rid, skip) in skipped {
+        match skip {
+            DatedSkip::Current { start, document } => current.push(Json::obj([
+                ("id", Json::str(&rid)),
+                ("versionStart", Json::str(&start)),
+                (
+                    "compilationRegisterId",
+                    document.map_or(Json::Null, |id| Json::str(&id)),
+                ),
+            ])),
+            DatedSkip::Omitted(reason) => omissions.push(Json::obj([
+                ("register_id", Json::str(&rid)),
+                ("reason", Json::str(reason)),
+            ])),
+        }
+    }
+    write_json_atomic(
+        &pypath::join(scratch, "dated_resolution.json"),
+        &Json::obj([
+            ("in_force_on", Json::str(on)),
+            ("resolved", Json::Array(resolved)),
+            ("current", Json::Array(current)),
+            ("omissions", Json::Array(omissions)),
+        ]),
+        Some(1),
+        RESOLVED_DEPTH + 1,
+    )
 }
 
 /// `python -m fadden versions [--in-force-on YYYY-MM-DD]`: the current
@@ -518,9 +587,17 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
             Action::option("--in-force-on")
                 .metavar("YYYY-MM-DD")
                 .help("resolve the earlier compilations in force on this date"),
+        )
+        .arg(
+            Action::flag("--report-omissions")
+                .help("write the dated roster and omissions together"),
         );
     let args = parser.parse(argv)?;
     let on = args.str("in_force_on");
+    let report = args.flag("report_omissions");
+    if report && on.is_none() {
+        return Err(parser.error("--report-omissions requires --in-force-on"));
+    }
     if let Some(on) = on.as_deref().filter(|on| !is_date(on)) {
         return Err(parser.error(&format!(
             "--in-force-on must be YYYY-MM-DD, not {}",
@@ -529,7 +606,7 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     }
     let mut http = http::connect();
     let outcome = match on {
-        Some(on) => run_in_force_on(http.as_mut(), &module_dir(), &on, run),
+        Some(on) => resolve_in_force_on(http.as_mut(), &module_dir(), &on, report, run),
         None => self::run(http.as_mut(), &module_dir(), run),
     };
     Ok(match outcome {
