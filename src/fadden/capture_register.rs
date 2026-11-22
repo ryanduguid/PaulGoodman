@@ -1810,7 +1810,7 @@ pub(super) fn safe_output_leaf(name: &str) -> bool {
         && bytes[0].is_ascii_alphanumeric()
         && bytes
             .iter()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(b))
 }
 
 /// `_preflight_output(output, manifest)`: whether the one permitted missing
