@@ -7,6 +7,7 @@
 //! The exporter snapshots both inputs once, projects them through the monitor
 //! contract and publishes every bundle in one no-replace directory rename: an
 //! existing output is never replaced, repaired or deleted.
+use crate::pyjson::{obj, text_json};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
@@ -24,10 +25,7 @@ const CLASS: &str = "fadden.export_publication_bundles.PublicationBundleError";
 
 /// `PublicationBundleError(message)`.
 pub fn bundle_error(message: impl Into<String>) -> Exc {
-    Exc::Value {
-        class: CLASS,
-        message: message.into(),
-    }
+    Exc::class_value(CLASS, message)
 }
 
 type P = Vec<u32>;
@@ -199,19 +197,6 @@ fn iso_date(value: Option<&Json>, field: &str) -> Result<P, Exc> {
         )));
     }
     Ok(text)
-}
-
-fn text_json(points: P) -> Json {
-    Json::Str(PyStr::from_code_points(points))
-}
-
-fn obj(pairs: Vec<(&str, Json)>) -> Json {
-    Json::Object(
-        pairs
-            .into_iter()
-            .map(|(k, v)| (PyStr::Text(k.into()), v))
-            .collect(),
-    )
 }
 
 /// `observation["observed_at"]`, a `KeyError` when absent.

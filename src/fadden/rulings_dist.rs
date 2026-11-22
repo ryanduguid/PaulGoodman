@@ -13,7 +13,7 @@
 //! approves a contact in a ruling.
 use std::collections::BTreeSet;
 
-use sha2::{Digest, Sha256};
+use super::sha256_hex as sha256;
 
 use super::compilations::names;
 use super::corpus_paths::{child, linked};
@@ -55,13 +55,6 @@ const OWN_COPYRIGHT: &str = r"©|\(c\)\s*\d{4}|\bcopyright\s+(?:\(c\)|\d{4})|all
 pub struct Published {
     pub runs: Vec<(String, String)>,
     pub left_out: Vec<(String, String, String)>,
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 fn read(path: &str) -> Result<Vec<u8>, Exc> {

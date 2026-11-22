@@ -8,6 +8,8 @@
 //! on; any failure refuses the manifest. Text from the manifest (a title's
 //! name and metadata) stays in code points, so a lone surrogate fails where
 //! Python's UTF-8 writes fail.
+use crate::py::strip_points;
+use crate::pyjson::set_field;
 use std::io::{Read, Write};
 
 use super::corpus_paths::{
@@ -82,22 +84,6 @@ fn first_token(cls: &str) -> &str {
 
 fn points(text: &str) -> Vec<u32> {
     text.chars().map(u32::from).collect()
-}
-
-fn is_space_point(cp: u32) -> bool {
-    char::from_u32(cp).is_some_and(py::is_space)
-}
-
-fn strip_points(text: &[u32]) -> &[u32] {
-    let start = text
-        .iter()
-        .position(|&c| !is_space_point(c))
-        .unwrap_or(text.len());
-    let end = text
-        .iter()
-        .rposition(|&c| !is_space_point(c))
-        .map_or(start, |i| i + 1);
-    &text[start..end]
 }
 
 /// `re.sub(r"\n{3,}", "\n\n", text)`.
@@ -780,16 +766,6 @@ fn table_split(body: &str, name: &Json) -> Result<Vec<Row>, Exc> {
         .collect();
     check_chunks_complete(&lines, &out)?;
     Ok(out)
-}
-
-/// `dict(record, field=value)`: an existing key keeps its place.
-fn set_field(record: &mut Json, field: &str, value: Json) {
-    if let Json::Object(pairs) = record {
-        match pairs.iter_mut().find(|(k, _)| k.as_str() == Some(field)) {
-            Some(pair) => pair.1 = value,
-            None => pairs.push((PyStr::Text(field.into()), value)),
-        }
-    }
 }
 
 fn json_str(text: &[u32]) -> Json {

@@ -14,6 +14,7 @@
 //! failed and the distribution is not fit to publish, 2 the verifier could not
 //! run, so nothing was checked. Anything unexpected lands in the 2 band and
 //! says so; only the checks themselves produce a 1.
+use super::rates::thousands;
 use std::collections::BTreeSet;
 
 use super::corpus_paths::{
@@ -59,10 +60,6 @@ pub fn set_privacy_hook(hook: impl FnMut(&str) -> Option<(bool, Vec<pii::Unappro
 
 fn pts(text: &str) -> P {
     text.chars().map(u32::from).collect()
-}
-
-fn thousands(n: usize) -> String {
-    super::rates::thousands(n)
 }
 
 /// `_entry_kind(entry, is_junction)`: what a top-level entry is, links not followed.

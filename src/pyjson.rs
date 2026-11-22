@@ -65,18 +65,38 @@ pub enum Json {
     Object(Vec<(PyStr, Json)>),
 }
 
+/// A `str` of code points.
+pub fn text_json(points: Vec<u32>) -> Json {
+    Json::Str(PyStr::from_code_points(points))
+}
+
+/// A `dict` whose keys keep their order.
+pub fn obj(pairs: Vec<(&str, Json)>) -> Json {
+    Json::Object(
+        pairs
+            .into_iter()
+            .map(|(k, v)| (PyStr::Text(k.to_string()), v))
+            .collect(),
+    )
+}
+
+/// `dict(record, field=value)`: an existing key keeps its place.
+pub fn set_field(record: &mut Json, field: &str, value: Json) {
+    if let Json::Object(pairs) = record {
+        match pairs.iter_mut().find(|(k, _)| k.as_str() == Some(field)) {
+            Some(pair) => pair.1 = value,
+            None => pairs.push((PyStr::Text(field.into()), value)),
+        }
+    }
+}
+
 impl Json {
     pub fn str(text: &str) -> Json {
         Json::Str(PyStr::Text(text.to_string()))
     }
 
     pub fn obj<const N: usize>(pairs: [(&str, Json); N]) -> Json {
-        Json::Object(
-            pairs
-                .into_iter()
-                .map(|(k, v)| (PyStr::Text(k.to_string()), v))
-                .collect(),
-        )
+        obj(Vec::from(pairs))
     }
 
     pub fn get(&self, key: &str) -> Option<&Json> {
