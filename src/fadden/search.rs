@@ -378,18 +378,18 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usi
         let mut items = separator.split(labels.as_str());
         let mut end = whole.end();
         // A title named only after the whole list binds every item in it.
-        if labels.end() == end {
-            if let Some(rest) = list_rest.match_at(text, end) {
-                act = cited_in(&rest, [2, 3]);
-                end = rest.get(0).expect("group 0").end();
-                let more = rest.name("rest").expect("rest").as_str();
-                items.extend(
-                    separator
-                        .split(more)
-                        .into_iter()
-                        .filter(|item| !item.is_empty() && !item.starts_with('(')),
-                );
-            }
+        if labels.end() == end
+            && let Some(rest) = list_rest.match_at(text, end)
+        {
+            act = cited_in(&rest, [2, 3]);
+            end = rest.get(0).expect("group 0").end();
+            let more = rest.name("rest").expect("rest").as_str();
+            items.extend(
+                separator
+                    .split(more)
+                    .into_iter()
+                    .filter(|item| !item.is_empty() && !item.starts_with('(')),
+            );
         }
         let citation = crate::py::split_whitespace(&text[whole.start()..end]).join(" ");
         let mut hyphenated: Option<bool> = None;
