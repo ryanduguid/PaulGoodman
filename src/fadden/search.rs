@@ -219,10 +219,36 @@ fn cited_title(
     }
 }
 
-fn citation_pattern() -> String {
+const KEYWORD: &str = r"(?i:(?:sub)?(?:section|paragraph|subparagraph)|subdivision|division)";
+/// A subsection or paragraph named after its section, as `(4)` in `6(1) and (4)`.
+const PART: &str = r"\([0-9A-Za-z]{1,6}\)(?:\([0-9A-Za-z]{1,6}\))*";
+
+/// `of` or `in` and the title cited; its 2 groups hold a cited name.
+fn in_title() -> String {
     let c = cited();
     format!(
-        r"\b(?P<keyword>(?i:(?:sub)?(?:section|paragraph|subparagraph)|subdivision|division))s?\s+(?P<labels>{LABEL}(?:{LIST_SEPARATOR}{LABEL})*)(?:\s+(?:of|in)\s+(?:Schedule\s+\d+[A-Z]?\s+to\s+{c}|this\s+\w+|Schedule\s+\d+[A-Z]?\b|{c}))?"
+        r"\s+(?:of|in)\s+(?:Schedule\s+\d+[A-Z]?\s+to\s+{c}|this\s+\w+|Schedule\s+\d+[A-Z]?\b|{c})"
+    )
+}
+
+fn citation_pattern() -> String {
+    format!(
+        r"\b(?P<keyword>{KEYWORD})s?\s+(?P<labels>{LABEL}(?:{LIST_SEPARATOR}{LABEL})*)(?:{})?",
+        in_title()
+    )
+}
+
+/// The rest of a list that a citation stops short of, through the title named at its
+/// end: ` and (4) and 6BA(5) and section 94L of the ITAA 1936` after `subsections
+/// 6(1)`. `rest` holds the items before any that has its own keyword; such an item is
+/// read as a citation of its own, and `more` holds those items. Such an item joins the
+/// list only through `and` or `or` with no comma before it, which would mark a new
+/// clause (`applies to section 6, and section 7 of the X Act applies`).
+fn list_rest_pattern() -> String {
+    let item = format!(r"(?:{LABEL}|{PART})");
+    format!(
+        r"(?P<rest>(?:{LIST_SEPARATOR}{item})*)(?P<more>(?:\s+(?:and|or)\s+{KEYWORD}s?\s+{LABEL}(?:{LIST_SEPARATOR}{item})*)*){}",
+        in_title()
     )
 }
 
@@ -350,10 +376,25 @@ pub fn definitions(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Whether a cited label's section number holds a hyphen, as `8-1(2)` does.
+fn hyphenated_label(label: &str) -> bool {
+    section_key(label.split('(').next().unwrap_or("")).contains('-')
+}
+
+/// The cited name in the first of `groups` that holds one, single-spaced.
+fn cited_in(found: &pyre::Caps<'_>, groups: [usize; 2]) -> Option<String> {
+    groups
+        .into_iter()
+        .find_map(|g| found.get(g).map(|m| m.as_str()).filter(|s| !s.is_empty()))
+        .map(|a| crate::py::split_whitespace(a).join(" "))
+}
+
 /// (kind, key, cited act or None, citation text, where the citation ends in `text`)
 /// for each reference in `text`.
 pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usize)> {
     let pattern = pyre::re(&citation_pattern(), 0);
+    let list_rest = pyre::re(&list_rest_pattern(), 0);
+    let keyed_label = pyre::re(&format!(r"{KEYWORD}s?\s+({LABEL})"), 0);
     let separator = pyre::re(LIST_SEPARATOR, 0);
     let mut out = Vec::new();
     for found in pattern.captures_iter(text) {
@@ -363,14 +404,42 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usi
         } else {
             "section".to_string()
         };
-        let act = [3, 4]
-            .into_iter()
-            .find_map(|g| found.get(g).map(|m| m.as_str()).filter(|s| !s.is_empty()))
-            .map(|a| crate::py::split_whitespace(a).join(" "));
+        let mut act = cited_in(&found, [3, 4]);
         let whole = found.get(0).expect("group 0");
-        let citation = crate::py::split_whitespace(whole.as_str()).join(" ");
+        let labels = found.name("labels").expect("labels");
+        let mut items = separator.split(labels.as_str());
+        let mut end = whole.end();
+        // A title named only after the whole list binds every item in it, unless an
+        // item is numbered unlike the first (`section 23AI or section 768-5 of the
+        // ITAA 1997`), which marks items of different titles.
+        if labels.end() == end
+            && let Some(rest) = list_rest.match_at(text, end)
+        {
+            let bare: Vec<&str> = separator
+                .split(rest.name("rest").expect("rest").as_str())
+                .into_iter()
+                .filter(|item| !item.is_empty() && !item.starts_with('('))
+                .collect();
+            let more = rest.name("more").expect("more").as_str();
+            let keyed: Vec<String> = keyed_label
+                .captures_iter(more)
+                .filter_map(|found| found.get(1).map(|m| m.as_str().to_string()))
+                .collect();
+            let first = hyphenated_label(items[0]);
+            if bare
+                .iter()
+                .copied()
+                .chain(keyed.iter().map(String::as_str))
+                .all(|label| hyphenated_label(label) == first)
+            {
+                act = cited_in(&rest, [3, 4]);
+                end = rest.get(0).expect("group 0").end();
+                items.extend(bare);
+            }
+        }
+        let citation = crate::py::split_whitespace(&text[whole.start()..end]).join(" ");
         let mut hyphenated: Option<bool> = None;
-        for label in separator.split(found.name("labels").expect("labels").as_str()) {
+        for label in items {
             let key = section_key(label.split('(').next().unwrap_or(""));
             let has_hyphen = key.contains('-');
             match hyphenated {
@@ -385,13 +454,7 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usi
                     || (kind == "division" && !format!("{key}{label}").contains(['-', '(']))
             };
             if fits {
-                out.push((
-                    kind.clone(),
-                    key,
-                    act.clone(),
-                    citation.clone(),
-                    whole.end(),
-                ));
+                out.push((kind.clone(), key, act.clone(), citation.clone(), end));
             }
         }
     }

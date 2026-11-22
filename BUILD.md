@@ -536,15 +536,23 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   and the rows that cite its section, Division or Subdivision. A list such as
   `sections 8-1, 8-5 and 8-10` gives one reference per item and ends at an
   item numbered unlike the first, so `section 8-1 and 2 other provisions`
-  reads only `8-1`. A range such as `sections 8-1 to 8-10` reads only its
-  first item. A Subdivision named by letter alone (`Subdivision B`) is not
-  read, because the same letter recurs across Divisions of one title.
+  reads only `8-1`. A title named after the last item binds the whole list, through
+  bare parts and items with their own keyword joined by `and` or `or`, so each of
+  `subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment
+  Act 1936` cites the ITAA 1936. A comma before an item with its own keyword, with
+  or without `and` or `or`, ends the list instead, and no item takes the title when
+  one is numbered unlike the first, so in `section 23AI or section 768-5 of the ITAA
+  1997` only `768-5` cites the ITAA 1997. Text alone cannot tell a list from 2
+  clauses joined by a bare `and` or `or`, so `section 6 and section 7 of the X Act`
+  is read as one list. On the `corpus-2026-11-18` snapshot this case does not
+  occur: all 111 citations whose attribution changed (187 references) were read,
+  and none binds an item of the citing title to another. A range such as `sections 8-1 to 8-10` reads only its first
+  item. A Subdivision named by letter alone (`Subdivision B`) is not read, because
+  the same letter recurs across Divisions of one title.
 - `define --follow` adds `refers_to` to each definition: the provisions its text
   cites, read and resolved as `refs` reads a row, with the rows each reaches. So the
   GST Act's `taxable supply has the meaning given by sections 9-5, 78-50, 84-5 and
-  105-5` reaches those 4 sections. It has the same limits as `refs`: in
-  `subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment
-  Act 1936`, only `94L` reaches the ITAA 1936.
+  105-5` reaches those 4 sections. It has the same limits as `refs`.
 - `refs --terms` adds `terms`: the defined terms a row marks with an asterisk, each
   with the definitions it reaches. The asterisk marks only where a term starts (ITAA
   1997 s 2-10, GST Act s 3-1), so `refs` takes the longest run of following words, up

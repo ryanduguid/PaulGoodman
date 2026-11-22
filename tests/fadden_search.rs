@@ -953,6 +953,96 @@ fn citations_name_the_section_and_any_other_instrument() {
 }
 
 #[test]
+fn a_title_named_after_a_list_binds_every_item() {
+    let itaa = Some("Income Tax Assessment Act 1936");
+    assert_eq!(
+        cited(
+            "subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment Act 1936"
+        ),
+        [
+            t("section", "6", itaa),
+            t("section", "6BA", itaa),
+            t("section", "94L", itaa)
+        ]
+    );
+    assert_eq!(
+        cited("paragraphs 8-1(2)(a) and (b) of the ITAA 1997"),
+        [t("section", "8-1", Some("ITAA 1997"))]
+    );
+    let found = search::citations("subsection 6(1) or (2) of the ITAA 1936 applies");
+    assert_eq!(found[0].3, "subsection 6(1) or (2) of the ITAA 1936");
+    assert_eq!(found[0].4, "subsection 6(1) or (2) of the ITAA 1936".len());
+    // A comma, with or without `and`, does not join a later citation to the list.
+    assert_eq!(
+        cited("It applies to section 6, and section 7 of the Other Sample Act 2099 applies."),
+        [
+            t("section", "6", None),
+            t("section", "7", Some("Other Sample Act 2099"))
+        ]
+    );
+    assert_eq!(
+        cited("Subject to section 6, section 7 of the Other Sample Act 2099 applies."),
+        [
+            t("section", "6", None),
+            t("section", "7", Some("Other Sample Act 2099"))
+        ]
+    );
+    // Items numbered unlike the first belong to different titles.
+    assert_eq!(
+        cited("section 23AI or section 768-5 of the ITAA 1997"),
+        [
+            t("section", "23AI", None),
+            t("section", "768-5", Some("ITAA 1997"))
+        ]
+    );
+    assert_eq!(
+        cited("section 5 of this Act and section 6 of the ITAA 1936"),
+        [
+            t("section", "5", None),
+            t("section", "6", Some("ITAA 1936"))
+        ]
+    );
+}
+
+/// Sentences from the corpus-2026-11-18 snapshot whose earlier items now take
+/// the trailing title; each was read and belongs to it.
+#[test]
+fn snapshot_lists_bind_their_earlier_items_to_the_named_title() {
+    let itaa = Some("Income Tax Assessment Act 1997");
+    assert_eq!(
+        cited(&format!(
+            "exempt from tax by virtue of the operation of Subdivision 50{NBH}A or section \
+             51{NBH}5, 51{NBH}10 or 51{NBH}30 of the Income Tax Assessment Act 1997;"
+        )),
+        [
+            t("subdivision", "50-A", itaa),
+            t("section", "51-5", itaa),
+            t("section", "51-10", itaa),
+            t("section", "51-30", itaa)
+        ]
+    );
+    assert_eq!(
+        cited(&format!(
+            "expenditure taken under sections 70{NBH}90 and 70{NBH}95 and subsection \
+             70{NBH}100(3) of the Income Tax Assessment Act 1997 to have been incurred"
+        )),
+        [
+            t("section", "70-90", itaa),
+            t("section", "70-95", itaa),
+            t("section", "70-100", itaa)
+        ]
+    );
+    let small = Some("Small Superannuation Accounts Act 1995");
+    assert_eq!(
+        cited(
+            "A payment to you under section 68 or subsection 76(7) of the Small Superannuation \
+             Accounts Act 1995."
+        ),
+        [t("section", "68", small), t("section", "76", small)]
+    );
+}
+
+#[test]
 fn lists_and_lookalikes_are_read_as_python_read_them() {
     let cases: Vec<(String, Vec<Cited>)> = vec![
         (
