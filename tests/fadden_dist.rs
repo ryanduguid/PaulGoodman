@@ -3703,6 +3703,7 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
     let mislabelled = "PRR/PR20991/NAT/ATO/00001";
     let unnoticed = "CLR/CR20991/NAT/ATO/00001";
     let advice = "EV/1099000000001";
+    let marked_up = "TXD/TD20994/NAT/ATO/00001";
     // A page that only links to a copyright page, which the stage accepts.
     let linked = "TXD/TD20992/NAT/ATO/00001";
     let linked_page = ruling_page(linked, "")
@@ -3720,9 +3721,15 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
             (unnoticed, ruling_page(unnoticed, "")),
             (advice, ruling_page(advice, "")),
             (linked, linked_page),
+            (marked_up, ruling_page(marked_up, "")),
             (LCR, ruling_page(LCR, "")),
         ],
     );
+    // The stage refuses a title with markup; a run it wrote before it did can hold one.
+    for file in ["manifest.json", "rulings.jsonl"] {
+        let title = format!("Fabricated document {marked_up}");
+        edit(&source.join(file), &title, "Fabricated <HP1>document</HP1>");
+    }
     // The stage refuses a court judgment and labels each document by its docid;
     // a run edited by hand can still hold a judgment or a wrong label.
     let judgment = "JUD/2099ATC20-001";
@@ -3773,7 +3780,8 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
         assert_eq!(found.len(), 1, "{docid}: {reasons:?}");
         found[0].to_string()
     };
-    assert_eq!(reasons.len(), 6, "{reasons:?}");
+    assert_eq!(reasons.len(), 7, "{reasons:?}");
+    assert!(reason(marked_up).contains("its title holds markup"));
     assert!(reason(RULING).contains("copyright notice of its own"));
     assert!(reason(judgment).contains("not an ATO-authored"));
     assert!(reason(mislabelled).contains("labelled \"Class Ruling\""));
@@ -3782,10 +3790,18 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
     }
     assert!(reason(advice).contains("edited version of private advice"));
     let listing = read_json(&dist.join("rulings").join("sources.json"));
-    assert_eq!(listing["runs"][0]["left_out"].as_array().unwrap().len(), 6);
+    assert_eq!(listing["runs"][0]["left_out"].as_array().unwrap().len(), 7);
     let removed = std::fs::read_to_string(dist.join("REMOVED.md")).unwrap();
     assert!(removed.contains("## ATO rulings left out"));
-    for docid in [RULING, judgment, mislabelled, unnoticed, advice, linked] {
+    for docid in [
+        RULING,
+        judgment,
+        mislabelled,
+        unnoticed,
+        advice,
+        linked,
+        marked_up,
+    ] {
         assert!(removed.contains(docid), "{docid}");
     }
     let (code, out) = verify(&f);
