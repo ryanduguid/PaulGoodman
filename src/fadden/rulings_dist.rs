@@ -136,26 +136,117 @@ fn reason_left_out(document: &Json, rows: &[&Json]) -> Option<String> {
 }
 
 /// Whether `path` names a person beside a registration number or holds a
-/// contact, in the file as written or, for JSON and JSONL, in the decoded values
-/// a JSON escape could hide. The allowlist is not consulted: a run can be named
-/// like a title it approves contacts for.
+/// contact. A JSON or JSONL file whose every value parses with no repeated
+/// member and nothing after it is scanned as its decoded values, which a JSON
+/// escape cannot hide from, less the stage's machine values (`free_text`). Any
+/// other file is scanned as written and in each value that parses. The
+/// allowlist is not consulted: a run can be named like a title it approves
+/// contacts for.
 fn private(path: &str, run: &str) -> Result<bool, Exc> {
-    let found = |(pair, contacts): (bool, Vec<pii::Unapproved>)| pair || !contacts.is_empty();
-    if found(pii::privacy_findings_in_file(path, run, &[])?) {
-        return Ok(true);
-    }
     let text = crate::pyio::read_text(path)?;
     let values: Vec<&str> = if path.ends_with(".jsonl") {
-        text.lines().collect()
+        text.lines().filter(|l| !l.trim().is_empty()).collect()
     } else if path.ends_with(".json") {
         vec![text.as_str()]
     } else {
         Vec::new()
     };
-    Ok(values.into_iter().any(|value| {
-        pyjson::loads_standard(value)
-            .is_ok_and(|value| found(pii::privacy_findings_in_row(&value, run, &[])))
-    }))
+    let file = pypath::split(path).1;
+    let parsed: Option<Vec<Json>> = values
+        .iter()
+        .map(|v| pyjson::loads(v).ok().map(|v| free_text(&v, &file)))
+        .collect();
+    if let Some(parsed) = parsed.filter(|p| !p.is_empty()) {
+        // Nothing in the file is left unread, so its values stand for it whole.
+        pii::refuse_controls(&text)?;
+        return Ok(holds_private(&Json::Array(parsed), run));
+    }
+    let (pair, contacts) = pii::privacy_findings_in_file(path, run, &[])?;
+    Ok(pair
+        || !contacts.is_empty()
+        || values.into_iter().any(|value| {
+            pyjson::loads_standard(value).is_ok_and(|value| holds_private(&value, run))
+        }))
+}
+
+/// Whether `value`'s decoded keys and values pair a name with a registration
+/// number or hold a contact.
+fn holds_private(value: &Json, register_id: &str) -> bool {
+    let (pair, contacts) = pii::privacy_findings_in_row(value, register_id, &[]);
+    pair || !contacts.is_empty()
+}
+
+/// A machine value the stage or `dist` writes: a count or a SHA-256 hex digest.
+#[derive(Clone, Copy)]
+enum Machine {
+    Count,
+    Digest,
+}
+
+impl Machine {
+    fn holds(self, value: &Json) -> bool {
+        match (self, value) {
+            // The stage never writes a negative count.
+            (Machine::Count, Json::Int(n)) => n.sign() != num_bigint::Sign::Minus,
+            (Machine::Digest, Json::Str(_)) => value.as_str().is_some_and(|hex| {
+                hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            }),
+            _ => false,
+        }
+    }
+}
+
+/// Where each published file holds a machine value, as member paths from one
+/// of its values (`*` is each item of an array): as `rulings::run` writes a
+/// manifest and its rows, `leave_out` recounts `rows` and `listing_entry`
+/// writes a `sources.json` run.
+fn machine_paths(file: &str) -> &'static [(&'static [&'static str], Machine)] {
+    use Machine::{Count, Digest};
+    match file {
+        "manifest.json" => &[
+            (&["rows"], Count),
+            (&["documents", "*", "bytes"], Count),
+            (&["documents", "*", "paragraphs"], Count),
+            (&["documents", "*", "windows_1252_bytes"], Count),
+            (&["documents", "*", "sha256"], Digest),
+        ],
+        "rulings.jsonl" => &[(&["source_sha256"], Digest)],
+        "sources.json" => &[
+            (&["runs", "*", "documents"], Count),
+            (&["runs", "*", "rows"], Count),
+            (&["runs", "*", "files", "LICENCE-NOTICE.md"], Digest),
+            (&["runs", "*", "files", "manifest.json"], Digest),
+            (&["runs", "*", "files", "rulings.jsonl"], Digest),
+        ],
+        _ => &[],
+    }
+}
+
+/// A value of `file` without the machine values at `machine_paths`, which no
+/// person or page wrote: a byte count such as 134620 reads as a 13 phone
+/// number. Only a value of the right type at one of those paths goes; every
+/// other member, a new or nested one included, stays and is scanned.
+fn free_text(value: &Json, file: &str) -> Json {
+    fn strip(value: &mut Json, path: &[&str], kind: Machine) {
+        match (value, path) {
+            (Json::Array(items), ["*", rest @ ..]) => {
+                items.iter_mut().for_each(|item| strip(item, rest, kind));
+            }
+            (Json::Object(members), [key]) => {
+                members.retain(|(k, v)| k.as_str() != Some(*key) || !kind.holds(v));
+            }
+            (Json::Object(members), [key, rest @ ..]) => members
+                .iter_mut()
+                .filter(|(k, _)| k.as_str() == Some(*key))
+                .for_each(|(_, v)| strip(v, rest, kind)),
+            _ => {}
+        }
+    }
+    let mut value = value.clone();
+    for (path, kind) in machine_paths(file) {
+        strip(&mut value, path, *kind);
+    }
+    value
 }
 
 /// Copy each run under the corpus's `rulings/` into `staging`, leaving out and
@@ -279,8 +370,7 @@ fn kept_lines(
         if left_out.contains(docid) {
             continue;
         }
-        let (pair, contacts) = pii::privacy_findings_in_row(row, docid, &[]);
-        if pair || !contacts.is_empty() {
+        if holds_private(&free_text(row, "rulings.jsonl"), docid) {
             return Err(Exc::Runtime(format!(
                 "rulings/{name}: {docid} names a private person or holds a contact; \
                  remove the run or capture the document again once it is clean"
@@ -387,12 +477,11 @@ pub fn notice_section(published: &Published) -> String {
          printed the ATO's copyright notice ({COPYRIGHT_NOTICE_URL}) when it was\n\
          captured:\n\n\
          > {NOTICE}\n\n\
-         Neither the ATO nor the Commonwealth endorses this corpus. The rows are not the\n\
-         authorised text, advice or the Commissioner's current view: read each document\n\
-         at its `source_url` before relying on it. Legislation, court judgments, edited\n\
-         versions of private advice and documents whose text carries a copyright notice\n\
-         of its own are left out, and REMOVED.md lists each one. `rulings/sources.json`\n\
-         gives each run's file digests.\n",
+         The rows are not the authorised text, advice or the Commissioner's current view:\n\
+         read each document at its `source_url` before relying on it. Legislation, court\n\
+         judgments, edited versions of private advice and documents whose text carries a\n\
+         copyright notice of its own are left out, and REMOVED.md lists each one.\n\
+         `rulings/sources.json` gives each run's file digests.\n",
         dates.join(", ")
     )
 }
@@ -416,4 +505,98 @@ pub fn removed_lines(published: &Published) -> Vec<String> {
 fn removed_line(run: &str, docid: &str, reason: &str) -> String {
     let cell = |value: &str| value.replace('|', r"\|").replace(['\r', '\n'], " ");
     format!("| {run} | {} | {} |", cell(docid), cell(reason))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Contacts split across members, rows or a lone carriage return, digits
+    /// beside each other across a member boundary, controls that hold a
+    /// contact, and count or digest keys away from where the stage writes them
+    /// (`HEX` is a digest holding a 13 number, `ESC` a backslash).
+    const SCANNED: [(&str, &str); 18] = [
+        ("manifest.json", r#"{"a": "Call 13 46 20."}"#),
+        ("manifest.json", r#"{"a": "Call 13 46", "b": "20"}"#),
+        ("manifest.json", r#"{"a":"13","b":"4620"}"#),
+        ("manifest.json", r#"{"a": 13, "b": 4620}"#),
+        ("manifest.json", "[13,46,20]"),
+        ("manifest.json", "[1300, 123, 456]"),
+        ("manifest.json", r#"["0412","345","678"]"#),
+        ("manifest.json", r#"{"a": "alice@", "b": "example.org"}"#),
+        ("manifest.json", r#"{"alice": "@example.org"}"#),
+        ("manifest.json", r#"{"TFN": "123 456 782"}"#),
+        ("manifest.json", r#"{"a": "Call 13ESCu002046 20"}"#),
+        (
+            "rulings.jsonl",
+            "{\"text\": \"Call 13 46\"}\n{\"text\": \"20 today\"}\n",
+        ),
+        ("rulings.jsonl", "{\"n\": 1346}\n{\"n\": 20}\n"),
+        ("rulings.jsonl", "{\"a\": \"13 46\"}\r{\"b\": \"20\"}\n"),
+        (
+            "rulings.jsonl",
+            "{\"a\": \"Jane Citizen\"}\n{\"b\": \"12345678\"}\n",
+        ),
+        ("manifest.json", r#"{"metadata": {"bytes": 134620}}"#),
+        ("manifest.json", r#"{"manifest.json": "HEX"}"#),
+        (
+            "rulings.jsonl",
+            "{\"documents\": [{\"sha256\": \"HEX\"}]}\n",
+        ),
+    ];
+
+    /// A machine value where the stage or `dist` writes one, and nothing else.
+    const MACHINE: [(&str, &str); 4] = [
+        ("manifest.json", r#"{"rows": 134620}"#),
+        (
+            "manifest.json",
+            r#"{"documents": [{"bytes": 134620, "sha256": "HEX"}]}"#,
+        ),
+        ("rulings.jsonl", "{\"source_sha256\": \"HEX\"}\n"),
+        (
+            "sources.json",
+            r#"{"runs": [{"rows": 134620, "files": {"manifest.json": "HEX"}}]}"#,
+        ),
+    ];
+
+    /// `private` as it was before it skipped machine values, the file as
+    /// written then each value decoded, and `private` now, over `text`.
+    fn both_scans(dir: &std::path::Path, file: &str, text: &str) -> (bool, bool) {
+        let found = |(pair, contacts): (bool, Vec<pii::Unapproved>)| pair || !contacts.is_empty();
+        let hex = "a134620baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let text = text
+            .replace("HEX", hex)
+            .replace("ESC", &char::from(92u8).to_string());
+        let folder = tempfile::tempdir_in(dir).unwrap().keep();
+        let path = folder.join(file);
+        std::fs::write(&path, &text).unwrap();
+        let path = path.to_str().unwrap();
+        let values: Vec<&str> = if file.ends_with(".jsonl") {
+            text.lines().collect()
+        } else {
+            vec![text.as_str()]
+        };
+        let before = found(pii::privacy_findings_in_file(path, "run", &[]).unwrap())
+            || values.into_iter().any(|value| {
+                pyjson::loads_standard(value)
+                    .is_ok_and(|value| found(pii::privacy_findings_in_row(&value, "run", &[])))
+            });
+        let now = private(path, "run").unwrap();
+        eprintln!("{file} {text:?}: whole text {before}, decoded {now}");
+        (before, now)
+    }
+
+    /// The decoded scan finds everything the whole-text scan found, except a
+    /// machine value where the stage writes one.
+    #[test]
+    fn the_decoded_scan_misses_only_machine_values() {
+        let dir = tempfile::tempdir().unwrap();
+        for (file, text) in SCANNED {
+            let (before, now) = both_scans(dir.path(), file, text);
+            assert!(!before || now, "{text}");
+        }
+        for (file, text) in MACHINE {
+            assert_eq!(both_scans(dir.path(), file, text), (true, false), "{text}");
+        }
+    }
 }

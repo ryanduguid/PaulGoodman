@@ -20,6 +20,10 @@
 //! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
 //! 17f1d15 added the `refs` line saying an index holds no rulings.
 //!
+//! The rulings cases' `LICENCE-NOTICE.md` digest was re-recorded by hand when
+//! the stage's notice dropped a sentence the ATO's copyright notice does not ask
+//! for; no other rulings output changed.
+//!
 //! The discover cases that finish (1, 3, 5 and 7) depart from 43b5e0c on
 //! purpose: after its keyword searches `discover` fetches the reviewed named
 //! titles in one request, so each script gained the Register's answer and each
