@@ -3591,6 +3591,8 @@ fn a_contact_in_a_repeated_member_or_after_the_json_is_refused() {
                 assert!(!text.contains("13 46 20"), "{text}");
                 std::fs::remove_dir_all(f.dist()).unwrap();
             } else {
+                // Trailing content is refused by the run's structural check,
+                // before the privacy scan; a repeated row member, by the scan.
                 assert_eq!(code, 1, "{how} in {file}: {err}");
                 assert!(!f.dist().exists(), "{how} in {file}");
             }
@@ -3621,7 +3623,7 @@ fn text_and_unknown_keys_in_a_manifest_are_still_scanned() {
     type Change = fn(&mut Value);
     // Digest-shaped, with a 13 number in it.
     const HEX: &str = "a134620baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let cases: [(&str, Change); 8] = [
+    let cases: [(&str, Change); 9] = [
         ("phone", |d| d["document_type"] = json!("Call 13 46 20.")),
         ("email", |d| {
             d["document_type"] = json!("Write to alice@example.org.")
@@ -3631,6 +3633,8 @@ fn text_and_unknown_keys_in_a_manifest_are_still_scanned() {
         }),
         ("unknown key", |d| d["page_count"] = json!(134_620)),
         ("count key holding text", |d| d["bytes"] = json!("13 46 20")),
+        // The stage never writes a negative count.
+        ("negative count", |d| d["bytes"] = json!(-134_620)),
         // A count or digest key away from where the stage writes one.
         ("nested count", |d| {
             d["metadata"] = json!({"bytes": 134_620})

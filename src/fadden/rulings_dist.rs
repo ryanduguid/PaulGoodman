@@ -186,7 +186,8 @@ enum Machine {
 impl Machine {
     fn holds(self, value: &Json) -> bool {
         match (self, value) {
-            (Machine::Count, Json::Int(_)) => true,
+            // The stage never writes a negative count.
+            (Machine::Count, Json::Int(n)) => n.sign() != num_bigint::Sign::Minus,
             (Machine::Digest, Json::Str(_)) => value.as_str().is_some_and(|hex| {
                 hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
             }),
