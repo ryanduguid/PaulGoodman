@@ -940,7 +940,14 @@ fn a_title_named_after_a_list_binds_every_item() {
     let found = search::citations("subsection 6(1) or (2) of the ITAA 1936 applies");
     assert_eq!(found[0].3, "subsection 6(1) or (2) of the ITAA 1936");
     assert_eq!(found[0].4, "subsection 6(1) or (2) of the ITAA 1936".len());
-    // A comma alone does not join a later citation to the list.
+    // A comma, with or without `and`, does not join a later citation to the list.
+    assert_eq!(
+        cited("It applies to section 6, and section 7 of the Other Sample Act 2099 applies."),
+        [
+            t("section", "6", None),
+            t("section", "7", Some("Other Sample Act 2099"))
+        ]
+    );
     assert_eq!(
         cited("Subject to section 6, section 7 of the Other Sample Act 2099 applies."),
         [

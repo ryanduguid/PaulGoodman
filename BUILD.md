@@ -550,8 +550,8 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   reads only `8-1`. A title named after the last item binds the whole list, through
   bare parts and items with their own keyword joined by `and` or `or`, so each of
   `subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment
-  Act 1936` cites the ITAA 1936. A comma alone does not join a later citation to the
-  list, and no item takes the title when one is numbered unlike the first, so in
+  Act 1936` cites the ITAA 1936. A comma before an item with its own keyword, with
+  or without `and` or `or`, ends the list instead, and no item takes the title when one is numbered unlike the first, so in
   `section 23AI or section 768-5 of the ITAA 1997` only `768-5` cites the ITAA 1997.
   A range such as `sections 8-1 to 8-10` reads only its first item. A Subdivision named by letter alone (`Subdivision B`) is not
   read, because the same letter recurs across Divisions of one title.

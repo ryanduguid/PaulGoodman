@@ -231,11 +231,13 @@ fn citation_pattern() -> String {
 /// The rest of a list that a citation stops short of, through the title named at its
 /// end: ` and (4) and 6BA(5) and section 94L of the ITAA 1936` after `subsections
 /// 6(1)`. `rest` holds the items before any that has its own keyword; such an item is
-/// read as a citation of its own, and `more` holds those items.
+/// read as a citation of its own, and `more` holds those items. Such an item joins the
+/// list only through `and` or `or` with no comma before it, which would mark a new
+/// clause (`applies to section 6, and section 7 of the X Act applies`).
 fn list_rest_pattern() -> String {
     let item = format!(r"(?:{LABEL}|{PART})");
     format!(
-        r"(?P<rest>(?:{LIST_SEPARATOR}{item})*)(?P<more>(?:,?\s+(?:and|or)\s+{KEYWORD}s?\s+{LABEL}(?:{LIST_SEPARATOR}{item})*)*){}",
+        r"(?P<rest>(?:{LIST_SEPARATOR}{item})*)(?P<more>(?:\s+(?:and|or)\s+{KEYWORD}s?\s+{LABEL}(?:{LIST_SEPARATOR}{item})*)*){}",
         in_title()
     )
 }
