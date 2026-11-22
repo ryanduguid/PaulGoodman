@@ -948,6 +948,14 @@ fn a_title_named_after_a_list_binds_every_item() {
             t("section", "7", Some("Other Sample Act 2099"))
         ]
     );
+    // Items numbered unlike the first belong to different titles.
+    assert_eq!(
+        cited("section 23AI or section 768-5 of the ITAA 1997"),
+        [
+            t("section", "23AI", None),
+            t("section", "768-5", Some("ITAA 1997"))
+        ]
+    );
     assert_eq!(
         cited("section 5 of this Act and section 6 of the ITAA 1936"),
         [
