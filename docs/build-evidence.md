@@ -246,17 +246,20 @@ counted once each; asterisks that reached no definition are counted each time.
 
 | Title | Rows with an asterisk | Every asterisk resolved | Terms resolved | Read as singular | Without qualifier | Asterisks unresolved |
 |---|---:|---:|---:|---:|---:|---:|
-| ITAA 1997 (C2004A05138) | 3,735 | 1,943 | 16,367 | 1,391 | 2,538 | 4,972 |
-| GST Act (C2004A00446) | 675 | 421 | 2,782 | 222 | 280 | 455 |
-| TAA 1953 (C1953A00001) | 819 | 634 | 2,927 | 218 | 219 | 399 |
+| ITAA 1997 (C2004A05138) | 3,735 | 2,750 | 18,107 | 1,810 | 1,752 | 2,104 |
+| GST Act (C2004A00446) | 675 | 565 | 2,991 | 236 | 305 | 163 |
+| TAA 1953 (C1953A00001) | 819 | 691 | 3,037 | 241 | 194 | 223 |
 | Income Tax (Transitional Provisions) Act 1997 (C2004A05128) | 5 | 0 | 0 | 0 | 0 | 9 |
 
-Most unresolved asterisks start a term whose dictionary entry `define` does not read,
-such as `market value`, `head company` and `adjustable value`, or a term whose entry
-reads differently (`carry on` beside `carrying on an enterprise`). The transitional Act defines
-none of its asterisked terms itself and is not given a fallback. The counts show where
-an asterisk reached a stored definition, not that the definition is the one the
-provision uses.
+The index holds 3,824 definitions. Before `define` read dictionary entries without a
+defining verb (`head company:` before its paragraphs, `IRU is ...`, `market value has
+a meaning affected by ...`), the same snapshot gave 3,678 definitions, and 4,972
+unresolved asterisks in the ITAA 1997 (1,943 rows with every asterisk resolved), 455
+in the GST Act (421 rows) and 399 in the TAA 1953 (634 rows). Remaining misses include
+terms whose entry reads differently (`carry on` beside `carrying on an enterprise`).
+The transitional Act defines none of its asterisked terms itself and is not given a
+fallback. The counts show where an asterisk reached a stored definition, not that the
+definition is the one the provision uses.
 
 ## How often a run of words identifies one row
 
