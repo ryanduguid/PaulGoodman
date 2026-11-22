@@ -8,6 +8,7 @@
 //! section label (a repeated label in order of appearance, a row without one by
 //! its heading). Titles present in only one build are listed. The comparison covers the derived reading view, not the
 //! authorised text, and is no finding about an amendment's legal effect.
+use crate::pyjson::obj as object;
 use std::collections::{BTreeSet, HashMap};
 
 use super::corpus_paths::{child, register_id, register_id_str};
@@ -177,15 +178,6 @@ fn place(row: &Json) -> Vec<(&'static str, Json)> {
         ("section", field(row, "section").clone()),
         ("heading", field(row, "heading").clone()),
     ]
-}
-
-fn object(pairs: Vec<(&str, Json)>) -> Json {
-    Json::Object(
-        pairs
-            .into_iter()
-            .map(|(k, v)| (crate::pyjson::PyStr::Text(k.to_string()), v))
-            .collect(),
-    )
 }
 
 fn compilation(rows: &[Json]) -> Json {

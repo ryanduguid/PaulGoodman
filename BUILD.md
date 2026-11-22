@@ -10,23 +10,8 @@ different location, use a source checkout there. A completed corpus does not
 carry the builder: its `build/` holds `build-record.json` (see "The build
 record" under "Running the pipeline"), and stages are re-run from a source
 checkout. Corpora finalised before the Rust port carry the Python stage scripts
-in `build/`, and `finalize` refuses to publish beside them.
-
-```bash
-# source checkout
-python -m fadden discover      # -> fadden/titles_all.json, fadden/titles_principal.json
-python -m fadden versions      # -> fadden/acts_resolved.json
-python -m fadden download      # -> ./corpus/epub/*.epub, fadden/manifest_raw.json
-python -m fadden probe13       # -> fadden/probe13.json      (only if download reports no_epub)
-python -m fadden retry13       # -> fadden/retry13_patch.json; patches manifest_raw.json in place
-python -m fadden extract       # -> ./corpus/markdown/**, fadden/manifest_md.json
-python -m fadden pii_scan      # -> fadden/pii_flagged.json   (mandatory; finalize refuses without it)
-python -m fadden pii_scan2     # reads fadden/pii_flagged.json to skip the known titles; reports only, writes nothing
-python -m fadden finalize      # -> ./corpus/sources.json, INDEX.md, README.md, LICENCE-NOTICE.md
-python -m fadden rates         # -> ./corpus/rates/rates.jsonl, RATES.md
-python -m fadden capture_register -- fadden/manifest_md.json --out build/register-capture-20260829
-python -m fadden export_live_evidence_bundles -- build/register-capture-20260829 --out build/live-evidence-20260829
-```
+in `build/`, and `finalize` refuses to publish beside them. The stages and their
+order are under [Running the pipeline](#running-the-pipeline).
 
 ## One-command preset build
 
@@ -477,7 +462,7 @@ and rate metadata are escaped as literal Markdown.
 ## Searching a built corpus
 
 `python -m fadden search` indexes a finished corpus root into one SQLite file and
-answers 4 questions from it. It uses the standard library's `sqlite3` and FTS5 and
+answers 4 questions from it. It uses SQLite FTS5 and
 makes no request.
 
 ```bash
@@ -1013,7 +998,8 @@ From an empty checkout, run the stages in order. Stage names are unchanged;
 the dispatcher lives at `python -m fadden <stage>`. Intermediate JSON files
 are written beside the stage modules under `fadden/`.
 
-The `as_at`, `authorities`, `compare_builds`, `discover`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles`, `extract`, `finalize`, `pii_scan`, `pii_scan2`, `probe13`, `rates`, `rulings`, `search` and `versions` stages are the Rust `fadden` binary, built
+Every stage except `download`, `retry13`, `check_current`, `capture_register`,
+`export_live_evidence_bundles` and `quick` is the Rust `fadden` binary, built
 with `cargo build --locked --release`; the dispatcher runs it with the same
 arguments and the binary keeps their command lines, messages and exit
 statuses. `FADDEN_BIN` names another build of it. An exception those Python
@@ -1027,7 +1013,7 @@ python -m fadden probe13       # only if download reports no_epub: probe version
 python -m fadden retry13       # fetch the latest published compilation for those titles -> fadden/retry13_patch.json; patches manifest_raw.json in place
 python -m fadden extract       # convert each EPUB to markdown and per-section JSONL -> ./corpus/markdown/**, fadden/manifest_md.json
 python -m fadden pii_scan      # flag disciplinary-register rows naming private individuals -> fadden/pii_flagged.json
-python -m fadden pii_scan2     # second pass at a lower threshold, plus emails, phones and TFNs
+python -m fadden pii_scan2     # second pass at a lower threshold, plus emails, phones and TFNs; reports only, writes nothing
 python -m fadden finalize      # write the corpus-level index and licence files -> ./corpus/sources.json, INDEX.md, README.md, LICENCE-NOTICE.md
 python -m fadden rates         # derive the rates-and-thresholds index -> ./corpus/rates/rates.jsonl, RATES.md
 python -m fadden check_current # read-only staleness check against the Register
@@ -1086,20 +1072,14 @@ its status says which of three things happened:
 | `1` | a check failed | fix the distribution; the failed labels are listed |
 | `2` | the checks did not run | fix the verifier or its inputs, then run it again |
 
-The third state is the one that earns its keep. Left alone, a verifier that
-dies on a missing `sources.json` or an unreadable tree exits 1 through
-Python's own traceback path, which is the status it also uses for a real
-finding. Anything unexpected is caught and reported as `VERIFIER ERROR: the
-checks did not run, so this distribution is unverified, not clean`, so an
-operator or a script cannot read a broken gate as a passing one. Only the
-checks themselves can produce a 1.
-
-The three bands have their own fixtures in
-`tests/corpus/test_regressions.py::DistVerifyExitStatusTests`: a clean tree, a
-tree with a title removed, and a tree whose `sources.json` is missing or
-malformed. CI cannot run the verifier itself, because building a distribution
-needs the downloaded corpus, so those fixtures are the whole mechanical
-perimeter for this gate.
+Anything unexpected, such as a missing `sources.json` or an unreadable tree, is
+reported as `VERIFIER ERROR: the checks did not run, so this distribution is
+unverified, not clean`, so an operator or a script cannot read a broken gate as
+a passing one; only the checks themselves can produce a 1.
+`the_exit_status_has_three_bands` in `tests/fadden_dist.rs` covers a clean tree,
+a tree with a title removed and a tree whose `sources.json` is missing or
+malformed; CI cannot run the verifier on a real distribution, which needs the
+downloaded corpus.
 ## Human review before live-evidence publication
 
 `publish-live-evidence.yml` requires a manual dispatch with `authorise-tag`

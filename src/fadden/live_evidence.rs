@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
 use super::capture_register::{
-    self as capture, ROW_FIELDS, capture_message, odata_context, sha256_id,
+    self as capture, ROW_FIELDS, capture_message, odata_context, safe_output_leaf, sha256_id,
 };
 use super::corpus_paths::{self, abspath};
 use super::iso::{self, Zone};
@@ -86,18 +86,12 @@ const CLASS: &str = "fadden.export_live_evidence_bundles.LiveEvidenceBundleError
 
 /// `LiveEvidenceBundleError(message)`.
 pub fn live_error(message: impl Into<String>) -> Exc {
-    Exc::Value {
-        class: CLASS,
-        message: message.into(),
-    }
+    Exc::class_value(CLASS, message)
 }
 
 /// The message of a `LiveEvidenceBundleError`, if `error` is one.
 pub fn live_message(error: &Exc) -> Option<&str> {
-    match error {
-        Exc::Value { class, message } if *class == CLASS => Some(message),
-        _ => None,
-    }
+    error.value_message(CLASS)
 }
 
 type P = Vec<u32>;
@@ -1766,17 +1760,6 @@ fn output_collides_capture(output: &str, capture: &str) -> Result<bool, Exc> {
         return Ok(false);
     }
     Ok(o.len() >= c.len() && o[..c.len()] == c[..])
-}
-
-fn safe_output_leaf(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 100
-        && name.is_ascii()
-        && bytes[0].is_ascii_alphanumeric()
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// `_preflight_output(output)`: whether the one missing parent must be

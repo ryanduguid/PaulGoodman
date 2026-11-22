@@ -134,6 +134,20 @@ pub fn strip(s: &str) -> &str {
     s.trim_matches(is_space)
 }
 
+/// `str.strip()` over code points; a lone surrogate is not space.
+pub fn strip_points(points: &[u32]) -> &[u32] {
+    let space = |cp: u32| char::from_u32(cp).is_some_and(is_space);
+    let start = points
+        .iter()
+        .position(|&cp| !space(cp))
+        .unwrap_or(points.len());
+    let end = points
+        .iter()
+        .rposition(|&cp| !space(cp))
+        .map_or(start, |i| i + 1);
+    &points[start..end]
+}
+
 /// `str.split()` with no separator.
 pub fn split_whitespace(s: &str) -> Vec<&str> {
     s.split(is_space).filter(|part| !part.is_empty()).collect()

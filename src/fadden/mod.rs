@@ -42,6 +42,15 @@ pub mod witness;
 use crate::pyjson::Json;
 use crate::pyos::OsError;
 use crate::pyvalue::type_name;
+use sha2::{Digest, Sha256};
+
+/// `hashlib.sha256(bytes).hexdigest()`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
 
 /// A Python exception a stage raises.
 #[derive(Debug)]
@@ -80,9 +89,22 @@ pub enum Exc {
 
 impl Exc {
     pub fn value(message: impl Into<String>) -> Exc {
+        Exc::class_value("ValueError", message)
+    }
+
+    /// The `ValueError` subclass named `class`.
+    pub fn class_value(class: &'static str, message: impl Into<String>) -> Exc {
         Exc::Value {
-            class: "ValueError",
+            class,
             message: message.into(),
+        }
+    }
+
+    /// The message, if this is the `ValueError` subclass named `class`.
+    pub fn value_message(&self, class: &str) -> Option<&str> {
+        match self {
+            Exc::Value { class: c, message } if *c == class => Some(message),
+            _ => None,
         }
     }
 

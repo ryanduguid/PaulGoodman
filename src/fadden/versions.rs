@@ -16,6 +16,7 @@ use super::discover::quote;
 use super::http::{self, Http};
 use super::{Exc, Run, get, getitem, head, iterate, json_error, probe13};
 use crate::argparse::{Action, Exit, Get, Parser};
+use crate::pyjson::set_field;
 use crate::pyjson::{self, Json, PyStr};
 use crate::pypath;
 use crate::pyvalue::{self, py_str};
@@ -105,16 +106,6 @@ fn batch_rows(payload: &Json, title_ids: &[String]) -> Result<Option<Vec<(String
         }
     }
     Ok((!duplicate && by_id.len() == title_ids.len()).then_some(by_id))
-}
-
-/// `dict(t)` with `field` set: an existing key keeps its place.
-fn set_field(record: &mut Json, field: &str, value: Json) {
-    if let Json::Object(pairs) = record {
-        match pairs.iter_mut().find(|(k, _)| k.as_str() == Some(field)) {
-            Some(pair) => pair.1 = value,
-            None => pairs.push((PyStr::Text(field.into()), value)),
-        }
-    }
 }
 
 /// Titles by register id, in first-seen order.
