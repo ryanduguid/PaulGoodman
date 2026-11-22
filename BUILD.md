@@ -547,15 +547,17 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   and the rows that cite its section, Division or Subdivision. A list such as
   `sections 8-1, 8-5 and 8-10` gives one reference per item and ends at an
   item numbered unlike the first, so `section 8-1 and 2 other provisions`
-  reads only `8-1`. A range such as `sections 8-1 to 8-10` reads only its
+  reads only `8-1`. A title named after the last item binds the whole list, through
+  bare parts and items with their own keyword joined by `and` or `or`, so each of
+  `subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment
+  Act 1936` cites the ITAA 1936; a comma alone does not join a later citation to the
+  list. A range such as `sections 8-1 to 8-10` reads only its
   first item. A Subdivision named by letter alone (`Subdivision B`) is not
   read, because the same letter recurs across Divisions of one title.
 - `define --follow` adds `refers_to` to each definition: the provisions its text
   cites, read and resolved as `refs` reads a row, with the rows each reaches. So the
   GST Act's `taxable supply has the meaning given by sections 9-5, 78-50, 84-5 and
-  105-5` reaches those 4 sections. It has the same limits as `refs`: in
-  `subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment
-  Act 1936`, only `94L` reaches the ITAA 1936.
+  105-5` reaches those 4 sections. It has the same limits as `refs`.
 - `refs --terms` adds `terms`: the defined terms a row marks with an asterisk, each
   with the definitions it reaches. The asterisk marks only where a term starts (ITAA
   1997 s 2-10, GST Act s 3-1), so `refs` takes the longest run of following words, up

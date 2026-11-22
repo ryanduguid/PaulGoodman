@@ -921,6 +921,40 @@ fn citations_name_the_section_and_any_other_instrument() {
 }
 
 #[test]
+fn a_title_named_after_a_list_binds_every_item() {
+    let itaa = Some("Income Tax Assessment Act 1936");
+    assert_eq!(
+        cited(
+            "subsections 6(1) and (4) and 6BA(5) and section 94L of the Income Tax Assessment Act 1936"
+        ),
+        [
+            t("section", "6", itaa),
+            t("section", "6BA", itaa),
+            t("section", "94L", itaa)
+        ]
+    );
+    assert_eq!(
+        cited("paragraphs 8-1(2)(a) and (b) of the ITAA 1997"),
+        [t("section", "8-1", Some("ITAA 1997"))]
+    );
+    let found = search::citations("subsection 6(1) or (2) of the ITAA 1936 applies");
+    assert_eq!(found[0].3, "subsection 6(1) or (2) of the ITAA 1936");
+    assert_eq!(found[0].4, "subsection 6(1) or (2) of the ITAA 1936".len());
+    // A comma alone does not join a later citation to the list.
+    assert_eq!(
+        cited("Subject to section 6, section 7 of the Other Sample Act 2099 applies."),
+        [
+            t("section", "6", None),
+            t("section", "7", Some("Other Sample Act 2099"))
+        ]
+    );
+    assert_eq!(
+        cited("section 5 of this Act and section 6 of the ITAA 1936"),
+        [t("section", "5", None), t("section", "6", Some("ITAA 1936"))]
+    );
+}
+
+#[test]
 fn lists_and_lookalikes_are_read_as_python_read_them() {
     let cases: Vec<(String, Vec<Cited>)> = vec![
         (
