@@ -5,6 +5,7 @@
 //! INDEX.md, LICENCE-NOTICE.md and README.md under the corpus root, copies
 //! the staleness checker there, writes `build/build-record.json` and prints
 //! the totals. Unlike the Python stage it ships no builder sources in build/.
+use crate::pyjson::obj;
 use std::collections::{BTreeSet, HashMap};
 
 use num_bigint::BigInt;
@@ -786,15 +787,6 @@ fn json_key(key: &Json) -> PyStr {
         Json::Str(s) => s.clone(),
         other => PyStr::from_code_points(pyvalue::dumps_line(other, false)),
     }
-}
-
-fn obj(pairs: Vec<(&str, Json)>) -> Json {
-    Json::Object(
-        pairs
-            .into_iter()
-            .map(|(k, v)| (PyStr::Text(k.into()), v))
-            .collect(),
-    )
 }
 
 fn int(n: usize) -> Json {

@@ -9,6 +9,7 @@
 //! observation facts and receives the monitor's reduced baseline and its exact
 //! observation contract, published together under a directory lock, with the
 //! previous pair restored if either replacement fails.
+use crate::pyjson::text_json;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -96,10 +97,6 @@ fn non_empty(value: &Json, field: &str) -> Result<P, Exc> {
             contract_error(format!("{field} must not contain control characters."))
         }
     })
-}
-
-fn text_json(points: P) -> Json {
-    Json::Str(PyStr::from_code_points(points))
 }
 
 /// `_date(value, field, nullable=...)`.

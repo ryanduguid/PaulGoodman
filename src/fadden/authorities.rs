@@ -16,9 +16,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
+use super::sha256_hex as sha256;
 use regex::Regex;
 use rusqlite::Connection;
-use sha2::{Digest, Sha256};
 
 use super::{Exc, Run, search};
 use crate::argparse::{Action, Exit, Get, Parser, Value};
@@ -244,13 +244,6 @@ pub(super) fn write_new(path: &str, text: &str) -> Result<(), Exc> {
         let _ = std::fs::remove_file(&target);
         fail(e)
     })
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 fn parser() -> Parser {

@@ -12,6 +12,7 @@
 //! built in a private sibling of `dist/`, verified with
 //! dist_verify, and only then promoted, the old tree moved aside first and
 //! restored if the promotion fails.
+use super::rates::thousands;
 use std::cell::RefCell;
 
 use super::compilations;
@@ -35,10 +36,6 @@ type P = Vec<u32>;
 
 fn pts(text: &str) -> P {
     text.chars().map(u32::from).collect()
-}
-
-fn thousands(n: usize) -> String {
-    super::rates::thousands(n)
 }
 
 fn exists(path: &str) -> bool {

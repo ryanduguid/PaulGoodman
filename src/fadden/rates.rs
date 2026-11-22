@@ -158,18 +158,6 @@ fn is_space(cp: u32) -> bool {
     char::from_u32(cp).is_some_and(py::is_space)
 }
 
-fn strip(points: &[u32]) -> &[u32] {
-    let start = points
-        .iter()
-        .position(|&cp| !is_space(cp))
-        .unwrap_or(points.len());
-    let end = points
-        .iter()
-        .rposition(|&cp| !is_space(cp))
-        .map_or(start, |i| i + 1);
-    &points[start..end.max(start)]
-}
-
 /// `_consume_digits`: the end of one forward-only decimal token.
 fn consume_digits(text: &[u32], mut index: usize, allow_commas: bool) -> usize {
     let start = index;
@@ -403,7 +391,7 @@ pub fn sentences(text: &[u32]) -> Vec<P> {
     pieces.push(&plain[start..]);
     pieces
         .into_iter()
-        .map(strip)
+        .map(py::strip_points)
         .filter(|s| 15 < s.len() && s.len() < 600)
         .map(<[u32]>::to_vec)
         .collect()

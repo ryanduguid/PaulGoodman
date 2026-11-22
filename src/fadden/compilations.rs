@@ -7,7 +7,7 @@
 //! file digests; its `build/` and `epub/` stay behind, as the root's do.
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest, Sha256};
+use super::sha256_hex as sha256;
 
 use super::corpus_paths::{child, iso_date, register_id, relative};
 use super::dist_verify::{LICENCE_EXCLUDED, entry_kind, expected_title_files, title_tree};
@@ -148,13 +148,6 @@ pub fn digests(directory: &str) -> Result<Json, Exc> {
             .map(|(k, v)| (crate::pyjson::PyStr::Text(k), v))
             .collect(),
     ))
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 /// What the checks found across every dated folder.
