@@ -851,6 +851,34 @@ fn definitions_split_on_their_opening_words() {
 }
 
 #[test]
+fn definitions_read_dictionary_entries_without_a_defining_verb() {
+    let text = "Definitions\n\nadjacent land has the meaning given by subsection 118-120(2).\n\n\
+head company:\n\n- (a) of a *consolidated group—has the meaning given by section 703-15; and\n\n\
+- (b) of a *MEC group—has the meaning given by section 719-75.\n\n\
+IRU is an indefeasible *right to use a telecommunications cable system.\n\n\
+market value has a meaning affected by Subdivision 960-S.\n\n\
+GST inclusive market value of:\n\n- (a) a supply—means its price; and\n\n\
+- (b) an acquisition—means its consideration;\n\nimplementing:\n\n- (c) the agreement.\n\n\
+The same-asset roll-overs are listed in section 112-150.";
+    let found = search::definitions(text);
+    let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(
+        terms,
+        [
+            "adjacent land",
+            "head company",
+            "IRU",
+            "market value",
+            "GST inclusive market value"
+        ]
+    );
+    assert_eq!(found[1].1.split("\n\n").count(), 3);
+    assert!(found[4].1.contains("implementing:"));
+    assert!(found[4].1.ends_with("section 112-150."));
+    assert!(search::definitions("A trust is covered if:\n\n- (a) it is a trust.").is_empty());
+}
+
+#[test]
 fn define_matches_folded_terms_and_prefixes() {
     let c = case();
     let connection = built(&c);
