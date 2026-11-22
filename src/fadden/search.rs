@@ -104,8 +104,9 @@ const IS: &str = r"(?P<term>[^:\n]{1,150}?)\s+(?:is|are)\b";
 const BARE: &str = r"(?P<term>[^:\n(]{1,80}?)(?:,?\s+(?:of|on))?:\Z";
 /// A paragraph ending like this runs on into the next one.
 const RUNS_ON: &str = r"(?:[;,]|\b(?:and|or))\Z";
-/// Opening words of a paragraph that continues an entry rather than starts one.
-const CONTINUES: &str = r"(?i)(?:a|an|the|that|this|those|then|if|where|whether|until|being|less|plus|means|subsection|at|is|are|to|for|both|within|in|except|unless|reduced|exceeds)\b";
+/// Opening words of a paragraph that continues an entry rather than starts one; not
+/// the start of a hyphenated word such as `in-house`.
+const CONTINUES: &str = r"(?i)(?:a|an|the|that|this|those|then|if|where|whether|until|being|less|plus|means|subsection|at|is|are|to|for|both|within|in|except|unless|reduced|exceeds)\b(?![‐‑-])";
 const QUALIFIER: &str = r",\s+(?:in relation to|in respect of|for the purposes of)\b.*\Z";
 const NOT_A_TERM: &str =
     r"(?i)(?:note|example|however|for example|in this|but|and|or|other than)\b";

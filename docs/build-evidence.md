@@ -246,12 +246,12 @@ counted once each; asterisks that reached no definition are counted each time.
 
 | Title | Rows with an asterisk | Every asterisk resolved | Terms resolved | Read as singular | Without qualifier | Asterisks unresolved |
 |---|---:|---:|---:|---:|---:|---:|
-| ITAA 1997 (C2004A05138) | 3,735 | 2,750 | 18,107 | 1,810 | 1,752 | 2,104 |
+| ITAA 1997 (C2004A05138) | 3,735 | 2,761 | 18,123 | 1,810 | 1,752 | 2,075 |
 | GST Act (C2004A00446) | 675 | 565 | 2,991 | 236 | 305 | 163 |
 | TAA 1953 (C1953A00001) | 819 | 691 | 3,037 | 241 | 194 | 223 |
 | Income Tax (Transitional Provisions) Act 1997 (C2004A05128) | 5 | 0 | 0 | 0 | 0 | 9 |
 
-The index holds 3,824 definitions. Before `define` read dictionary entries without a
+The index holds 3,825 definitions. Before `define` read dictionary entries without a
 defining verb (`head company:` before its paragraphs, `IRU is ...`, `market value has
 a meaning affected by ...`), the same snapshot gave 3,678 definitions, and 4,972
 unresolved asterisks in the ITAA 1997 (1,943 rows with every asterisk resolved), 455

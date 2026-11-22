@@ -857,6 +857,8 @@ head company:\n\n- (a) of a *consolidated group—has the meaning given by secti
 - (b) of a *MEC group—has the meaning given by section 719-75.\n\n\
 IRU is an indefeasible *right to use a telecommunications cable system.\n\n\
 market value has a meaning affected by Subdivision 960-S.\n\n\
+personal services business has the meanings given by subsection 87-15(1) and section 87-55.\n\n\
+in-house software is computer software that you acquire.\n\n\
 GST inclusive market value of:\n\n- (a) a supply—means its price; and\n\n\
 - (b) an acquisition—means its consideration;\n\nimplementing:\n\n- (c) the agreement.\n\n\
 The same-asset roll-overs are listed in section 112-150.";
@@ -869,12 +871,14 @@ The same-asset roll-overs are listed in section 112-150.";
             "head company",
             "IRU",
             "market value",
+            "personal services business",
+            "in-house software",
             "GST inclusive market value"
         ]
     );
     assert_eq!(found[1].1.split("\n\n").count(), 3);
-    assert!(found[4].1.contains("implementing:"));
-    assert!(found[4].1.ends_with("section 112-150."));
+    assert!(found[6].1.contains("implementing:"));
+    assert!(found[6].1.ends_with("section 112-150."));
     assert!(search::definitions("A trust is covered if:\n\n- (a) it is a trust.").is_empty());
 }
 
