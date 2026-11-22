@@ -387,7 +387,7 @@ fn decode(raw: &[u8]) -> Option<(String, usize)> {
 }
 
 /// The longest title the stage and `dist` accept: half as long again as the longest
-/// clean title of a run on 22 November 2026 (262 characters, TR 2012/6A1), where a
+/// clean title of a run on 22 November 2026 (265 characters, TR 2012/6A1), where a
 /// title that ran on into the body reached 806.
 pub const MAX_TITLE: usize = 400;
 
