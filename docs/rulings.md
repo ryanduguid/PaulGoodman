@@ -51,7 +51,7 @@ Services Tax Determination`: capture it again, as `dist` does not publish a docu
 whose label differs from its docid's family. Drafts (`COD`, `DTR` and the like) are
 not accepted.
 
-Every run writes `LICENCE-NOTICE.md` with the notice and a non-endorsement statement.
+Every run writes `LICENCE-NOTICE.md` with the notice.
 Keep it with any copy of the rows.
 
 ## Scope and safety
@@ -120,7 +120,7 @@ stage listed 7 targets and refused the `TDP` item. Review the list before a run.
 | `rulings.jsonl` | One row per paragraph (fields below) |
 | `manifest.json` | Run date, targets, per-document record, exclusions and reasons, row count, notice |
 | `raw/<docid>-<digest>.html` | The exact bytes each accepted page returned; the digest of the canonical docid keeps distinct ids from colliding |
-| `LICENCE-NOTICE.md` | Reuse notice and non-endorsement statement |
+| `LICENCE-NOTICE.md` | Reuse notice |
 
 ### `rulings.jsonl` fields
 
@@ -186,10 +186,9 @@ What a published run holds:
 | `dist/rulings/sources.json` | Each run's capture date, document and row counts, the SHA-256 of each of its 3 files and every document left out, by the stage or by `dist` (the manifest's `excluded`) |
 
 The distribution's `LICENCE-NOTICE.md` gains an `ATO rulings` section that quotes the
-notice, gives its address, says the rulings are not covered by CC BY 4.0 and that
-neither the ATO nor the Commonwealth endorses the corpus. `REMOVED.md` gains an
-`ATO rulings left out` table, with a row for each document the stage or `dist` left
-out. Point `AUS_ACCOUNTING_RULINGS_ROOT` at `dist/rulings`. On
+notice, gives its address and says the rulings are not covered by CC BY 4.0.
+`REMOVED.md` gains an `ATO rulings left out` table, with a row for each document the
+stage or `dist` left out. Point `AUS_ACCOUNTING_RULINGS_ROOT` at `dist/rulings`. On
 15 November 2026 `aus-accounting-mcp` 0.9.0 answered from a published run of 2 Taxation
 Rulings and a Class Ruling. It refused a run holding a Law Companion Ruling and a GST
 determination. Version 0.11.0 serves Law Companion Rulings and both family labels
@@ -214,9 +213,12 @@ What is not published:
   describes one taxpayer's affairs, edited by the ATO to protect their privacy, and a
   copy in a released snapshot would not follow any later change the ATO makes to it.
 - **Personal data.** Every kept row's decoded values and every published file go through
-  the corpus patterns again. The contact allowlist is not consulted, even for a run
-  named like a title it approves contacts for, so one match stops `dist`
-  before anything is published. The patterns find a name only beside a registration
+  the corpus patterns again. A JSON file is scanned as its decoded keys and values, less
+  the stage's own counts and SHA-256 digests: a page of 134620 bytes would otherwise read
+  as a 13 phone number. Only an integer under a count's key or a 64-character hex digest
+  under a digest's key is skipped; any other member, a new key included, is scanned.
+  The contact allowlist is not consulted, even for a run named like a title it approves
+  contacts for, so one match stops `dist` before anything is published. The patterns find a name only beside a registration
   number, so a representative named without one is not found; `docs/scope.md` lists the
   patterns' other limits.
 

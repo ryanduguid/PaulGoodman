@@ -136,26 +136,81 @@ fn reason_left_out(document: &Json, rows: &[&Json]) -> Option<String> {
 }
 
 /// Whether `path` names a person beside a registration number or holds a
-/// contact, in the file as written or, for JSON and JSONL, in the decoded values
-/// a JSON escape could hide. The allowlist is not consulted: a run can be named
-/// like a title it approves contacts for.
+/// contact. A JSON or JSONL file whose every value parses with no repeated
+/// member is scanned as its decoded values, which a JSON escape cannot hide
+/// from, less the stage's machine values (`free_text`). Any other file is
+/// scanned as written and in each value that parses. The allowlist is not
+/// consulted: a run can be named like a title it approves contacts for.
 fn private(path: &str, run: &str) -> Result<bool, Exc> {
-    let found = |(pair, contacts): (bool, Vec<pii::Unapproved>)| pair || !contacts.is_empty();
-    if found(pii::privacy_findings_in_file(path, run, &[])?) {
-        return Ok(true);
-    }
     let text = crate::pyio::read_text(path)?;
     let values: Vec<&str> = if path.ends_with(".jsonl") {
-        text.lines().collect()
+        text.lines().filter(|l| !l.trim().is_empty()).collect()
     } else if path.ends_with(".json") {
         vec![text.as_str()]
     } else {
         Vec::new()
     };
-    Ok(values.into_iter().any(|value| {
-        pyjson::loads_standard(value)
-            .is_ok_and(|value| found(pii::privacy_findings_in_row(&value, run, &[])))
-    }))
+    let parsed: Option<Vec<Json>> = values.iter().map(|v| pyjson::loads(v).ok()).collect();
+    if let Some(parsed) = parsed.filter(|p| !p.is_empty()) {
+        // Nothing in the file is left unread, so its values stand for it whole.
+        pii::refuse_controls(&text)?;
+        return Ok(holds_private(&Json::Array(parsed), run));
+    }
+    let (pair, contacts) = pii::privacy_findings_in_file(path, run, &[])?;
+    Ok(pair
+        || !contacts.is_empty()
+        || values.into_iter().any(|value| {
+            pyjson::loads_standard(value).is_ok_and(|value| holds_private(&value, run))
+        }))
+}
+
+/// Whether `value`'s decoded keys and values, less the stage's machine values,
+/// pair a name with a registration number or hold a contact.
+fn holds_private(value: &Json, register_id: &str) -> bool {
+    let (pair, contacts) = pii::privacy_findings_in_row(&free_text(value), register_id, &[]);
+    pair || !contacts.is_empty()
+}
+
+/// Members holding a count the stage made: a page's bytes and paragraphs, a
+/// run's rows and, in `sources.json`, its documents.
+const COUNTS: [&str; 5] = [
+    "bytes",
+    "documents",
+    "paragraphs",
+    "rows",
+    "windows_1252_bytes",
+];
+
+/// Members holding a SHA-256 the stage computed: a page's, a row's page's and,
+/// in `sources.json`, each run file's under its name.
+const DIGESTS: [&str; 2] = ["sha256", "source_sha256"];
+
+/// `value` without the stage's machine values, which no person or page wrote:
+/// an integer under a `COUNTS` key, or a SHA-256 hex digest under a `DIGESTS`
+/// or `RUN_FILES` key. A byte count such as 134620 reads as a 13 phone number.
+/// Both key and type must match; every other member, a new key included, stays.
+fn free_text(value: &Json) -> Json {
+    let machine = |key: Option<&str>, value: &Json| match (key, value) {
+        (Some(key), Json::Int(_)) => COUNTS.contains(&key),
+        (Some(key), Json::Str(_)) => {
+            (DIGESTS.contains(&key) || RUN_FILES.contains(&key))
+                && value.as_str().is_some_and(|hex| {
+                    hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                })
+        }
+        _ => false,
+    };
+    match value {
+        Json::Array(items) => Json::Array(items.iter().map(free_text).collect()),
+        Json::Object(members) => Json::Object(
+            members
+                .iter()
+                .filter(|(key, item)| !machine(key.as_str(), item))
+                .map(|(key, item)| (key.clone(), free_text(item)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 /// Copy each run under the corpus's `rulings/` into `staging`, leaving out and
@@ -279,8 +334,7 @@ fn kept_lines(
         if left_out.contains(docid) {
             continue;
         }
-        let (pair, contacts) = pii::privacy_findings_in_row(row, docid, &[]);
-        if pair || !contacts.is_empty() {
+        if holds_private(row, docid) {
             return Err(Exc::Runtime(format!(
                 "rulings/{name}: {docid} names a private person or holds a contact; \
                  remove the run or capture the document again once it is clean"
@@ -387,12 +441,11 @@ pub fn notice_section(published: &Published) -> String {
          printed the ATO's copyright notice ({COPYRIGHT_NOTICE_URL}) when it was\n\
          captured:\n\n\
          > {NOTICE}\n\n\
-         Neither the ATO nor the Commonwealth endorses this corpus. The rows are not the\n\
-         authorised text, advice or the Commissioner's current view: read each document\n\
-         at its `source_url` before relying on it. Legislation, court judgments, edited\n\
-         versions of private advice and documents whose text carries a copyright notice\n\
-         of its own are left out, and REMOVED.md lists each one. `rulings/sources.json`\n\
-         gives each run's file digests.\n",
+         The rows are not the authorised text, advice or the Commissioner's current view:\n\
+         read each document at its `source_url` before relying on it. Legislation, court\n\
+         judgments, edited versions of private advice and documents whose text carries a\n\
+         copyright notice of its own are left out, and REMOVED.md lists each one.\n\
+         `rulings/sources.json` gives each run's file digests.\n",
         dates.join(", ")
     )
 }

@@ -537,6 +537,16 @@ pub fn privacy_findings_in_file(
     approved: &[Approved],
 ) -> Result<(bool, Vec<Unapproved>), Exc> {
     let text = crate::pyio::read_text(path)?;
+    refuse_controls(&text)?;
+    Ok((
+        has_private_person_registration_pair(&text),
+        unapproved_contact_fingerprints(&text, register_id, approved),
+    ))
+}
+
+/// Refuse, as `UnicodeError`, text carrying C0 or C1 controls other than tab,
+/// line endings and form feed.
+pub fn refuse_controls(text: &str) -> Result<(), Exc> {
     let binary = text.chars().any(|c| {
         let cp = u32::from(c);
         (cp < 32 && !matches!(c, '\t' | '\n' | '\r' | '\x0c')) || (127..=159).contains(&cp)
@@ -547,8 +557,5 @@ pub fn privacy_findings_in_file(
             message: "redistributed file contains binary control bytes".into(),
         });
     }
-    Ok((
-        has_private_person_registration_pair(&text),
-        unapproved_contact_fingerprints(&text, register_id, approved),
-    ))
+    Ok(())
 }

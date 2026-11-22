@@ -902,8 +902,7 @@ pub fn licence_notice() -> String {
          notice ({COPYRIGHT_NOTICE_URL}):\n\n\
          > {NOTICE}\n\n\
          Copyright in the source documents remains with the Australian Taxation Office for \
-         the Commonwealth of Australia. Neither the ATO nor the Commonwealth endorses this \
-         corpus. The rows are not the authorised text; read the source document at its \
+         the Commonwealth of Australia. The rows are not the authorised text; read the source document at its \
          source_url before relying on it. An edited version of private advice cannot be \
          relied on by anyone.\n"
     )

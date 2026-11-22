@@ -3174,7 +3174,6 @@ fn a_rulings_run_is_published_with_its_notice_digests_and_checks() {
         "## ATO rulings",
         rulings::NOTICE,
         "https://www.ato.gov.au/about-ato/using-our-website/copyright-notice",
-        "Neither the ATO nor the Commonwealth endorses this corpus.",
     ] {
         assert!(notice.contains(&flat(needed)), "{needed}");
     }
@@ -3463,6 +3462,95 @@ fn no_allowlist_entry_approves_a_contact_in_a_ruling() {
         status(&out, "no rulings file names people or contacts"),
         "FAIL"
     );
+}
+
+/// Publishes a run of `page` and verifies it, returning its published manifest's
+/// one document.
+fn published_document(page: String) -> Value {
+    let f = fixture();
+    rulings_run(&f, vec![(RULING, page)]);
+    let dist = publish(&f);
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        status(&out, "no rulings file names people or contacts"),
+        "PASS"
+    );
+    let manifest = dist.join("rulings").join(RUN).join("manifest.json");
+    read_json(&manifest)["documents"][0].clone()
+}
+
+#[test]
+fn a_page_whose_byte_count_reads_as_a_13_number_is_published() {
+    // 134620 matches the 13 xx xx phone pattern.
+    let base = ruling_page(RULING, "<!---->").len();
+    let page = ruling_page(RULING, &format!("<!--{}-->", "x".repeat(134_620 - base)));
+    assert_eq!(published_document(page)["bytes"], 134_620);
+}
+
+#[test]
+fn a_page_whose_digest_holds_a_13_number_is_published() {
+    // A digest is hex: a 13 then 4 digits between letters reads as a phone number.
+    let run = regex::Regex::new(r"(?:^|[a-f])13[0-9]{4}(?:[a-f]|$)").unwrap();
+    let hex = |page: &String| -> String {
+        Sha256::digest(page.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let page = (0..)
+        .map(|n| ruling_page(RULING, &format!("<!-- {n} -->")))
+        .find(|page| run.is_match(&hex(page)))
+        .unwrap();
+    let document = published_document(page.clone());
+    assert_eq!(document["sha256"], hex(&page));
+}
+
+#[test]
+fn text_and_unknown_keys_in_a_manifest_are_still_scanned() {
+    type Change = fn(&mut Value);
+    let cases: [(&str, Change); 5] = [
+        ("phone", |d| d["document_type"] = json!("Call 13 46 20.")),
+        ("email", |d| {
+            d["document_type"] = json!("Write to alice@example.org.")
+        }),
+        ("person", |d| {
+            d["document_type"] = json!("Ruling for Jane Citizen, registration 12345678");
+        }),
+        ("unknown key", |d| d["page_count"] = json!(134_620)),
+        ("count key holding text", |d| d["bytes"] = json!("13 46 20")),
+    ];
+    let change = |path: &Path, change: Change| {
+        let mut manifest = read_json(path);
+        change(&mut manifest["documents"][0]);
+        std::fs::write(path, manifest.to_string()).unwrap();
+    };
+    for (label, case) in cases {
+        let f = fixture();
+        let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+        let manifest = source.join("manifest.json");
+        let original = std::fs::read(&manifest).unwrap();
+        change(&manifest, case);
+        let (code, _, err) = stage(&f, "dist");
+        assert_eq!(code, 1, "{label}: {err}");
+        assert!(
+            err.contains("manifest.json names a private person"),
+            "{label}: {err}"
+        );
+        assert!(!f.dist().exists(), "{label}");
+
+        std::fs::write(&manifest, original).unwrap();
+        let dist = publish(&f);
+        change(&dist.join("rulings").join(RUN).join("manifest.json"), case);
+        relist(&dist);
+        let (code, out) = verify(&f);
+        assert_eq!(code, 1, "{label}: {out}");
+        assert_eq!(
+            status(&out, "no rulings file names people or contacts"),
+            "FAIL",
+            "{label}"
+        );
+    }
 }
 
 /// A run folder name the rulings reader refuses, such as one ending in a line
