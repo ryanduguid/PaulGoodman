@@ -137,10 +137,11 @@ fn reason_left_out(document: &Json, rows: &[&Json]) -> Option<String> {
 
 /// Whether `path` names a person beside a registration number or holds a
 /// contact. A JSON or JSONL file whose every value parses with no repeated
-/// member is scanned as its decoded values, which a JSON escape cannot hide
-/// from, less the stage's machine values (`free_text`). Any other file is
-/// scanned as written and in each value that parses. The allowlist is not
-/// consulted: a run can be named like a title it approves contacts for.
+/// member and nothing after it is scanned as its decoded values, which a JSON
+/// escape cannot hide from, less the stage's machine values (`free_text`). Any
+/// other file is scanned as written and in each value that parses. The
+/// allowlist is not consulted: a run can be named like a title it approves
+/// contacts for.
 fn private(path: &str, run: &str) -> Result<bool, Exc> {
     let text = crate::pyio::read_text(path)?;
     let values: Vec<&str> = if path.ends_with(".jsonl") {
@@ -150,7 +151,11 @@ fn private(path: &str, run: &str) -> Result<bool, Exc> {
     } else {
         Vec::new()
     };
-    let parsed: Option<Vec<Json>> = values.iter().map(|v| pyjson::loads(v).ok()).collect();
+    let file = pypath::split(path).1;
+    let parsed: Option<Vec<Json>> = values
+        .iter()
+        .map(|v| pyjson::loads(v).ok().map(|v| free_text(&v, &file)))
+        .collect();
     if let Some(parsed) = parsed.filter(|p| !p.is_empty()) {
         // Nothing in the file is left unread, so its values stand for it whole.
         pii::refuse_controls(&text)?;
@@ -164,53 +169,83 @@ fn private(path: &str, run: &str) -> Result<bool, Exc> {
         }))
 }
 
-/// Whether `value`'s decoded keys and values, less the stage's machine values,
-/// pair a name with a registration number or hold a contact.
+/// Whether `value`'s decoded keys and values pair a name with a registration
+/// number or hold a contact.
 fn holds_private(value: &Json, register_id: &str) -> bool {
-    let (pair, contacts) = pii::privacy_findings_in_row(&free_text(value), register_id, &[]);
+    let (pair, contacts) = pii::privacy_findings_in_row(value, register_id, &[]);
     pair || !contacts.is_empty()
 }
 
-/// Members holding a count the stage made: a page's bytes and paragraphs, a
-/// run's rows and, in `sources.json`, its documents.
-const COUNTS: [&str; 5] = [
-    "bytes",
-    "documents",
-    "paragraphs",
-    "rows",
-    "windows_1252_bytes",
-];
+/// A machine value the stage or `dist` writes: a count or a SHA-256 hex digest.
+#[derive(Clone, Copy)]
+enum Machine {
+    Count,
+    Digest,
+}
 
-/// Members holding a SHA-256 the stage computed: a page's, a row's page's and,
-/// in `sources.json`, each run file's under its name.
-const DIGESTS: [&str; 2] = ["sha256", "source_sha256"];
-
-/// `value` without the stage's machine values, which no person or page wrote:
-/// an integer under a `COUNTS` key, or a SHA-256 hex digest under a `DIGESTS`
-/// or `RUN_FILES` key. A byte count such as 134620 reads as a 13 phone number.
-/// Both key and type must match; every other member, a new key included, stays.
-fn free_text(value: &Json) -> Json {
-    let machine = |key: Option<&str>, value: &Json| match (key, value) {
-        (Some(key), Json::Int(_)) => COUNTS.contains(&key),
-        (Some(key), Json::Str(_)) => {
-            (DIGESTS.contains(&key) || RUN_FILES.contains(&key))
-                && value.as_str().is_some_and(|hex| {
-                    hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-                })
+impl Machine {
+    fn holds(self, value: &Json) -> bool {
+        match (self, value) {
+            (Machine::Count, Json::Int(_)) => true,
+            (Machine::Digest, Json::Str(_)) => value.as_str().is_some_and(|hex| {
+                hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            }),
+            _ => false,
         }
-        _ => false,
-    };
-    match value {
-        Json::Array(items) => Json::Array(items.iter().map(free_text).collect()),
-        Json::Object(members) => Json::Object(
-            members
-                .iter()
-                .filter(|(key, item)| !machine(key.as_str(), item))
-                .map(|(key, item)| (key.clone(), free_text(item)))
-                .collect(),
-        ),
-        other => other.clone(),
     }
+}
+
+/// Where each published file holds a machine value, as member paths from one
+/// of its values (`*` is each item of an array): as `rulings::run` writes a
+/// manifest and its rows, `leave_out` recounts `rows` and `listing_entry`
+/// writes a `sources.json` run.
+fn machine_paths(file: &str) -> &'static [(&'static [&'static str], Machine)] {
+    use Machine::{Count, Digest};
+    match file {
+        "manifest.json" => &[
+            (&["rows"], Count),
+            (&["documents", "*", "bytes"], Count),
+            (&["documents", "*", "paragraphs"], Count),
+            (&["documents", "*", "windows_1252_bytes"], Count),
+            (&["documents", "*", "sha256"], Digest),
+        ],
+        "rulings.jsonl" => &[(&["source_sha256"], Digest)],
+        "sources.json" => &[
+            (&["runs", "*", "documents"], Count),
+            (&["runs", "*", "rows"], Count),
+            (&["runs", "*", "files", "LICENCE-NOTICE.md"], Digest),
+            (&["runs", "*", "files", "manifest.json"], Digest),
+            (&["runs", "*", "files", "rulings.jsonl"], Digest),
+        ],
+        _ => &[],
+    }
+}
+
+/// A value of `file` without the machine values at `machine_paths`, which no
+/// person or page wrote: a byte count such as 134620 reads as a 13 phone
+/// number. Only a value of the right type at one of those paths goes; every
+/// other member, a new or nested one included, stays and is scanned.
+fn free_text(value: &Json, file: &str) -> Json {
+    fn strip(value: &mut Json, path: &[&str], kind: Machine) {
+        match (value, path) {
+            (Json::Array(items), ["*", rest @ ..]) => {
+                items.iter_mut().for_each(|item| strip(item, rest, kind));
+            }
+            (Json::Object(members), [key]) => {
+                members.retain(|(k, v)| k.as_str() != Some(*key) || !kind.holds(v));
+            }
+            (Json::Object(members), [key, rest @ ..]) => members
+                .iter_mut()
+                .filter(|(k, _)| k.as_str() == Some(*key))
+                .for_each(|(_, v)| strip(v, rest, kind)),
+            _ => {}
+        }
+    }
+    let mut value = value.clone();
+    for (path, kind) in machine_paths(file) {
+        strip(&mut value, path, *kind);
+    }
+    value
 }
 
 /// Copy each run under the corpus's `rulings/` into `staging`, leaving out and
@@ -334,7 +369,7 @@ fn kept_lines(
         if left_out.contains(docid) {
             continue;
         }
-        if holds_private(row, docid) {
+        if holds_private(&free_text(row, "rulings.jsonl"), docid) {
             return Err(Exc::Runtime(format!(
                 "rulings/{name}: {docid} names a private person or holds a contact; \
                  remove the run or capture the document again once it is clean"
@@ -469,4 +504,132 @@ pub fn removed_lines(published: &Published) -> Vec<String> {
 fn removed_line(run: &str, docid: &str, reason: &str) -> String {
     let cell = |value: &str| value.replace('|', r"\|").replace(['\r', '\n'], " ");
     format!("| {run} | {} | {} |", cell(docid), cell(reason))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `private` as it was before it skipped machine values: the file as
+    /// written, then each value decoded.
+    fn whole_text(path: &str) -> bool {
+        let found = |(pair, contacts): (bool, Vec<pii::Unapproved>)| pair || !contacts.is_empty();
+        let text = crate::pyio::read_text(path).unwrap();
+        let values: Vec<&str> = if path.ends_with(".jsonl") {
+            text.lines().collect()
+        } else {
+            vec![text.as_str()]
+        };
+        found(pii::privacy_findings_in_file(path, "run", &[]).unwrap())
+            || values.into_iter().any(|value| {
+                pyjson::loads_standard(value)
+                    .is_ok_and(|value| found(pii::privacy_findings_in_row(&value, "run", &[])))
+            })
+    }
+
+    /// The decoded scan finds everything the whole-text scan found, contacts
+    /// split across members or rows included, except a machine value where
+    /// the stage writes one.
+    #[test]
+    fn the_decoded_scan_misses_only_machine_values() {
+        let hex = "a134620baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let cases = [
+            // (file, text, whether a machine value is all that matches)
+            (
+                "manifest.json",
+                r#"{"a": "Call 13 46 20."}"#.to_string(),
+                false,
+            ),
+            (
+                "manifest.json",
+                r#"{"a": "Call 13 46", "b": "20"}"#.into(),
+                false,
+            ),
+            ("manifest.json", r#"{"a":"13","b":"4620"}"#.into(), false),
+            ("manifest.json", r#"{"a": 13, "b": 4620}"#.into(), false),
+            ("manifest.json", "[13,46,20]".into(), false),
+            ("manifest.json", "[1300, 123, 456]".into(), false),
+            ("manifest.json", r#"["0412","345","678"]"#.into(), false),
+            (
+                "manifest.json",
+                r#"{"a": "alice@", "b": "example.org"}"#.into(),
+                false,
+            ),
+            (
+                "manifest.json",
+                r#"{"alice": "@example.org"}"#.into(),
+                false,
+            ),
+            ("manifest.json", r#"{"TFN": "123 456 782"}"#.into(), false),
+            // A backslash (code point 92) then `u0020`: JSON's escape for a space.
+            (
+                "manifest.json",
+                format!(r#"{{"a": "Call 13{}u002046 20"}}"#, char::from(92u8)),
+                false,
+            ),
+            (
+                "rulings.jsonl",
+                "{\"text\": \"Call 13 46\"}\n{\"text\": \"20 today\"}\n".into(),
+                false,
+            ),
+            (
+                "rulings.jsonl",
+                "{\"n\": 1346}\n{\"n\": 20}\n".into(),
+                false,
+            ),
+            (
+                "rulings.jsonl",
+                "{\"a\": \"13 46\"}\r{\"b\": \"20\"}\n".into(),
+                false,
+            ),
+            (
+                "rulings.jsonl",
+                "{\"a\": \"Jane Citizen\"}\n{\"b\": \"12345678\"}\n".into(),
+                false,
+            ),
+            ("manifest.json", r#"{"rows": 134620}"#.into(), true),
+            (
+                "manifest.json",
+                format!(r#"{{"documents": [{{"bytes": 134620, "sha256": "{hex}"}}]}}"#),
+                true,
+            ),
+            (
+                "rulings.jsonl",
+                format!("{{\"source_sha256\": \"{hex}\"}}\n"),
+                true,
+            ),
+            (
+                "sources.json",
+                format!(
+                    r#"{{"runs": [{{"rows": 134620, "files": {{"manifest.json": "{hex}"}}}}]}}"#
+                ),
+                true,
+            ),
+            (
+                "manifest.json",
+                r#"{"metadata": {"bytes": 134620}}"#.into(),
+                false,
+            ),
+            (
+                "manifest.json",
+                format!(r#"{{"manifest.json": "{hex}"}}"#),
+                false,
+            ),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        for (n, (file, text, machine)) in cases.iter().enumerate() {
+            let folder = dir.path().join(n.to_string());
+            std::fs::create_dir(&folder).unwrap();
+            let path = folder.join(file);
+            std::fs::write(&path, text).unwrap();
+            let path = path.to_str().unwrap();
+            let (before, now) = (whole_text(path), private(path, "run").unwrap());
+            eprintln!("{file} {text:?}: whole text {before}, decoded {now}");
+            if *machine {
+                assert!(before && !now, "{text}");
+            } else {
+                assert!(!before || now, "{text}");
+            }
+        }
+    }
 }

@@ -213,10 +213,12 @@ What is not published:
   describes one taxpayer's affairs, edited by the ATO to protect their privacy, and a
   copy in a released snapshot would not follow any later change the ATO makes to it.
 - **Personal data.** Every kept row's decoded values and every published file go through
-  the corpus patterns again. A JSON file is scanned as its decoded keys and values, less
-  the stage's own counts and SHA-256 digests: a page of 134620 bytes would otherwise read
-  as a 13 phone number. Only an integer under a count's key or a 64-character hex digest
-  under a digest's key is skipped; any other member, a new key included, is scanned.
+  the corpus patterns again. A JSON file that parses whole, with no repeated member, is
+  scanned as its decoded keys and values, less the stage's own counts and SHA-256
+  digests: a page of 134620 bytes would otherwise read as a 13 phone number. Only an
+  integer or a 64-character hex digest at the member where the stage or `dist` writes
+  one is skipped; any other member, a new or nested one included, is scanned, and a file
+  that does not parse is scanned as written.
   The contact allowlist is not consulted, even for a run named like a title it approves
   contacts for, so one match stops `dist` before anything is published. The patterns find a name only beside a registration
   number, so a representative named without one is not found; `docs/scope.md` lists the

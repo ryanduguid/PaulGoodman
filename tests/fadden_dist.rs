@@ -3070,7 +3070,12 @@ fn rulings_run(f: &Fixture, pages: Vec<(&str, String)>) -> PathBuf {
 
 /// The rulings stage's run of `pages` under the fixture's `rulings/<name>/`.
 fn rulings_run_named(f: &Fixture, name: &str, pages: Vec<(&str, String)>) -> PathBuf {
-    let out = f.root.join("rulings").join(name);
+    rulings_run_at(&f.root.join("rulings").join(name), pages)
+}
+
+/// The rulings stage's run of `pages` at `out`.
+fn rulings_run_at(out: &Path, pages: Vec<(&str, String)>) -> PathBuf {
+    let out = out.to_path_buf();
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     let targets: Vec<String> = pages.iter().map(|(d, _)| d.to_string()).collect();
     let mut http = Pages(pages.into_iter().map(|(d, p)| (d.into(), p)).collect());
@@ -3087,10 +3092,22 @@ fn rulings_run_named(f: &Fixture, name: &str, pages: Vec<(&str, String)>) -> Pat
 }
 
 fn sha256_hex(path: &Path) -> String {
-    Sha256::digest(std::fs::read(path).unwrap())
+    sha256_of(&std::fs::read(path).unwrap())
+}
+
+fn sha256_of(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// Whether a hex digest holds a 13 then 4 digits between letters, which reads
+/// as a phone number.
+fn holds_13_number(hex: &str) -> bool {
+    regex::Regex::new(r"(?:^|[a-f])13[0-9]{4}(?:[a-f]|$)")
+        .unwrap()
+        .is_match(hex)
 }
 
 /// Rewrite `rulings/sources.json`'s digests for a run edited after `dist`.
@@ -3490,26 +3507,121 @@ fn a_page_whose_byte_count_reads_as_a_13_number_is_published() {
 
 #[test]
 fn a_page_whose_digest_holds_a_13_number_is_published() {
-    // A digest is hex: a 13 then 4 digits between letters reads as a phone number.
-    let run = regex::Regex::new(r"(?:^|[a-f])13[0-9]{4}(?:[a-f]|$)").unwrap();
-    let hex = |page: &String| -> String {
-        Sha256::digest(page.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
-    };
     let page = (0..)
         .map(|n| ruling_page(RULING, &format!("<!-- {n} -->")))
-        .find(|page| run.is_match(&hex(page)))
+        .find(|page| holds_13_number(&sha256_of(page.as_bytes())))
         .unwrap();
     let document = published_document(page.clone());
-    assert_eq!(document["sha256"], hex(&page));
+    assert_eq!(document["sha256"], sha256_of(page.as_bytes()));
+}
+
+#[test]
+fn a_run_file_whose_digest_holds_a_13_number_is_published() {
+    // `dist` publishes the run's rows byte for byte, so their digest is known first.
+    let scratch = tempfile::tempdir().unwrap();
+    let page = (0..)
+        .map(|n| ruling_page(RULING, &format!("<!-- {n} -->")))
+        .enumerate()
+        .find(|(n, page)| {
+            let out = rulings_run_at(
+                &scratch.path().join(n.to_string()),
+                vec![(RULING, page.clone())],
+            );
+            holds_13_number(&sha256_hex(&out.join("rulings.jsonl")))
+        })
+        .unwrap()
+        .1;
+    let f = fixture();
+    rulings_run(&f, vec![(RULING, page)]);
+    let dist = publish(&f);
+    let listing = read_json(&dist.join("rulings").join("sources.json"));
+    let digest = listing["runs"][0]["files"]["rulings.jsonl"]
+        .as_str()
+        .unwrap();
+    assert!(holds_13_number(digest), "{digest}");
+    let (code, out) = verify(&f);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        status(&out, "no rulings file names people or contacts"),
+        "PASS"
+    );
+}
+
+/// The 2 ways a JSON file can hold text its decoded value does not: an earlier
+/// value of a repeated member, and anything after the value.
+const HIDDEN: [&str; 2] = ["repeated member", "trailing content"];
+
+/// Hide a contact in `path`, a run's rows or manifest, as `how` says.
+fn hide_contact(path: &Path, how: &str) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let rows = path.ends_with("rulings.jsonl");
+    let hidden = match (how, rows) {
+        ("repeated member", true) => text.replacen(
+            "\"text\": \"",
+            "\"text\": \"Call 13 46 20.\", \"text\": \"",
+            1,
+        ),
+        ("repeated member", false) => text.replacen(
+            "\"document_type\": \"",
+            "\"document_type\": \"Call 13 46 20.\", \"document_type\": \"",
+            1,
+        ),
+        (_, true) => text.replacen("}\n", "} \"Call 13 46 20.\"\n", 1),
+        (_, false) => format!("{text}\"Call 13 46 20.\"\n"),
+    };
+    assert_ne!(hidden, text, "{how}");
+    std::fs::write(path, hidden).unwrap();
+}
+
+#[test]
+fn a_contact_in_a_repeated_member_or_after_the_json_is_refused() {
+    for how in HIDDEN {
+        for file in ["rulings.jsonl", "manifest.json"] {
+            let f = fixture();
+            let source = rulings_run(&f, vec![(RULING, ruling_page(RULING, ""))]);
+            let original = std::fs::read(source.join(file)).unwrap();
+            hide_contact(&source.join(file), how);
+            let (code, _, err) = stage(&f, "dist");
+            if (how, file) == ("repeated member", "manifest.json") {
+                // `dist` writes the manifest afresh from its decoded value, so
+                // the earlier value is not published.
+                assert_eq!(code, 0, "{err}");
+                let published = f.dist().join("rulings").join(RUN).join(file);
+                let text = std::fs::read_to_string(published).unwrap();
+                assert!(!text.contains("13 46 20"), "{text}");
+                std::fs::remove_dir_all(f.dist()).unwrap();
+            } else {
+                assert_eq!(code, 1, "{how} in {file}: {err}");
+                assert!(!f.dist().exists(), "{how} in {file}");
+            }
+            if (how, file) == ("repeated member", "rulings.jsonl") {
+                assert!(
+                    err.contains("rulings.jsonl names a private person"),
+                    "{err}"
+                );
+            }
+
+            std::fs::write(source.join(file), original).unwrap();
+            let dist = publish(&f);
+            hide_contact(&dist.join("rulings").join(RUN).join(file), how);
+            relist(&dist);
+            let (code, out) = verify(&f);
+            assert_eq!(code, 1, "{how} in {file}: {out}");
+            assert_eq!(
+                status(&out, "no rulings file names people or contacts"),
+                "FAIL",
+                "{how} in {file}"
+            );
+        }
+    }
 }
 
 #[test]
 fn text_and_unknown_keys_in_a_manifest_are_still_scanned() {
     type Change = fn(&mut Value);
-    let cases: [(&str, Change); 5] = [
+    // Digest-shaped, with a 13 number in it.
+    const HEX: &str = "a134620baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let cases: [(&str, Change); 8] = [
         ("phone", |d| d["document_type"] = json!("Call 13 46 20.")),
         ("email", |d| {
             d["document_type"] = json!("Write to alice@example.org.")
@@ -3519,6 +3631,14 @@ fn text_and_unknown_keys_in_a_manifest_are_still_scanned() {
         }),
         ("unknown key", |d| d["page_count"] = json!(134_620)),
         ("count key holding text", |d| d["bytes"] = json!("13 46 20")),
+        // A count or digest key away from where the stage writes one.
+        ("nested count", |d| {
+            d["metadata"] = json!({"bytes": 134_620})
+        }),
+        ("nested digest", |d| d["metadata"] = json!({"sha256": HEX})),
+        ("run file name outside files", |d| {
+            d["manifest.json"] = json!(HEX)
+        }),
     ];
     let change = |path: &Path, change: Change| {
         let mut manifest = read_json(path);
