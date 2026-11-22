@@ -1513,6 +1513,238 @@ fn json_output_is_one_object_per_line() {
 }
 
 #[test]
+fn define_follow_resolves_a_definition_to_the_provision_it_names() {
+    let c = case();
+    let _connection = built(&c);
+    let dir = c.out.parent().unwrap();
+    let args = ["define", "index.sqlite", "widget", "--title", ACT, "--json"];
+    let (code, out, err) = cli(&args, dir);
+    assert_eq!(code, 0, "{err}");
+    assert!(!out.contains("refers_to"), "{out}");
+    let (code, out, err) = cli(&[&args[..], &["--follow"]].concat(), dir);
+    assert_eq!(code, 0, "{err}");
+    let hit: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    let cited = &hit["refers_to"];
+    assert_eq!(cited.as_array().unwrap().len(), 1, "{out}");
+    assert_eq!(cited[0]["key"], "2-1");
+    assert_eq!(cited[0]["register_id"], ACT);
+    assert_eq!(cited[0]["rows"][0]["row_id"], format!("{ACT}:0002:2{NBH}1"));
+    let (code, out, err) = cli(
+        &[
+            "define",
+            "index.sqlite",
+            "widget",
+            "--title",
+            ACT,
+            "--follow",
+        ],
+        dir,
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains(&format!(
+            "cites section 2-1 (section 2{NBH}1): {ACT}:0002:2{NBH}1"
+        )),
+        "{out}"
+    );
+    // A definition citing nothing lists nothing.
+    let (_, out, _) = cli(
+        &[
+            "define",
+            "index.sqlite",
+            "lodgment",
+            "day",
+            "--follow",
+            "--json",
+        ],
+        dir,
+    );
+    let hit: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    assert_eq!(hit["refers_to"], json!([]));
+}
+
+#[test]
+fn refs_terms_reads_where_each_asterisked_term_ends() {
+    let c = case();
+    let mut titles = sample_titles();
+    let rows = &mut titles.get_mut(ACT).unwrap().1;
+    rows.push(row(
+        ACT,
+        6,
+        Some("6"),
+        "cost base of a widget has the meaning given by section 2\u{2011}1.",
+        "6 Definitions",
+        None,
+    ));
+    rows.push(row(
+        ACT,
+        7,
+        Some("7"),
+        "Each *approved gadgets list, every *widget, the *R&D entity, the *cost base of \
+         the old widget and an *unheard of thing; then a * star and *widget again.",
+        "7 Uses",
+        None,
+    ));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let (terms, unresolved) = search::defined_terms(&connection, &format!("{ACT}:0007:7")).unwrap();
+    let terms = values(terms);
+    let found: Vec<(&str, &str)> = terms
+        .iter()
+        .map(|t| (t["term"].as_str().unwrap(), t["match"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("approved gadgets", "singular"),
+            ("widget", "term"),
+            ("R&D entity", "term"),
+            ("cost base", "without qualifier"),
+        ]
+    );
+    assert_eq!(unresolved, 1);
+    assert_eq!(
+        terms[1]["definitions"][0]["row_id"],
+        format!("{ACT}:0004:4")
+    );
+    assert_eq!(terms[1]["definitions"][0]["term"], "widget");
+    assert_eq!(
+        terms[3]["definitions"][0]["row_id"],
+        format!("{ACT}:0006:6")
+    );
+    let dir = c.out.parent().unwrap();
+    let row_id = format!("{ACT}:0007:7");
+    let (code, out, err) = cli(&["refs", "index.sqlite", &row_id], dir);
+    assert_eq!(code, 0, "{err}");
+    assert!(!out.contains("uses *"), "{out}");
+    let (code, out, err) = cli(&["refs", "index.sqlite", &row_id, "--terms"], dir);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains(&format!(
+            "  uses *widget: defined in {ACT}:0004:4 (4 Definitions)"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("*cost base, matched without its qualifier"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  1 asterisked terms matched no definition"),
+        "{out}"
+    );
+    let (_, out, _) = cli(&["refs", "index.sqlite", &row_id, "--terms", "--json"], dir);
+    let report: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(report["terms"].as_array().unwrap().len(), 4);
+    assert_eq!(report["unresolved_terms"], 1);
+}
+
+#[test]
+fn a_plural_term_prefers_dropping_s_and_says_it_was_read_as_singular() {
+    let c = case();
+    let mut titles = sample_titles();
+    let rows = &mut titles.get_mut(ACT).unwrap().1;
+    rows.push(row(
+        ACT,
+        6,
+        Some("6"),
+        &format!(
+            "rat means a rodent.\n\nrate means a percentage.\n\n\
+             levy has the meaning given by sections 2{NBH}1 and 3{NBH}1."
+        ),
+        "6 Definitions",
+        None,
+    ));
+    rows.push(row(ACT, 7, Some("7"), "The *rates apply.", "7 Rates", None));
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let (terms, _) = search::defined_terms(&connection, &format!("{ACT}:0007:7")).unwrap();
+    let terms = values(terms);
+    assert_eq!(terms[0]["match"], "singular");
+    assert_eq!(terms[0]["definitions"][0]["term"], "rate");
+    // A definition naming a list of sections reaches each of them.
+    let args = ["define", "index.sqlite", "levy", "--follow", "--json"];
+    let (code, out, err) = cli(&args, c.out.parent().unwrap());
+    assert_eq!(code, 0, "{err}");
+    let hit: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    let reached: Vec<&Value> = hit["refers_to"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| &r["rows"][0]["row_id"])
+        .collect();
+    assert_eq!(
+        reached,
+        [
+            &json!(format!("{ACT}:0002:2{NBH}1")),
+            &json!(format!("{ACT}:0003:3{NBH}1"))
+        ]
+    );
+}
+
+#[test]
+fn schedule_1_terms_fall_back_to_the_itaa_1997_dictionary() {
+    const TAA: &str = "C1953A00001";
+    let c = case();
+    let mut titles = Titles::new();
+    titles.insert(
+        ITAA,
+        (
+            "Income Tax Assessment Act 1997",
+            vec![row(
+                ITAA,
+                1,
+                Some(&format!("995{NBH}1")),
+                "In this Act:\n\nentity has the meaning given by section 960\u{2011}100.",
+                &format!("995{NBH}1 Definitions"),
+                None,
+            )],
+        ),
+    );
+    titles.insert(
+        TAA,
+        (
+            "Taxation Administration Act 1953",
+            vec![
+                row(
+                    TAA,
+                    1,
+                    Some(&format!("8{NBH}1")),
+                    "An *entity must keep records.",
+                    "8\u{2011}1 Records",
+                    None,
+                ),
+                row(
+                    TAA,
+                    2,
+                    Some("8AA"),
+                    "An *entity outside Schedule 1.",
+                    "8AA Other",
+                    None,
+                ),
+            ],
+        ),
+    );
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let connection = search::open_index(&s(&c.out)).unwrap();
+    let (terms, unresolved) =
+        search::defined_terms(&connection, &format!("{TAA}:0001:8{NBH}1")).unwrap();
+    let terms = values(terms);
+    assert_eq!(unresolved, 0);
+    assert_eq!(terms[0]["term"], "entity");
+    assert_eq!(terms[0]["definitions"][0]["register_id"], ITAA);
+    // Only Schedule 1 borrows the ITAA 1997's meanings (TAA 1953 s 3AA(2)).
+    let outside = search::defined_terms(&connection, &format!("{TAA}:0002:8AA")).unwrap();
+    assert_eq!(outside, (vec![], 1));
+    // The ITAA 1997 itself does not borrow from the TAA.
+    assert!(search::defined_terms(&connection, &format!("{ITAA}:0001:995{NBH}1")).is_ok());
+    assert!(search::defined_terms(&connection, "C2099A09999:0001:1").is_err());
+}
+
+#[test]
 fn errors_exit_one_without_a_traceback() {
     let c = case();
     std::fs::write(&c.out, b"not sqlite").unwrap();

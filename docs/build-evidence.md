@@ -236,6 +236,28 @@ redistributed legislation.
 | C2004A04633 | 131 | 2026-08-10 | `fd91d6ab97c0990ee4646a22d99401bcbfc584ba4fda0b34e3a86ac494bc9efa` |
 | C1953A00001 | 227 | 2026-10-01 | `3a69ca9cbc7943a8a6a08add19019326551cb26a6eb431b32d2a99b3deb79e6b` |
 
+## Defined terms a provision uses
+
+Measured on 22 November 2026 with `refs --terms --json` on every row holding an
+asterisk in an index of the published `corpus-2026-11-18` snapshot (9 titles, 9,439
+rows, sources.json SHA-256
+`ee30e864fbc1c96bbf61a133204a381390c1d32e410cbfb35da722b4376d644a`). A row's terms are
+counted once each; asterisks that reached no definition are counted each time.
+
+| Title | Rows with an asterisk | Every asterisk resolved | Terms resolved | Read as singular | Without qualifier | Asterisks unresolved |
+|---|---:|---:|---:|---:|---:|---:|
+| ITAA 1997 (C2004A05138) | 3,735 | 1,943 | 16,367 | 1,391 | 2,538 | 4,972 |
+| GST Act (C2004A00446) | 675 | 421 | 2,782 | 222 | 280 | 455 |
+| TAA 1953 (C1953A00001) | 819 | 634 | 2,927 | 218 | 219 | 399 |
+| Income Tax (Transitional Provisions) Act 1997 (C2004A05128) | 5 | 0 | 0 | 0 | 0 | 9 |
+
+Most unresolved asterisks start a term whose dictionary entry `define` does not read,
+such as `market value`, `head company` and `adjustable value`, or a term whose entry
+reads differently (`carry on` beside `carrying on an enterprise`). The transitional Act defines
+none of its asterisked terms itself and is not given a fallback. The counts show where
+an asterisk reached a stored definition, not that the definition is the one the
+provision uses.
+
 ## How often a run of words identifies one row
 
 `cite-check` calls a quotation `distinct` when no other row holds it and it has at least
