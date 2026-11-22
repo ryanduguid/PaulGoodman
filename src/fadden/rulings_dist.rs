@@ -18,7 +18,9 @@ use super::sha256_hex as sha256;
 use super::compilations::names;
 use super::corpus_paths::{child, linked};
 use super::pii;
-use super::rulings::{COPYRIGHT_NOTICE_URL, EDITED_VERSION, NOTICE, family_of, licence_notice};
+use super::rulings::{
+    COPYRIGHT_NOTICE_URL, EDITED_VERSION, NOTICE, family_of, licence_notice, title_fault,
+};
 use super::search::check_rulings_run;
 use super::{Exc, json_error};
 use crate::pyjson::{self, Json, PyStr};
@@ -119,6 +121,10 @@ fn reason_left_out(document: &Json, rows: &[&Json]) -> Option<String> {
         .any(|b| b != "document-notice")
     {
         return Some("its page did not print the ATO's reuse notice".into());
+    }
+    let titles = std::iter::once(document).chain(rows.iter().copied());
+    if let Some(fault) = titles.filter_map(|r| title_fault(text(r, "title"))).next() {
+        return Some(format!("its {fault}; capture it again"));
     }
     let marked = pyre::re(OWN_COPYRIGHT, pyre::I);
     let texts = std::iter::once(text(document, "title")).chain(rows.iter().flat_map(|row| {

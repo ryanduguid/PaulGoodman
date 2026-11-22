@@ -386,6 +386,44 @@ fn decode(raw: &[u8]) -> Option<(String, usize)> {
     Some((text, transcoded))
 }
 
+/// The longest title the stage and `dist` accept: half as long again as the longest
+/// clean title of a run on 22 November 2026 (265 characters, TR 2012/6A1), where a
+/// title that ran on into the body reached 806.
+pub const MAX_TITLE: usize = 400;
+
+/// A page's `DC.Title` as plain text. The Legal Database can leave its own markup
+/// in it (TR 2012/6A1 wraps an Act's name in `<HP1>`) or run it on into the body
+/// (TR 2012/6, through 'Relying on this Ruling'). A title that holds the page's
+/// `DCTERMS.description`, which is the title less its reference, ends where that
+/// description ends; any other title is kept as it is, less markup.
+fn plain_title(title: &str, description: &str) -> String {
+    let title = pyre::re(r"</?[A-Za-z][^<>]*>", 0).sub("", title);
+    let published = pyre::re(r"\(Published on [^()]*\)\s*$", 0);
+    let subject = norm(&published.sub("", description));
+    let flat = norm(&title);
+    match flat.find(&subject) {
+        Some(at) if !subject.is_empty() && at + subject.len() < flat.len() => {
+            flat[..at + subject.len()].to_string()
+        }
+        _ => title,
+    }
+}
+
+/// Why a captured `title` is not a plain title, if it is not: markup left in it,
+/// or a length that means it ran on into the body.
+pub fn title_fault(title: &str) -> Option<String> {
+    if title.contains(['<', '>']) {
+        Some("title holds markup".into())
+    } else if title.chars().count() > MAX_TITLE {
+        Some(format!(
+            "title runs to {} characters, over {MAX_TITLE}",
+            title.chars().count()
+        ))
+    } else {
+        None
+    }
+}
+
 /// `parse_document(raw, docid)`: verify one fetched page and read its paragraphs.
 pub fn parse_document(raw: &[u8], docid: &str) -> Result<Parsed, RulingsError> {
     let (page, windows_1252_bytes) =
@@ -512,9 +550,17 @@ pub fn parse_document(raw: &[u8], docid: &str) -> Result<Parsed, RulingsError> {
         .collect();
     let withdrawal_notice = py::strip(&notice.join(" ")).to_string();
 
+    let title = plain_title(
+        &either("dc.title", "dc_title"),
+        &either("dcterms.description", "dcterms_description"),
+    );
+    if let Some(fault) = title_fault(&title) {
+        return Err(refused(format!("{docid}: {fault}")));
+    }
+
     Ok(Parsed {
         reference,
-        title: either("dc.title", "dc_title"),
+        title,
         document_type: either("dc.type.documenttype", "dc.description"),
         issued: either("dc.date.issued", "dc_date_issued"),
         licence_basis: basis,

@@ -26,6 +26,7 @@ struct Page {
     rights: String,
     body_extra: String,
     reference: Option<String>,
+    head: String,
 }
 
 /// A fabricated page shaped like a Legal Database document.
@@ -43,9 +44,10 @@ fn page_with(p: Page) -> String {
         String::new()
     };
     let extra = p.body_extra;
+    let head = p.head;
     format!(
         r##"<html><head>
-<meta content="{reference}" name="ato.reference.id" />
+{head}<meta content="{reference}" name="ato.reference.id" />
 <meta content="TR 2099/1 - Fabricated ruling for tests" name="DC.Title" />
 <meta content="ATO Ruling" name="dc.Type.documentType" />
 <meta content="2099/01/31" name="dc.Date.Issued" />
@@ -1059,4 +1061,67 @@ fn a_run_with_no_notice_says_nothing_of_withdrawal() {
     let stdout = String::from_utf8(state.stdout).unwrap();
     assert!(!stdout.contains("withdrawal notice"), "{stdout}");
     assert!(!stdout.contains(WITHDRAWAL_WARNING), "{stdout}");
+}
+
+/// A page whose title meta tags are cut from the Legal Database page `docid`.
+fn titled(docid: &str, head: &str) -> Result<Parsed, RulingsError> {
+    let page = page_with(Page {
+        docid: Some(docid.into()),
+        head: head.into(),
+        ..Page::default()
+    });
+    parse(&page, docid)
+}
+
+#[test]
+fn a_title_loses_the_databases_markup() {
+    let head = include_str!("fixtures/rulings-titles/TR20126A1.html");
+    let parsed = titled("TXR/TR20126A1/NAT/ATO/00001", head).unwrap();
+    assert_eq!(
+        parsed.title,
+        "TR 2012/6A1 - Addendum - Income tax: deductibility under subsection 295-465(1) of \
+         the Income Tax Assessment Act 1997 of premiums paid by a complying superannuation \
+         fund for an insurance policy providing Total and Permanent Disability cover in \
+         respect of its members"
+    );
+}
+
+#[test]
+fn a_title_that_runs_on_ends_where_its_description_ends() {
+    let head = include_str!("fixtures/rulings-titles/TR20126.html");
+    let parsed = titled("TXR/TR20126/NAT/ATO/00001", head).unwrap();
+    assert_eq!(
+        parsed.title,
+        "TR 2012/6 - Income tax: deductibility under subsection 295-465(1) of the Income Tax \
+         Assessment Act 1997 of premiums paid by a complying superannuation fund for an \
+         insurance policy providing total and permanent disability cover in respect of its \
+         members"
+    );
+}
+
+#[test]
+fn a_clean_title_is_kept_as_it_is() {
+    let head = include_str!("fixtures/rulings-titles/GSTD20201A1.html");
+    let parsed = titled("GSD/GSTD20201A1/NAT/ATO/00001", head).unwrap();
+    assert_eq!(
+        parsed.title,
+        "GSTD 2020/1A - Addendum - Goods and services tax: when is the supply of a \
+         transaction account GST-free under table item 3 or table item 4(a) of subsection \
+         38-190(1) of the A New Tax System (Goods and Services Tax) Act 1999?"
+    );
+    assert_eq!(
+        parse(&page(), DOCID).unwrap().title,
+        "TR 2099/1 - Fabricated ruling for tests"
+    );
+}
+
+#[test]
+fn a_title_with_markup_or_run_on_length_is_refused() {
+    let markup = r#"<meta content="TR 2099/1 - Fees &lt; 5" name="DC.Title" />"#;
+    refused(titled(DOCID, markup), "title holds markup");
+    let long = format!(
+        r#"<meta content="TR 2099/1 - {}" name="DC.Title" />"#,
+        "x".repeat(rulings::MAX_TITLE)
+    );
+    refused(titled(DOCID, &long), "over 400");
 }
