@@ -12,11 +12,10 @@
 //!
 //! The publication workflow still runs the Python stage; this port is
 //! verified against it before any workflow change.
+use crate::pyjson::{obj, text_json};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::io::{Read, Seek};
-
-use sha2::{Digest, Sha256};
 
 use super::corpus_paths::{self, abspath};
 use super::http::{self, Failure, Http};
@@ -79,18 +78,12 @@ const CLASS: &str = "fadden.capture_register.CaptureRegisterError";
 
 /// `CaptureRegisterError(message)`.
 pub fn capture_error(message: impl Into<String>) -> Exc {
-    Exc::Value {
-        class: CLASS,
-        message: message.into(),
-    }
+    Exc::class_value(CLASS, message)
 }
 
 /// The message of a `CaptureRegisterError`, if `error` is one.
 pub fn capture_message(error: &Exc) -> Option<&str> {
-    match error {
-        Exc::Value { class, message } if *class == CLASS => Some(message),
-        _ => None,
-    }
+    error.value_message(CLASS)
 }
 
 pub fn odata_context() -> String {
@@ -101,19 +94,6 @@ type P = Vec<u32>;
 
 fn pts(text: &str) -> P {
     text.chars().map(u32::from).collect()
-}
-
-fn text_json(points: P) -> Json {
-    Json::Str(PyStr::from_code_points(points))
-}
-
-fn obj(pairs: Vec<(&str, Json)>) -> Json {
-    Json::Object(
-        pairs
-            .into_iter()
-            .map(|(k, v)| (PyStr::Text(k.into()), v))
-            .collect(),
-    )
 }
 
 fn is(value: &Json, text: &str) -> bool {
@@ -133,11 +113,7 @@ fn int(value: &Json) -> Option<i64> {
 }
 
 pub fn sha256_id(content: &[u8]) -> String {
-    let digest: String = Sha256::digest(content)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    format!("sha256:{digest}")
+    format!("sha256:{}", super::sha256_hex(content))
 }
 
 /// `_required_text(value, field)`.
@@ -1826,7 +1802,7 @@ fn require_absent_destination(path: &str) -> Result<(), Exc> {
     }
 }
 
-fn safe_output_leaf(name: &str) -> bool {
+pub(super) fn safe_output_leaf(name: &str) -> bool {
     let bytes = name.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 100
@@ -1834,7 +1810,7 @@ fn safe_output_leaf(name: &str) -> bool {
         && bytes[0].is_ascii_alphanumeric()
         && bytes
             .iter()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(b))
 }
 
 /// `_preflight_output(output, manifest)`: whether the one permitted missing

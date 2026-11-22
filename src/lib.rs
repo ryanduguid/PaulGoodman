@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The PaulGoodman tooling ported from Python.
-//!
-//! Stage 1 ports the change-review radar (`tax-radar-au`). The corpus builder
-//! stages remain in the Python `fadden` package until they are ported.
 pub mod argparse;
 mod argtheme;
 pub mod fadden;

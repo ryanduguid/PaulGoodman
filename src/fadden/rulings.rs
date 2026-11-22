@@ -12,6 +12,8 @@
 //! MAX_TARGETS. The output directory must not exist: every run writes a new one
 //! with the exact bytes each page returned beside their SHA-256. A document
 //! whose text trips the corpus PII patterns is excluded and the run exits 1.
+use crate::py::strip_points;
+use crate::pyjson::obj as object;
 use sha2::{Digest, Sha256};
 
 use super::http::{self, Failure, Http};
@@ -138,22 +140,6 @@ fn canonical(points: &[u32]) -> Vec<u32> {
 
 pub(super) fn canonical_docid(docid: &str) -> Vec<u32> {
     canonical(&points(docid))
-}
-
-fn is_space(cp: u32) -> bool {
-    char::from_u32(cp).is_some_and(py::is_space)
-}
-
-fn strip_points(points: &[u32]) -> &[u32] {
-    let start = points
-        .iter()
-        .position(|&cp| !is_space(cp))
-        .unwrap_or(points.len());
-    let end = points
-        .iter()
-        .rposition(|&cp| !is_space(cp))
-        .map_or(start, |i| i + 1);
-    &points[start..end.max(start)]
 }
 
 fn points(text: &str) -> Vec<u32> {
@@ -719,15 +705,6 @@ pub fn safe_name(docid: &str) -> String {
 
 fn s(text: &str) -> Json {
     Json::str(text)
-}
-
-fn object(pairs: Vec<(&str, Json)>) -> Json {
-    Json::Object(
-        pairs
-            .into_iter()
-            .map(|(k, v)| (PyStr::Text(k.into()), v))
-            .collect(),
-    )
 }
 
 fn int(n: usize) -> Json {
