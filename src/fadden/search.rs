@@ -408,13 +408,7 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usi
                     || (kind == "division" && !format!("{key}{label}").contains(['-', '(']))
             };
             if fits {
-                out.push((
-                    kind.clone(),
-                    key,
-                    act.clone(),
-                    citation.clone(),
-                    end,
-                ));
+                out.push((kind.clone(), key, act.clone(), citation.clone(), end));
             }
         }
     }

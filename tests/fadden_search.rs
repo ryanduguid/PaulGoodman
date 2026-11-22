@@ -950,7 +950,10 @@ fn a_title_named_after_a_list_binds_every_item() {
     );
     assert_eq!(
         cited("section 5 of this Act and section 6 of the ITAA 1936"),
-        [t("section", "5", None), t("section", "6", Some("ITAA 1936"))]
+        [
+            t("section", "5", None),
+            t("section", "6", Some("ITAA 1936"))
+        ]
     );
 }
 
