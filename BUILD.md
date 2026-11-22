@@ -515,10 +515,14 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   modifying it; no automatic migration runs.
 - `define` reads only rows headed Definitions, Definition, Dictionary or
   Interpretation, and only paragraphs that open with `<term> means`, `has the
-  meaning given by`, `has the same meaning as`, `includes`, `does not include`
-  or `<term>:`. It returns every title's definition of the term, or terms that
-  begin with it when none matches exactly. An empty result is not a finding
-  that the term has its ordinary meaning.
+  meaning given by`, `has a meaning affected by`, `has the meanings given by`, `has
+  the same meaning as`, `includes`, `does not include` or `<term>: <text>`. After a
+  paragraph that ends an entry (not one ending in `;`, `,`, `and` or `or`), it also
+  reads `<term> is` or `<term> are`, and a term alone before its paragraphs, such as
+  `head company:` in ITAA 1997 s 995-1, unless the paragraph opens with words such as
+  `the`, `if` or `reduced` that continue an entry. It returns every title's
+  definition of the term, or terms that begin with it when none matches exactly.
+  An empty result is not a finding that the term has its ordinary meaning.
 - `query --as-at DATE` and `define --as-at DATE` answer from a title only when its
   `as_at` status on that date is `captured`. Each other title that matched, or that
   `--title` named, is refused by name with its status, the rows withheld and the next

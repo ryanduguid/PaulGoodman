@@ -95,8 +95,18 @@ legislation or tax advice. Read the authorised compilation on the Register befor
 const DEFINITIONS_HEADING: &str = r"(?i)\b(?:definitions?|dictionary|interpretation)\b";
 const LEAD_IN: &str =
     r"In (?:this|these) [^:,\n]{1,60}(?:, (?:unless|except) [^:,\n]{1,60})?[,:]\s+";
-const VERB: &str = r"(?P<term>[^\n]{1,150}?)\s+(?:means|has the meaning given by|has the same meaning as|has the meaning|includes|does not include)\b";
+const VERB: &str = r"(?P<term>[^\n]{1,150}?)\s+(?:means|has the same meaning as|has (?:the|a) meanings?|includes|does not include)\b";
 const COLON: &str = r"(?P<term>[^:\n(]{1,80}):\s+\S";
+/// Dictionary entries without a defining verb, read only where the paragraph before
+/// ends an entry: `IRU is an ...`, and a term alone before its paragraphs, as in
+/// `head company:` in ITAA 1997 s 995-1 or `GST inclusive market value of:`.
+const IS: &str = r"(?P<term>[^:\n]{1,150}?)\s+(?:is|are)\b";
+const BARE: &str = r"(?P<term>[^:\n(]{1,80}?)(?:,?\s+(?:of|on))?:\Z";
+/// A paragraph ending like this runs on into the next one.
+const RUNS_ON: &str = r"(?:[;,]|\b(?:and|or))\Z";
+/// Opening words of a paragraph that continues an entry rather than starts one; not
+/// the start of a hyphenated word such as `in-house`.
+const CONTINUES: &str = r"(?i)(?:a|an|the|that|this|those|then|if|where|whether|until|being|less|plus|means|subsection|at|is|are|to|for|both|within|in|except|unless|reduced|exceeds)\b(?![‐‑-])";
 const QUALIFIER: &str = r",\s+(?:in relation to|in respect of|for the purposes of)\b.*\Z";
 const NOT_A_TERM: &str =
     r"(?i)(?:note|example|however|for example|in this|but|and|or|other than)\b";
@@ -263,7 +273,7 @@ fn or_empty(value: &Json) -> Json {
     }
 }
 
-fn definition_start(paragraph: &str) -> Option<String> {
+fn definition_start(paragraph: &str, entry_ended: bool) -> Option<String> {
     let lead_in = pyre::re(LEAD_IN, 0);
     let paragraph = match lead_in.search(paragraph) {
         Some(m) => {
@@ -272,9 +282,19 @@ fn definition_start(paragraph: &str) -> Option<String> {
         }
         None => paragraph.to_string(),
     };
-    let found = pyre::re(VERB, 0)
+    let verb = pyre::re(VERB, 0)
         .match_at(&paragraph, 0)
-        .or_else(|| pyre::re(COLON, 0).match_at(&paragraph, 0))?;
+        .or_else(|| pyre::re(COLON, 0).match_at(&paragraph, 0));
+    let unmarked = verb.is_none();
+    let found = verb.or_else(|| {
+        entry_ended
+            .then(|| {
+                pyre::re(IS, 0)
+                    .match_at(&paragraph, 0)
+                    .or_else(|| pyre::re(BARE, 0).match_at(&paragraph, 0))
+            })
+            .flatten()
+    })?;
     let term = found.name("term").expect("term group").as_str();
     let term = pyre::re(QUALIFIER, DOTALL).sub("", term).replace('*', "");
     let term = term
@@ -282,6 +302,7 @@ fn definition_start(paragraph: &str) -> Option<String> {
         .to_string();
     if term.is_empty()
         || pyre::re(NOT_A_TERM, 0).match_at(&term, 0).is_some()
+        || (unmarked && pyre::re(CONTINUES, 0).match_at(&term, 0).is_some())
         || crate::py::split_whitespace(&term).len() > MAX_TERM_WORDS
     {
         return None;
@@ -293,11 +314,14 @@ fn definition_start(paragraph: &str) -> Option<String> {
 pub fn definitions(text: &str) -> Vec<(String, String)> {
     let mut found: Vec<(String, Vec<String>)> = Vec::new();
     let mut current: Option<usize> = None;
+    let mut previous: Option<&str> = None;
     for paragraph in text.split("\n\n") {
         let paragraph = crate::py::strip(paragraph);
         if paragraph.is_empty() {
             continue;
         }
+        let entry_ended = previous.is_some_and(|p| pyre::re(RUNS_ON, 0).search(p).is_none());
+        previous = Some(paragraph);
         if paragraph.starts_with("- ") || paragraph.starts_with('>') {
             if let Some(index) = current {
                 found[index].1.push(paragraph.to_string());
@@ -308,7 +332,7 @@ pub fn definitions(text: &str) -> Vec<(String, String)> {
             current = None;
             continue;
         }
-        match definition_start(paragraph) {
+        match definition_start(paragraph, entry_ended) {
             Some(term) => {
                 found.push((term, vec![paragraph.to_string()]));
                 current = Some(found.len() - 1);
