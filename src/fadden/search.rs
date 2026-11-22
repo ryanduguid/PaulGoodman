@@ -319,8 +319,7 @@ pub fn definitions(text: &str) -> Vec<(String, String)> {
         if paragraph.is_empty() {
             continue;
         }
-        let entry_ended =
-            previous.is_some_and(|p| pyre::re(RUNS_ON, 0).search(p).is_none());
+        let entry_ended = previous.is_some_and(|p| pyre::re(RUNS_ON, 0).search(p).is_none());
         previous = Some(paragraph);
         if paragraph.starts_with("- ") || paragraph.starts_with('>') {
             if let Some(index) = current {
