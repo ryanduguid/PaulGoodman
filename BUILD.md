@@ -544,7 +544,9 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   one is numbered unlike the first, so in `section 23AI or section 768-5 of the ITAA
   1997` only `768-5` cites the ITAA 1997. Text alone cannot tell a list from 2
   clauses joined by a bare `and` or `or`, so `section 6 and section 7 of the X Act`
-  is read as one list. A range such as `sections 8-1 to 8-10` reads only its first
+  is read as one list. On the `corpus-2026-11-18` snapshot this case does not
+  occur: all 111 citations whose attribution changed (187 references) were read,
+  and none binds an item of the citing title to another. A range such as `sections 8-1 to 8-10` reads only its first
   item. A Subdivision named by letter alone (`Subdivision B`) is not read, because
   the same letter recurs across Divisions of one title.
 - `define --follow` adds `refers_to` to each definition: the provisions its text
