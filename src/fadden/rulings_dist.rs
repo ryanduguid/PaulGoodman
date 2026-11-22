@@ -510,126 +510,92 @@ fn removed_line(run: &str, docid: &str, reason: &str) -> String {
 mod tests {
     use super::*;
 
-    /// `private` as it was before it skipped machine values: the file as
-    /// written, then each value decoded.
-    fn whole_text(path: &str) -> bool {
+    /// Contacts split across members, rows or a lone carriage return, digits
+    /// beside each other across a member boundary, controls that hold a
+    /// contact, and count or digest keys away from where the stage writes them
+    /// (`HEX` is a digest holding a 13 number, `ESC` a backslash).
+    const SCANNED: [(&str, &str); 18] = [
+        ("manifest.json", r#"{"a": "Call 13 46 20."}"#),
+        ("manifest.json", r#"{"a": "Call 13 46", "b": "20"}"#),
+        ("manifest.json", r#"{"a":"13","b":"4620"}"#),
+        ("manifest.json", r#"{"a": 13, "b": 4620}"#),
+        ("manifest.json", "[13,46,20]"),
+        ("manifest.json", "[1300, 123, 456]"),
+        ("manifest.json", r#"["0412","345","678"]"#),
+        ("manifest.json", r#"{"a": "alice@", "b": "example.org"}"#),
+        ("manifest.json", r#"{"alice": "@example.org"}"#),
+        ("manifest.json", r#"{"TFN": "123 456 782"}"#),
+        ("manifest.json", r#"{"a": "Call 13ESCu002046 20"}"#),
+        (
+            "rulings.jsonl",
+            "{\"text\": \"Call 13 46\"}\n{\"text\": \"20 today\"}\n",
+        ),
+        ("rulings.jsonl", "{\"n\": 1346}\n{\"n\": 20}\n"),
+        ("rulings.jsonl", "{\"a\": \"13 46\"}\r{\"b\": \"20\"}\n"),
+        (
+            "rulings.jsonl",
+            "{\"a\": \"Jane Citizen\"}\n{\"b\": \"12345678\"}\n",
+        ),
+        ("manifest.json", r#"{"metadata": {"bytes": 134620}}"#),
+        ("manifest.json", r#"{"manifest.json": "HEX"}"#),
+        (
+            "rulings.jsonl",
+            "{\"documents\": [{\"sha256\": \"HEX\"}]}\n",
+        ),
+    ];
+
+    /// A machine value where the stage or `dist` writes one, and nothing else.
+    const MACHINE: [(&str, &str); 4] = [
+        ("manifest.json", r#"{"rows": 134620}"#),
+        (
+            "manifest.json",
+            r#"{"documents": [{"bytes": 134620, "sha256": "HEX"}]}"#,
+        ),
+        ("rulings.jsonl", "{\"source_sha256\": \"HEX\"}\n"),
+        (
+            "sources.json",
+            r#"{"runs": [{"rows": 134620, "files": {"manifest.json": "HEX"}}]}"#,
+        ),
+    ];
+
+    /// `private` as it was before it skipped machine values, the file as
+    /// written then each value decoded, and `private` now, over `text`.
+    fn both_scans(dir: &std::path::Path, file: &str, text: &str) -> (bool, bool) {
         let found = |(pair, contacts): (bool, Vec<pii::Unapproved>)| pair || !contacts.is_empty();
-        let text = crate::pyio::read_text(path).unwrap();
-        let values: Vec<&str> = if path.ends_with(".jsonl") {
+        let hex = "a134620baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let text = text
+            .replace("HEX", hex)
+            .replace("ESC", &char::from(92u8).to_string());
+        let folder = tempfile::tempdir_in(dir).unwrap().keep();
+        let path = folder.join(file);
+        std::fs::write(&path, &text).unwrap();
+        let path = path.to_str().unwrap();
+        let values: Vec<&str> = if file.ends_with(".jsonl") {
             text.lines().collect()
         } else {
             vec![text.as_str()]
         };
-        found(pii::privacy_findings_in_file(path, "run", &[]).unwrap())
+        let before = found(pii::privacy_findings_in_file(path, "run", &[]).unwrap())
             || values.into_iter().any(|value| {
                 pyjson::loads_standard(value)
                     .is_ok_and(|value| found(pii::privacy_findings_in_row(&value, "run", &[])))
-            })
+            });
+        let now = private(path, "run").unwrap();
+        eprintln!("{file} {text:?}: whole text {before}, decoded {now}");
+        (before, now)
     }
 
-    /// The decoded scan finds everything the whole-text scan found, contacts
-    /// split across members or rows included, except a machine value where
-    /// the stage writes one.
+    /// The decoded scan finds everything the whole-text scan found, except a
+    /// machine value where the stage writes one.
     #[test]
     fn the_decoded_scan_misses_only_machine_values() {
-        let hex = "a134620baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let cases = [
-            // (file, text, whether a machine value is all that matches)
-            (
-                "manifest.json",
-                r#"{"a": "Call 13 46 20."}"#.to_string(),
-                false,
-            ),
-            (
-                "manifest.json",
-                r#"{"a": "Call 13 46", "b": "20"}"#.into(),
-                false,
-            ),
-            ("manifest.json", r#"{"a":"13","b":"4620"}"#.into(), false),
-            ("manifest.json", r#"{"a": 13, "b": 4620}"#.into(), false),
-            ("manifest.json", "[13,46,20]".into(), false),
-            ("manifest.json", "[1300, 123, 456]".into(), false),
-            ("manifest.json", r#"["0412","345","678"]"#.into(), false),
-            (
-                "manifest.json",
-                r#"{"a": "alice@", "b": "example.org"}"#.into(),
-                false,
-            ),
-            (
-                "manifest.json",
-                r#"{"alice": "@example.org"}"#.into(),
-                false,
-            ),
-            ("manifest.json", r#"{"TFN": "123 456 782"}"#.into(), false),
-            // A backslash (code point 92) then `u0020`: JSON's escape for a space.
-            (
-                "manifest.json",
-                format!(r#"{{"a": "Call 13{}u002046 20"}}"#, char::from(92u8)),
-                false,
-            ),
-            (
-                "rulings.jsonl",
-                "{\"text\": \"Call 13 46\"}\n{\"text\": \"20 today\"}\n".into(),
-                false,
-            ),
-            (
-                "rulings.jsonl",
-                "{\"n\": 1346}\n{\"n\": 20}\n".into(),
-                false,
-            ),
-            (
-                "rulings.jsonl",
-                "{\"a\": \"13 46\"}\r{\"b\": \"20\"}\n".into(),
-                false,
-            ),
-            (
-                "rulings.jsonl",
-                "{\"a\": \"Jane Citizen\"}\n{\"b\": \"12345678\"}\n".into(),
-                false,
-            ),
-            ("manifest.json", r#"{"rows": 134620}"#.into(), true),
-            (
-                "manifest.json",
-                format!(r#"{{"documents": [{{"bytes": 134620, "sha256": "{hex}"}}]}}"#),
-                true,
-            ),
-            (
-                "rulings.jsonl",
-                format!("{{\"source_sha256\": \"{hex}\"}}\n"),
-                true,
-            ),
-            (
-                "sources.json",
-                format!(
-                    r#"{{"runs": [{{"rows": 134620, "files": {{"manifest.json": "{hex}"}}}}]}}"#
-                ),
-                true,
-            ),
-            (
-                "manifest.json",
-                r#"{"metadata": {"bytes": 134620}}"#.into(),
-                false,
-            ),
-            (
-                "manifest.json",
-                format!(r#"{{"manifest.json": "{hex}"}}"#),
-                false,
-            ),
-        ];
         let dir = tempfile::tempdir().unwrap();
-        for (n, (file, text, machine)) in cases.iter().enumerate() {
-            let folder = dir.path().join(n.to_string());
-            std::fs::create_dir(&folder).unwrap();
-            let path = folder.join(file);
-            std::fs::write(&path, text).unwrap();
-            let path = path.to_str().unwrap();
-            let (before, now) = (whole_text(path), private(path, "run").unwrap());
-            eprintln!("{file} {text:?}: whole text {before}, decoded {now}");
-            if *machine {
-                assert!(before && !now, "{text}");
-            } else {
-                assert!(!before || now, "{text}");
-            }
+        for (file, text) in SCANNED {
+            let (before, now) = both_scans(dir.path(), file, text);
+            assert!(!before || now, "{text}");
+        }
+        for (file, text) in MACHINE {
+            assert_eq!(both_scans(dir.path(), file, text), (true, false), "{text}");
         }
     }
 }
