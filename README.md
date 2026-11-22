@@ -166,7 +166,7 @@ Live Register capture, synthetic observations and publication candidates have di
 
 The primary source is the [Federal Register of Legislation](https://www.legislation.gov.au/). The repository contains code, not the corpus; generated output retains its own source and licence records.
 
-Data: legislation text in generated output, including a corpus snapshot attached to a release, is licensed by the Federal Register of Legislation under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), not under this repository's licence. The Commonwealth Coat of Arms and third-party material are excluded. Reuse it with the Register's attribution, which each row and the snapshot's `LICENCE-NOTICE.md` carry, and without implying the Register's endorsement. [RELEASING.md](RELEASING.md) sets when a snapshot may be released.
+Data: legislation text in generated output, including a corpus snapshot attached to a release, is licensed by the Federal Register of Legislation under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), not under this repository's licence. The Commonwealth Coat of Arms and third-party material are excluded. Reuse it with the Register's attribution, which each row and the snapshot's `LICENCE-NOTICE.md` carry. [RELEASING.md](RELEASING.md) sets when a snapshot may be released.
 
 Ryan Duguid's original code is licensed under the [Apache License, Version 2.0](LICENSE). When redistributing it or a derivative, preserve the applicable attribution notices in [NOTICE](NOTICE) as required by section 4(d). Versions released before this change keep the licence they were released with. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
 

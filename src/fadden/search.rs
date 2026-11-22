@@ -3574,7 +3574,7 @@ fn execute_refs(
 }
 
 const RULINGS_NOTICE: &str = "Ruling paragraphs come from the ATO Legal Database under the ATO \
-copyright notice, kept in this index; neither the ATO nor the Commonwealth endorses it. A ruling \
+copyright notice, kept in this index. A ruling \
 listed cited this provision in the capture shown. Without a captured withdrawal notice its status \
 is unknown, not current: check the ruling and its period on the live Legal Database before \
 reliance. A citation naming no Act is not read.";
