@@ -229,13 +229,62 @@ the full corpus and every other generated tree stay out of releases.
 Each source class the builder reads has one row. A new source class needs its
 row, checked at the source, before any stage reads it. The Register terms, at
 <https://www.legislation.gov.au/terms-of-use>, and the copyright notice on ATO
-Legal Database pages were read on 2 November 2026.
+Legal Database pages were read on 2 November 2026; the Queensland Legislation
+copyright page on 24 November 2026.
 
-| Question | Federal Register of Legislation (Acts, legislative and notifiable instruments) | ATO Legal Database (`rulings` stage) |
-| --- | --- | --- |
-| What does it publish? | As-made versions and compilations, each with an authorised PDF and an EPUB reading view; the compilations `witness` samples also have a Word rendition, in 1 or more volumes | ATO-authored rulings, determinations, guidelines, practice statements, decision impact statements and edited private advice, as HTML pages; legislation and judgments in the same database are refused |
-| What authority does the copy have? | None: authorised versions are the PDFs stamped under sections 15ZA and 15ZB of the *Legislation Act 2003*, and the corpus derives from the EPUB | None: a row is a finding aid, not the published document or the Commissioner's current view; read it at `source_url` |
-| How is it retrieved? | The Register API with ordered paging and title keyword selection, then the download endpoint (raw EPUB bytes or a base64 JSON envelope); see [architecture](architecture.md). `witness` reads Word volumes an operator fetches from the API's `documents` entity and keeps only their section identifiers; see BUILD.md | Named docids only, at most 100 a run, one request a second, HTML only, final URL on `https://www.ato.gov.au`; `rulings_targets` may read one Legal Database RSS feed (XML) to write that list and keeps only its docids; see [rulings](rulings.md) |
-| May the text be republished? | Yes under CC BY 4.0, except the Commonwealth Coat of Arms and material otherwise noted, with the Register's attribution wording, which `extract` and `finalize` write. The `dist` stage drops the EPUBs, the 12 titles naming private individuals and the 5 accounting standards under their own notices (above) | Yes under the ATO copyright notice; the stage accepts a page only when it shows the notice or links to it, and writes `LICENCE-NOTICE.md` |
-| May the metadata be republished? | Yes, under the same CC BY 4.0 grant as the text | Rows carry the docid, title, source URL and page hash under the same notice; keep `LICENCE-NOTICE.md` with them |
-| How are superseded versions handled? | Each row carries `compilation_date`, `superseded_from` and `retrieved`; a title with no published compilation for the version in force is marked `version_is_current: false`; `as_at` classifies titles against a date; live capture records repeal as `NO_LONGER_IN_FORCE` | `withdrawal_status` is `NOTICE_PRESENT` only when a Notice of Withdrawal was extracted, otherwise `UNKNOWN`; neither value establishes that a ruling is current |
+| Question | Federal Register of Legislation (Acts, legislative and notifiable instruments) | ATO Legal Database (`rulings` stage) | Queensland Legislation (revenue Acts and regulations only) |
+| --- | --- | --- | --- |
+| What does it publish? | As-made versions and compilations, each with an authorised PDF and an EPUB reading view; the compilations `witness` samples also have a Word rendition, in 1 or more volumes | ATO-authored rulings, determinations, guidelines, practice statements, decision impact statements and edited private advice, as HTML pages; legislation and judgments in the same database are refused | In-force reprints of Queensland Acts and subordinate legislation, each as HTML, PDF and whole-title XML under the register's own ids (`act-2001-071`, `sl-2023-0104`) |
+| What authority does the copy have? | None: authorised versions are the PDFs stamped under sections 15ZA and 15ZB of the *Legislation Act 2003*, and the corpus derives from the EPUB | None: a row is a finding aid, not the published document or the Commissioner's current view; read it at `source_url` | None: the XML carries the register's disclaimer and is not an authorised version; read the title on the register |
+| How is it retrieved? | The Register API with ordered paging and title keyword selection, then the download endpoint (raw EPUB bytes or a base64 JSON envelope); see [architecture](architecture.md). `witness` reads Word volumes an operator fetches from the API's `documents` entity and keeps only their section identifiers; see BUILD.md | Named docids only, at most 100 a run, one request a second, HTML only, final URL on `https://www.ato.gov.au`; `rulings_targets` may read one Legal Database RSS feed (XML) to write that list and keeps only its docids; see [rulings](rulings.md) | No stage reads it yet. Intake is limited to named titles: the Duties, Land Tax and Payroll Tax Acts and their regulations, and the First Home Owner Grant and Other Home Owner Grants Act 2000 (the register's in-force list held no regulation under it on 24 November 2026), each as whole-title XML from `https://www.legislation.qld.gov.au/view/whole/xml/inforce/current/<id>`, one request at a time with a pause between them; the general robots.txt rules do not disallow that path (they disallow `/admin/`, `/view/pdf/` and the compare views) |
+| May the text be republished? | Yes under CC BY 4.0, except the Commonwealth Coat of Arms and material otherwise noted, with the Register's attribution wording, which `extract` and `finalize` write. The `dist` stage drops the EPUBs, the 12 titles naming private individuals and the 5 accounting standards under their own notices (above) | Yes under the ATO copyright notice; the stage accepts a page only when it shows the notice or links to it, and writes `LICENCE-NOTICE.md` | Yes under CC BY 4.0, except the coat of arms, logos, trade marks, third-party material and material under other specified licences, keeping the copyright notice, linking the licence and using the register's changed-content attribution wording with the date of download, which NOTICE records |
+| May the metadata be republished? | Yes, under the same CC BY 4.0 grant as the text | Rows carry the docid, title, source URL and page hash under the same notice; keep `LICENCE-NOTICE.md` with them | Yes, under the same CC BY 4.0 grant |
+| How are superseded versions handled? | Each row carries `compilation_date`, `superseded_from` and `retrieved`; a title with no published compilation for the version in force is marked `version_is_current: false`; `as_at` classifies titles against a date; live capture records repeal as `NO_LONGER_IN_FORCE` | `withdrawal_status` is `NOTICE_PRESENT` only when a Notice of Withdrawal was extracted, otherwise `UNKNOWN`; neither value establishes that a ruling is current | Each title carries the reprint's `publication.date` and `first.valid.date`; only the current in-force reprint is read |
+
+### State and territory registers
+
+No stage reads a state or territory register except as its column above
+records. Each register's own copyright or terms page was read on 24 November
+2026, with its robots.txt. A register is read only where its terms allow a
+derived corpus to be republished with attribution and it serves a stable
+machine-readable form; any other reading is the maintainer's decision, not a
+builder default. CC BY 4.0 permits commercial use wherever it applies.
+
+| Register | Terms | Copying, redistribution in a derived corpus, commercial use | Attribution | Machine access | Reading |
+| --- | --- | --- | --- | --- | --- |
+| NSW | <https://legislation.nsw.gov.au/copyright> | Not read | Not read | Requests for robots.txt and this page answered with a Cloudflare challenge page (HTTP 403, `cf-mitigated: challenge`), also after a change of network exit | `unread` |
+| Vic | <https://www.legislation.vic.gov.au/copyright> | Authorised versions are published for personal use only; no reproduction except under the *Copyright Act 1968*, so no permission to republish a derived corpus | None offered; enquiries to the Office of the Chief Parliamentary Counsel | robots.txt: `Crawl-delay: 2`, document files under `/sites/default/files/` disallowed | `allowed for personal or internal use only` |
+| Qld | <https://www.legislation.qld.gov.au/copyright> | Yes, CC BY 4.0 'for any purpose, even commercially'; coat of arms, logos, trade marks, third-party material and material under other specified licences excluded | Keep the copyright notice; changed content: 'Based on content from the Queensland Legislation website at [full date of download]. For the latest information on Queensland Government legislation please go to https://www.legislation.qld.gov.au.' | robots.txt disallows `/admin/`, `/view/pdf/` and the compare views for every crawler and the whole site for some named crawlers, sets no delay and lists a sitemap and a crawler feed; whole-title XML at `/view/whole/xml/inforce/current/<id>` | `allowed with attribution` |
+| WA | <https://www.legislation.wa.gov.au/legislation/statutes.nsf/copyright.html> | Yes, CC BY 4.0 'for any purpose, even commercially'; coat of arms, crests, logos and emblems, trade marks, material not owned by the State, material no longer in copyright, the Government Gazette and website design and branding excluded | Keep the copyright notice; changed content: 'Based on content from the Western Australian Legislation website at [full date of download]. For the latest information on Western Australian legislation, visit www.legislation.wa.gov.au.' | robots.txt absent (HTTP 404); machine-readable form not checked | `allowed with attribution` |
+| SA | <https://www.legislation.sa.gov.au/copyright> | Yes, CC BY 4.0 'including for commercial purposes'; Piping Shrike, Royal Arms, other State emblems and material protected by a trade mark or subject to review by the State excluded; no material is in the separate 'Excluded Content' category today | Keep the copyright notice; changed content: 'Based on content from the South Australian Legislation website at [full date of download]. For the latest information on South Australian Government legislation, please go to www.legislation.sa.gov.au/.', plus the disclaimer that the copy is not published under the *Legislation Revision and Publication Act 2002* | robots.txt: `Crawl-delay: 10`, `/search` disallowed; machine-readable form not checked | `allowed with attribution` |
+| Tas | <https://www.legislation.tas.gov.au/copyrightanddisclaimer> | Yes, CC BY 4.0 'for any purpose, even commercially'; coat of arms, logos, trade marks, third-party material and material under other specified licences excluded | Keep the copyright notice; changed material: 'Based on material from the Tasmanian Legislation website at [full date of download]. For the latest information on Tasmanian Government legislation please go to www.legislation.tas.gov.au.' | robots.txt disallows `/admin/` only and lists a sitemap and a crawler feed; whole-title XML at `/view/whole/xml/inforce/current/<id>` | `allowed with attribution` |
+| ACT | <https://www.legislation.act.gov.au/Static/Footerlinks/Copyright/copyright.html>, which defers to <https://www.justice.act.gov.au/copyright> | The policy grants CC BY 4.0 over 'content on this website', the Directorate's own site; whether that reaches the Register is not stated | '© Australian Capital Territory', a licence link and a statement of changes | robots.txt: `Crawl-delay: 10`; `/results`, `/View/`, `/Scripts/`, `/Content/`, `/Subscription/`, `/Redirect/`, `/LegViewer/` and `/html/` disallowed | `unclear` |
+| NT | <https://legislation.nt.gov.au/en/Footer/Terms-of-Use> | A permission to publish or deal with legislation, on conditions: not presented as an official version, no Territory arms, accurately reproduced in a context that does not mislead; revocable on reasonable notice, generally or for named publishers or legislation. It is not a licence with attribution, so none of the readings fits it exactly | None required | robots.txt blocks 2 named site-audit crawlers only | `unclear` |
+
+The operative sentence of each:
+
+- NSW: none read.
+- Vic: 'Authorised electronic versions are published on this website under
+  section 62 of the Interpretation of Legislation Act 1984 for personal use
+  only.' and 'No part may be reproduced by any process except in accordance
+  with the provisions of the Copyright Act 1968 of the Commonwealth.'
+- Qld: 'Unless otherwise noted, all copyright material available on or through
+  this website is licensed under a Creative Commons Attribution 4.0
+  International licence (CC BY 4.0).'
+- WA: 'With certain exceptions (listed below), the State of Western Australia's
+  copyright material available on this website (Licensed Material) is licensed
+  under a Creative Commons Attribution 4.0 International Licence (CC BY 4.0).'
+- SA: '... the SA Content of this Website is licensed under the Creative Commons
+  Attribution 4.0 International Licence (CC BY 4.0)'.
+- Tas: 'Unless otherwise noted, all material provided on this website is
+  licensed under a Creative Commons Attribution 4.0 International licence (CC
+  BY 4.0).'
+- ACT: 'Use of material on the ACT Legislation Register should be in accordance
+  with the JACS Copyright Policy developed by the Justice and Community Safety
+  Directorate.' The policy says 'Unless stated otherwise, the copyright of
+  content on this website is owned by the Australian Capital Territory (ACT)
+  and licensed under a Creative Commons Attribution 4.0 licence.'
+- NT: 'The Northern Territory grants permission to any person to publish or
+  deal with any legislation of the Northern Territory in accordance with the
+  following conditions' and 'The Northern Territory reserves the right to
+  revoke, vary or withdraw its permission on reasonable notice'.

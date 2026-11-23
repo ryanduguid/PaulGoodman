@@ -14,6 +14,19 @@ content: "Based on content from the Federal Register of Legislation at [full
 date of download]. For the latest information on Australian Government
 legislation please go to https://www.legislation.gov.au."
 
+The State of Queensland licenses the legislation on the Queensland Legislation
+website under Creative Commons Attribution 4.0 International
+(https://creativecommons.org/licenses/by/4.0/). Copyright notice: (c) The State
+of Queensland (Office of the Queensland Parliamentary Counsel). The coat of
+arms, government logos, trade marks, third-party material and material under
+other specified licences are excluded. Text this builder derives from it, in
+test fixtures or a corpus snapshot, is changed content: it is split into
+section rows and reformatted, and carries the attribution "Based on content
+from the Queensland Legislation website at [full date of download]. For the
+latest information on Queensland Government legislation please go to
+https://www.legislation.qld.gov.au.", with the date filled in from each
+title's retrieval.
+
 src/pyunicode.rs holds character tables generated from the Unicode Character
 Database as distributed with CPython 3.15.0 (Unicode 17.0.0), under the
 Unicode License v3.
