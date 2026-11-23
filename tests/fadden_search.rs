@@ -1020,6 +1020,29 @@ fn a_title_named_after_a_list_binds_every_item() {
             t("section", "7", Some("Other Sample Act 2099"))
         ]
     );
+    // A singular or modal verb after the title makes the last item a clause's subject;
+    // a plural verb keeps the list whole.
+    for sentence in [
+        "It applies to section 6 and section 7 of the Other Sample Act 2099 applies.",
+        "It applies to section 6 or section 7 of the Other Sample Act 2099 does not.",
+        "It applies to section 6 and section 7 of the Other Sample Act 2099 may apply.",
+    ] {
+        assert_eq!(
+            cited(sentence),
+            [
+                t("section", "6", None),
+                t("section", "7", Some("Other Sample Act 2099"))
+            ],
+            "{sentence}"
+        );
+    }
+    assert_eq!(
+        cited("section 6 and section 7 of the Other Sample Act 2099 do not apply."),
+        [
+            t("section", "6", Some("Other Sample Act 2099")),
+            t("section", "7", Some("Other Sample Act 2099"))
+        ]
+    );
     // Items numbered unlike the first belong to different titles.
     assert_eq!(
         cited("section 23AI or section 768-5 of the ITAA 1997"),
