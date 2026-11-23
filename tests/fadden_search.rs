@@ -882,6 +882,39 @@ The same-asset roll-overs are listed in section 112-150.";
     assert!(search::definitions("A trust is covered if:\n\n- (a) it is a trust.").is_empty());
 }
 
+/// Entries from the corpus-2026-11-18 snapshot (ITAA 1997 s 995-1, ITAA 1936 s 6)
+/// whose term and qualifier run past 15 words.
+#[test]
+fn definitions_read_long_qualified_terms() {
+    let debit = format!(
+        "debit value, of a *superannuation interest that supports an income stream that is, \
+         or was at any time, a *capped defined benefit income stream, has the meaning given by \
+         section 294{NBH}145."
+    );
+    let trustee = "trustee in addition to every person appointed or constituted trustee by act \
+                   of parties, by order, or declaration of a court, or by operation of law, includes:";
+    let text = format!(
+        "Definitions\n\n{debit}\n\nexternal indirect equity or loan interest in a *subsidiary \
+         member of a *consolidated group or *MEC group has the meaning given by section \
+         715{NBH}610 or 719{NBH}775.\n\n{trustee}\n\n- (a) an executor or administrator."
+    );
+    let found = search::definitions(&text);
+    let words: Vec<usize> = found
+        .iter()
+        .map(|(term, _)| term.split_whitespace().count())
+        .collect();
+    assert_eq!(words, [24, 17, 26]);
+    assert!(
+        found[0]
+            .0
+            .starts_with("debit value, of a superannuation interest")
+    );
+    assert!(found[2].1.ends_with("an executor or administrator."));
+    // A longer run before a defining verb is a sentence, not a term.
+    let sentence = format!("{} means nothing.", ["w"; 31].join(" "));
+    assert!(search::definitions(&sentence).is_empty());
+}
+
 #[test]
 fn define_matches_folded_terms_and_prefixes() {
     let c = case();

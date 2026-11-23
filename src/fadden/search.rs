@@ -109,7 +109,7 @@ const CONTINUES: &str = r"(?i)(?:a|an|the|that|this|those|then|if|where|whether|
 const QUALIFIER: &str = r",\s+(?:in relation to|in respect of|for the purposes of)\b.*\Z";
 const NOT_A_TERM: &str =
     r"(?i)(?:note|example|however|for example|in this|but|and|or|other than)\b";
-const MAX_TERM_WORDS: usize = 15;
+const MAX_TERM_WORDS: usize = 30;
 
 const SECTION_RE: &str = r"\d+[A-Z]{0,4}(?:[-‐‑]\d+[A-Z]{0,4})?";
 const YEAR: &str = r"(?:18|19|20)\d{2}\b";
