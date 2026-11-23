@@ -65,7 +65,8 @@ README, LICENSE file, releases and default-branch commit list, and
 australia-instruments' `corpus.json`, read on 4 November 2026; the
 ChangkeunJ/australian-law-mcp row is from the same sources, read on 13 November
 2026, and the chldbwnstm/australian-law-mcp row from its README, licence and
-latest release, read on 17 November 2026. None was installed or run.
+latest release, read on 17 November 2026, as were the legal-rag-evaluation and
+australian-legal-engine rows' READMEs and GitHub metadata. None was installed or run.
 
 | Project | What it is | Where it differs from this builder |
 | --- | --- | --- |
@@ -79,13 +80,25 @@ latest release, read on 17 November 2026. None was installed or run.
 | [chldbwnstm/australian-law-mcp](https://github.com/chldbwnstm/australian-law-mcp) (MIT, release v1.0.6 of 16 September 2026, last commit [`2724b47`](https://github.com/chldbwnstm/australian-law-mcp/tree/2724b47) on 19 September 2026) | An MCP server, also released as a Claude desktop extension (`au-law-mcp-1.0.6.mcpb` with a `SHA256SUMS.txt`), that reads public sources live: Commonwealth legislation as it stood on a chosen date, judgments, tribunal decisions, ATO rulings (TR, TD, GSTR and PCG from the ATO Legal Database), treaties and explanatory material, with citation checks. No API key for its core tools; no npm package, so clients other than the desktop app register it from a checkout | Every answer is fetched live, across every Commonwealth title and date and sources this builder does not hold (judgments, tribunals, treaties, some state law), with no local corpus. This builder keeps a local tax selection whose rows carry their compilation, `rulings` captures named rulings by paragraph with source digests, and `quick --in-force-on` holds the 9 preset Acts' compilations in force on chosen dates. Its README grades its own sources; nothing here tested its answers |
 | [lexifina/australia-law](https://github.com/lexifina/australia-law) (legislation text CC BY 4.0, last commit [`bcfb2fa`](https://github.com/lexifina/australia-law/tree/bcfb2fa4f29eb67416ac853841abe46d6f06855d) dated 29 October 2026) | Commonwealth Acts as an offline git history: the Constitution, every Act in force and the repealed principal Acts with a registered compilation, one file per provision and one commit per amending Act on each day it took effect, credited to that Act. Its README calls the record partial: 1,230 of the 5,338 titles it will hold | Acts of every subject and no legislative instruments. `git log` and `git blame` give each provision's history across compilations, which this builder's per-build rows do not. Commits are dated to the day a change took effect, and its README says hashes and tags change between rebuilds. Its LICENSE says its scripts and documentation 'are provided for Lexifina's use' |
 | [drfinlaymccall/australia-instruments](https://github.com/drfinlaymccall/australia-instruments) (text CC BY 4.0, code Apache-2.0, last commit [`226581e`](https://github.com/drfinlaymccall/australia-instruments/tree/226581eddb7be682a980e5fdd61458ac1f72d565) on 2 November 2026) | A named list of Commonwealth legislative instruments on foreign investment screening, merger notification and takeovers, as an offline git history with one commit per amending instrument on the day it took effect, and a local stdio MCP server that reads the clone without network calls | Built for M&A diligence. Its `corpus.json` lists 5 instruments: the Foreign Acquisitions and Takeovers Regulation 2015, 2 merger notification determinations, an ASIC takeover bids instrument and the Corporations Regulations 2001, none of which this corpus holds. It records each provision's history across compilations and compares every compilation word for word with the Register's Word document; this builder keeps each title's compilation in force at build time as section rows and checks only section identifiers against the Word rendition, for a fixed sample of titles (`witness`) |
+| [Danielkgr/legal-rag-evaluation](https://github.com/Danielkgr/legal-rag-evaluation) (MIT, v0.2.0) | Hybrid retrieval and cited answers over Australian Acts, with a recorded run on 2 Acts; it ships no documents, so the user supplies the PDFs | It generates answers and matches by meaning. This builder generates no answer: it ships a Register-built snapshot and matches English word forms, not meanings |
+| [auraofintelligence/australian-legal-engine](https://github.com/auraofintelligence/australian-legal-engine) (non-commercial source licence) | An offline engine that quotes provisions exactly; it does no fetching of its own and ships code, not law, and is demonstrated on a 2012 collection | It holds no law. This builder fetches in-force compilations from the Register and publishes a checksummed snapshot, under a licence that allows commercial use |
+
+## Parliament's own records
+
+ParlInfo Search (version 1.34.11) and the Bills pages were read on 17 November 2026.
+
+| Source | What it holds | Comparison with this builder |
+| --- | --- | --- |
+| [ParlInfo](https://parlinfo.aph.gov.au/) and [Bills and Legislation](https://www.aph.gov.au/Parliamentary_Business/Bills_Legislation) (Parliament of Australia) | Bills before Parliament, assented Bills, explanatory memoranda and Hansard | It holds Bills, memoranda and debates, which this builder does not. This builder holds the in-force compilations, which ParlInfo does not. |
 
 ## Commercial research tools
 
 The vendor pages below were read on 5 November 2026, those for Ask Nugget
 and TimeBase on 4 November 2026, The Tax Institute's on 12 November 2026 and
 Australian Tax MCP's on 13 November 2026, and those for Cassandra, Checkpoint
-and Lexis+ with Protégé on 17 November 2026.
+and Lexis+ with Protégé, Elfworks, Westlaw Advantage Australia, Habeas, the
+Australian Master Tax Guide online and Australian Tax Legislation 2026 on
+17 November 2026.
 They describe advertised capabilities; no product was used in a trial or tested against this corpus.
 
 | Product and primary source | Advertised capability | Comparison with this builder |
@@ -102,6 +115,11 @@ They describe advertised capabilities; no product was used in a trial or tested 
 | [Praxio AI](https://www.praxio-ai.com.au/) | Cited Australian tax research from a client scenario, grounded in legislation and ATO guidance, with clarifying questions, a client-ready draft and a saved history | It runs from client scenario to draft. This builder stops at source rows and a review queue, which a consumer can use to check a citation against a compilation. |
 | [Tax Guru AI](https://www.tax-guru.ai/) | Source-linked tax research across 17 specialised modes over a proprietary database of expert-verified articles; the page gives both 20,000+ and 18,000+ articles | It answers from curated articles. This builder holds no commentary, and its rows are derived from the Register's reading view, not selected or verified by experts. |
 | [Tax Knowledge Exchange, powered by SavvyWise](https://www.taxinstitute.com.au/tke/powered-by-savvywise) (The Tax Institute) | The Tax Institute's subscription library of its papers is moving to SavvyWise's platform 'over the coming months', with keyword, topic and faceted search and an optional AI search add-on, not yet available, through a SavvyWise subscription. The Institute remains 'the sole owner and custodian' of the database and the papers' authors keep copyright | It is copyright professional commentary. This builder holds no commentary, only Register compilations; a consumer that needs the Institute's papers must subscribe to them. |
+| [Elfworks](https://elfworks.ai/) | AI tax research and drafting that it says validates every answer against 80,000+ pieces of Australian legislation, rulings and case law, with 4 AI models cross-checking, and a monthly tax update with commentary | It answers from a wider base, with commentary. This builder generates no answer; `search cite-check` grades a draft's quotations and citations against dated Register rows that anyone can rebuild. |
+| [Westlaw Advantage Australia](https://www.thomsonreuters.com.au/en-au/products/westlaw-advantage-australia.html) (Thomson Reuters) | Deep Research over all Australian jurisdictions, with cited reports, inside CoCounsel | It covers every jurisdiction and writes reports. This builder covers Commonwealth tax law and writes none. |
+| [Habeas](https://habeas.ai/) | Australian legal research AI over case law, legislation and regulatory materials, cited to paragraph level, with drafting | It adds case law and drafting. This builder holds no cases; each row cites its section and compilation, and each ruling row its numbered paragraph. |
+| [Australian Master Tax Guide online](https://www.wolterskluwer.com/en-au/know/special-amtg-offer) (Wolters Kluwer, in CCH iKnowConnect) | Searchable commentary with links to source material, rates and tables, tax news alerts and editorially curated questions and answers, updated 3 times a year | It is edited commentary. This builder holds none; its `rates` index lists the provisions that carry a rate or threshold, cited to the section, as a finding aid. |
+| [Australian Tax Legislation 2026 Volumes 1-4](https://store.thomsonreuters.com.au/australian-tax-legislation-2026-volume-4/productdetail/132883) (Thomson Reuters; dated 22 April 2026, $498.95) | A printed, edited selection of tax legislation | It is broader, with an editor. This builder's rows are free, searchable and machine-readable, with the compilation and Register page on every row. |
 
 ### Cases for evaluating a research consumer
 
