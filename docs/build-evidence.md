@@ -102,6 +102,8 @@ On 12 November 2026 the `corpus-2026-11-11` archive matched its `SHA256SUMS`, an
 
 On 15 November 2026 the archive again matched its `SHA256SUMS`, and `aus-accounting-mcp` 0.9.0 from PyPI, run as the README's `doctor` command on Linux, reported the folder OK with 9,439 section rows in 9 title indexes and 1,664 rate rows; through that server, `search_tax_legislation` returned `C2004A05138:0035:8-1` first for 'general deductions' and `search_tax_rates` returned rows from the folder.
 
+On 23 November 2026 the `corpus-2026-11-23` archive (45,221,614 bytes) matched its `SHA256SUMS`. With `AUS_ACCOUNTING_CORPUS_ROOT` set to its `dist` folder and `AUS_ACCOUNTING_RULINGS_ROOT` to `dist/rulings`, `aus-accounting-mcp` 0.12.0 from PyPI, run as the README's `doctor` command on Windows, reported the corpus OK with 9,439 section rows in 9 title indexes and 1,664 rate rows, and the rulings OK with 535 paragraph rows from 8 documents in 1 run, none withheld. Through that server, `search_tax_legislation` returned `C2004A05138:0035:8-1` first for 'general deductions' and `search_ato_rulings` returned paragraphs of CR 2026/89 for 'software'. Version 0.9.0, the README's earlier pin, refused the rulings folder ('document 4 names an unsupported family'). On Linux, `fadden search build dist` from `main` at `d831d54` indexed the same folder's Acts (9 titles, 9,439 rows, 3,825 definitions, 32,522 section references), and `search query --json` answered from it.
+
 ## Retrieval baseline on real law
 
 Measured on 5 November 2026 over `tests/fixtures/retrieval_real_law.tsv`: 46 queries
@@ -238,7 +240,7 @@ redistributed legislation.
 
 ## Defined terms a provision uses
 
-Measured on 22 November 2026 with `refs --terms --json` on every row holding an
+Measured on 23 November 2026 with `refs --terms --json` on every row holding an
 asterisk in an index of the published `corpus-2026-11-18` snapshot (9 titles, 9,439
 rows, sources.json SHA-256
 `ee30e864fbc1c96bbf61a133204a381390c1d32e410cbfb35da722b4376d644a`). A row's terms are
@@ -246,12 +248,18 @@ counted once each; asterisks that reached no definition are counted each time.
 
 | Title | Rows with an asterisk | Every asterisk resolved | Terms resolved | Read as singular | Without qualifier | Asterisks unresolved |
 |---|---:|---:|---:|---:|---:|---:|
-| ITAA 1997 (C2004A05138) | 3,735 | 2,761 | 18,123 | 1,810 | 1,752 | 2,075 |
+| ITAA 1997 (C2004A05138) | 3,735 | 2,768 | 18,139 | 1,810 | 1,768 | 2,043 |
 | GST Act (C2004A00446) | 675 | 565 | 2,991 | 236 | 305 | 163 |
-| TAA 1953 (C1953A00001) | 819 | 691 | 3,037 | 241 | 194 | 223 |
+| TAA 1953 (C1953A00001) | 819 | 706 | 3,053 | 241 | 210 | 195 |
 | Income Tax (Transitional Provisions) Act 1997 (C2004A05128) | 5 | 0 | 0 | 0 | 0 | 9 |
 
-The index holds 3,825 definitions. Before `define` read dictionary entries without a
+The index holds 3,843 definitions. Before `define` read terms of up to 30 words, it
+skipped the 18 entries whose term and qualifier run to 16 to 26 words, such as
+`debit value, of a superannuation interest that supports an income stream that is,
+or was at any time, a capped defined benefit income stream,` in s 995-1; the same
+snapshot then gave 3,825 definitions, with 2,075 unresolved asterisks in the ITAA
+1997 (2,761 rows with every asterisk resolved) and 223 in the TAA 1953 (691 rows).
+Before `define` read dictionary entries without a
 defining verb (`head company:` before its paragraphs, `IRU is ...`, `market value has
 a meaning affected by ...`), the same snapshot gave 3,678 definitions, and 4,972
 unresolved asterisks in the ITAA 1997 (1,943 rows with every asterisk resolved), 455

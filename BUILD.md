@@ -542,11 +542,17 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   Act 1936` cites the ITAA 1936. A comma before an item with its own keyword, with
   or without `and` or `or`, ends the list instead, and no item takes the title when
   one is numbered unlike the first, so in `section 23AI or section 768-5 of the ITAA
-  1997` only `768-5` cites the ITAA 1997. Text alone cannot tell a list from 2
-  clauses joined by a bare `and` or `or`, so `section 6 and section 7 of the X Act`
-  is read as one list. On the `corpus-2026-11-18` snapshot this case does not
-  occur: all 111 citations whose attribution changed (187 references) were read,
-  and none binds an item of the citing title to another. A range such as `sections 8-1 to 8-10` reads only its first
+  1997` only `768-5` cites the ITAA 1997. A bare `and` or `or` before an item with its
+  own keyword can also join 2 clauses, so the title reaches back past it only when
+  the verb after the title, if any, could take the whole list: in `section 6 and
+  section 7 of the X Act applies`, the singular `applies` makes `section 7 of the X
+  Act` a clause of its own, so section 6 keeps the citing title, whilst `do not
+  apply` keeps the list whole. A modal verb (`may`, `must`) or a singular verb after
+  `or` does not show which, so the earlier items keep the citing title then too. On
+  the `corpus-2026-11-18` snapshot no such list is followed by one of these verbs:
+  all 111 citations whose attribution changed when lists began to take their title
+  (187 references) were read, and none binds an item of the citing title to
+  another. A range such as `sections 8-1 to 8-10` reads only its first
   item. A Subdivision named by letter alone (`Subdivision B`) is not read, because
   the same letter recurs across Divisions of one title.
 - `define --follow` adds `refers_to` to each definition: the provisions its text

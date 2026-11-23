@@ -109,7 +109,7 @@ const CONTINUES: &str = r"(?i)(?:a|an|the|that|this|those|then|if|where|whether|
 const QUALIFIER: &str = r",\s+(?:in relation to|in respect of|for the purposes of)\b.*\Z";
 const NOT_A_TERM: &str =
     r"(?i)(?:note|example|however|for example|in this|but|and|or|other than)\b";
-const MAX_TERM_WORDS: usize = 15;
+const MAX_TERM_WORDS: usize = 30;
 
 const SECTION_RE: &str = r"\d+[A-Z]{0,4}(?:[-‐‑]\d+[A-Z]{0,4})?";
 const YEAR: &str = r"(?:18|19|20)\d{2}\b";
@@ -250,6 +250,13 @@ fn list_rest_pattern() -> String {
         in_title()
     )
 }
+
+/// A verb straight after a list's title that a plural subject would not take, so the
+/// last item, not the list, is its subject: in `It applies to section 6 and section 7
+/// of the X Act applies`, `section 7 of the X Act` starts a clause of its own. A plural
+/// verb (`do not apply`) keeps the list whole. A modal verb, or a singular verb after
+/// `or`, does not show which, so the earlier items keep their own title then too.
+const CLAUSE_VERB: &str = r"\s+(?:(?:also|not|only|still)\s+)?(?:applies|does|is|has|was|provides|requires|prevails|operates|ceases|continues|extends|includes|excludes|affects|may|must|will|would|can|cannot|could|should|shall)\b";
 
 fn level_pattern() -> String {
     format!(
@@ -395,6 +402,7 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usi
     let list_rest = pyre::re(&list_rest_pattern(), 0);
     let keyed_label = pyre::re(&format!(r"{KEYWORD}s?\s+({LABEL})"), 0);
     let separator = pyre::re(LIST_SEPARATOR, 0);
+    let clause_verb = pyre::re(CLAUSE_VERB, 0);
     let mut out = Vec::new();
     for found in pattern.captures_iter(text) {
         let keyword = crate::py::casefold(found.name("keyword").expect("keyword").as_str());
@@ -425,14 +433,16 @@ pub fn citations(text: &str) -> Vec<(String, String, Option<String>, String, usi
                 .filter_map(|found| found.get(1).map(|m| m.as_str().to_string()))
                 .collect();
             let first = hyphenated_label(items[0]);
+            let rest_end = rest.get(0).expect("group 0").end();
             if bare
                 .iter()
                 .copied()
                 .chain(keyed.iter().map(String::as_str))
                 .all(|label| hyphenated_label(label) == first)
+                && (keyed.is_empty() || clause_verb.match_at(text, rest_end).is_none())
             {
                 act = cited_in(&rest, [3, 4]);
-                end = rest.get(0).expect("group 0").end();
+                end = rest_end;
                 items.extend(bare);
             }
         }
