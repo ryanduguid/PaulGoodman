@@ -34,30 +34,30 @@ AI agents reach a finished build through the [`aus-accounting-mcp`](https://gith
 
 ### Give an agent the law from the published snapshot
 
-Release [`corpus-2026-11-11`](https://github.com/ryanduguid/PaulGoodman/releases/tag/corpus-2026-11-11) carries 9 principal tax Acts as one 6.2 MB archive with a `SHA256SUMS` file: 9,439 section rows and 1,664 rate rows, each Act at its current compilation on 11 November 2026. Download, verify and unpack it outside any checkout. On Linux (on macOS, use `shasum -a 256 -c SHA256SUMS` for the third line):
+Release [`corpus-2026-11-23`](https://github.com/ryanduguid/PaulGoodman/releases/tag/corpus-2026-11-23) carries one 45.2 MB archive with a `SHA256SUMS` file: 9 principal tax Acts at their current compilation on 18 November 2026 (9,439 section rows, 1,664 rate rows), the compilations of those Acts in force on each 1 July from 2020 to 2026 that the Register publishes, and 535 paragraph rows from 8 ATO rulings and determinations captured on 23 November 2026. Download, verify and unpack it outside any checkout. On Linux (on macOS, use `shasum -a 256 -c SHA256SUMS` for the third line):
 
 ```bash
-curl -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/au-tax-legislation-corpus-dist-2026-11-11.tar.gz
-curl -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/SHA256SUMS
+curl -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-23/au-tax-legislation-corpus-dist-2026-11-23.tar.gz
+curl -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-23/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf au-tax-legislation-corpus-dist-2026-11-11.tar.gz
+tar -xzf au-tax-legislation-corpus-dist-2026-11-23.tar.gz
 ```
 
 In PowerShell on Windows, with the `curl.exe` and `tar.exe` that Windows 10 and 11 include:
 
 ```powershell
-curl.exe -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/au-tax-legislation-corpus-dist-2026-11-11.tar.gz
-curl.exe -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-11/SHA256SUMS
+curl.exe -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-23/au-tax-legislation-corpus-dist-2026-11-23.tar.gz
+curl.exe -LO https://github.com/ryanduguid/PaulGoodman/releases/download/corpus-2026-11-23/SHA256SUMS
 $expected = (Get-Content SHA256SUMS).Split(' ')[0]
-if ((Get-FileHash au-tax-legislation-corpus-dist-2026-11-11.tar.gz -Algorithm SHA256).Hash -ne $expected) { throw 'checksum mismatch' }
-tar.exe -xzf au-tax-legislation-corpus-dist-2026-11-11.tar.gz
+if ((Get-FileHash au-tax-legislation-corpus-dist-2026-11-23.tar.gz -Algorithm SHA256).Hash -ne $expected) { throw 'checksum mismatch' }
+tar.exe -xzf au-tax-legislation-corpus-dist-2026-11-23.tar.gz
 ```
 
-Then add the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, which needs Python 3.14+ and [uv](https://docs.astral.sh/uv/), with `AUS_ACCOUNTING_CORPUS_ROOT` set to the unpacked `dist` folder. Run one of these from the folder that holds `dist` (in PowerShell, write `"$PWD\dist"`):
+Then add the [`aus-accounting-mcp`](https://github.com/ryanduguid/australian-accounting/tree/main/apps/aus-accounting-mcp) server, which needs Python 3.14+ and [uv](https://docs.astral.sh/uv/), with `AUS_ACCOUNTING_CORPUS_ROOT` set to the unpacked `dist` folder and `AUS_ACCOUNTING_RULINGS_ROOT` to its `rulings` folder. Run one of these from the folder that holds `dist` (in PowerShell, write `"$PWD\dist"` and `"$PWD\dist\rulings"`):
 
 ```bash
-claude mcp add --scope user aus-accounting -e AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.9.0' aus-accounting-mcp
-codex mcp add aus-accounting --env AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -- uvx --from 'aus-accounting-mcp==0.9.0' aus-accounting-mcp
+claude mcp add --scope user aus-accounting -e AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" -e AUS_ACCOUNTING_RULINGS_ROOT="$PWD/dist/rulings" -- uvx --from 'aus-accounting-mcp==0.12.0' aus-accounting-mcp
+codex mcp add aus-accounting --env AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" --env AUS_ACCOUNTING_RULINGS_ROOT="$PWD/dist/rulings" -- uvx --from 'aus-accounting-mcp==0.12.0' aus-accounting-mcp
 ```
 
 For Claude Desktop and other hosts that read a JSON file, add this entry with the absolute path of `dist`, then restart the host:
@@ -67,16 +67,21 @@ For Claude Desktop and other hosts that read a JSON file, add this entry with th
   "mcpServers": {
     "aus-accounting": {
       "command": "uvx",
-      "args": ["--from", "aus-accounting-mcp==0.9.0", "aus-accounting-mcp"],
-      "env": { "AUS_ACCOUNTING_CORPUS_ROOT": "/absolute/path/to/dist" }
+      "args": ["--from", "aus-accounting-mcp==0.12.0", "aus-accounting-mcp"],
+      "env": {
+        "AUS_ACCOUNTING_CORPUS_ROOT": "/absolute/path/to/dist",
+        "AUS_ACCOUNTING_RULINGS_ROOT": "/absolute/path/to/dist/rulings"
+      }
     }
   }
 }
 ```
 
-To check the folder before asking anything, run the server's `doctor` with the same setting: `AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" uvx --from 'aus-accounting-mcp==0.9.0' aus-accounting-mcp doctor` (in PowerShell, set `$env:AUS_ACCOUNTING_CORPUS_ROOT = "$PWD\dist"` first). It reports `9439 section rows in 9 title indexes, 1664 rate rows`. `search_tax_legislation`, `read_tax_legislation_section`, `define_tax_term` and `search_tax_rates` then answer from that folder ([evidence](docs/build-evidence.md#published-snapshot-as-an-mcp-corpus)).
+To check the folders before asking anything, run the server's `doctor` with the same settings: `AUS_ACCOUNTING_CORPUS_ROOT="$PWD/dist" AUS_ACCOUNTING_RULINGS_ROOT="$PWD/dist/rulings" uvx --from 'aus-accounting-mcp==0.12.0' aus-accounting-mcp doctor` (in PowerShell, set `$env:AUS_ACCOUNTING_CORPUS_ROOT` and `$env:AUS_ACCOUNTING_RULINGS_ROOT` first). It reports `9439 section rows in 9 title indexes, 1664 rate rows` and `535 paragraph rows from 8 documents in 1 runs, 0 documents withheld`. `search_tax_legislation`, `read_tax_legislation_section`, `define_tax_term`, `search_tax_rates`, `search_ato_rulings` and `read_ato_ruling` then answer from those folders ([evidence](docs/build-evidence.md#published-snapshot-as-an-mcp-corpus)).
 
-The snapshot is a finding aid derived from the Register's EPUB reading view, not authorised text or tax advice. It holds no instruments, rulings or cases, and a later amendment can outdate it; [`quick`](#search-real-law-from-an-empty-folder) builds the current compilations instead. Its legislative content is licensed CC BY 4.0 by the Federal Register of Legislation, with the attribution in the release notes.
+Without the server, an agent that can run commands uses this repository's own `fadden` binary ([Build from source](#build-from-source)): `fadden search build dist --out law.sqlite` indexes the snapshot's Acts once, then `fadden search query`, `define`, `refs` and `cite-check` answer from `law.sqlite`, each with `--json`. `cite-check` is the check for another assistant's answer: it reports whether each cited section is held and whether each quotation is in it.
+
+The snapshot is a finding aid derived from the Register's EPUB reading view and the ATO's Legal Database, not authorised text or tax advice. It holds no instruments or cases, only the rulings listed in the release notes, and a later amendment can outdate it; [`quick`](#search-real-law-from-an-empty-folder) builds the current compilations instead. Its legislation is licensed CC BY 4.0 by the Federal Register of Legislation, and its rulings rows are reproduced under the ATO's copyright notice, with the attribution and notices in the release notes and the archive.
 
 ### Build from source
 
@@ -126,13 +131,13 @@ not quotation matches. `--exact` matches only the words as typed. See
 
 `python -m fadden quick --out <empty folder>` builds and indexes 9 principal Acts on your machine and prints the `AUS_ACCOUNTING_CORPUS_ROOT` setting for the MCP server, which then answers `search_tax_legislation` from that folder. One run on 6 November 2026 took 116 seconds on a Windows desktop PC, 90 of them the Crawl-delay ([evidence](docs/build-evidence.md#one-command-preset-build)). It fetches each Act from the Register, builds beside that folder, moves the result in only once all 9 Acts are indexed and publishes nothing. The command needs `curl` and network access; [BUILD.md](BUILD.md#one-command-preset-build) lists the Acts.
 
-To answer for a past date or income year from the text of the time, add `--in-force-on YYYY-MM-DD` (repeatable): the build also holds each Act's compilation in force on that date under `compilations/<date>/`. An Act whose Register history does not reach the date is listed and left out; on 14 November 2026 the Income Tax Assessment Act 1997's reached back to 1 July 2020. The search index holds only the current compilations, so only a reader of `compilations/` answers from the earlier ones, and the `corpus-2026-11-11` snapshot holds none ([BUILD.md](BUILD.md#earlier-compilations)).
+To answer for a past date or income year from the text of the time, add `--in-force-on YYYY-MM-DD` (repeatable): the build also holds each Act's compilation in force on that date under `compilations/<date>/`. An Act whose Register history does not reach the date is listed and left out; on 14 November 2026 the Income Tax Assessment Act 1997's reached back to 1 July 2020. The search index holds only the current compilations, so only a reader of `compilations/` answers from the earlier ones; the `corpus-2026-11-23` snapshot holds those of each 1 July from 2020 to 2026 that the Register publishes ([BUILD.md](BUILD.md#earlier-compilations)).
 
 ## Two related systems
 
 The corpus builder (`python -m fadden`) produces retrieval material from Commonwealth legislation. Its `rulings` stage derives paragraph JSONL from named ATO rulings and related documents under the ATO's reuse notice ([docs/rulings.md](docs/rulings.md)). The change-review queue (`tax-radar-au`) consumes a reviewed observation contract and raises items for a person to assess. Documented network access is 7 builder stages that reach the Federal Register, `quick`, which runs some of them, and `rulings`, which reaches the ATO Legal Database; the review queue itself makes no network request.
 
-**Package lifecycle:** source-only. The builder is not published to PyPI; code releases carry source archives, not a builder wheel. Corpus snapshots are separate `corpus-` releases, such as [`corpus-2026-11-11`](#give-an-agent-the-law-from-the-published-snapshot). The queue has its own package identity; this source install does not download legislation.
+**Package lifecycle:** source-only. The builder is not published to PyPI; code releases carry source archives, not a builder wheel. Corpus snapshots are separate `corpus-` releases, such as [`corpus-2026-11-23`](#give-an-agent-the-law-from-the-published-snapshot). The queue has its own package identity; this source install does not download legislation.
 
 ## Guides and reference
 
@@ -166,7 +171,7 @@ Live Register capture, synthetic observations and publication candidates have di
 
 The primary source is the [Federal Register of Legislation](https://www.legislation.gov.au/). The repository contains code, not the corpus; generated output retains its own source and licence records.
 
-Data: legislation text in generated output, including a corpus snapshot attached to a release, is licensed by the Federal Register of Legislation under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), not under this repository's licence. The Commonwealth Coat of Arms and third-party material are excluded. Reuse it with the Register's attribution, which each row and the snapshot's `LICENCE-NOTICE.md` carry. [RELEASING.md](RELEASING.md) sets when a snapshot may be released.
+Data: legislation text in generated output, including a corpus snapshot attached to a release, is licensed by the Federal Register of Legislation under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), not under this repository's licence. The Commonwealth Coat of Arms and third-party material are excluded. Reuse it with the Register's attribution, which each row and the snapshot's `LICENCE-NOTICE.md` carry. ATO rulings rows in a snapshot are not covered by CC BY 4.0: they are reproduced under the ATO's copyright notice, which each run's `LICENCE-NOTICE.md` quotes. [RELEASING.md](RELEASING.md) sets when a snapshot may be released.
 
 Ryan Duguid's original code is licensed under the [Apache License, Version 2.0](LICENSE). When redistributing it or a derivative, preserve the applicable attribution notices in [NOTICE](NOTICE) as required by section 4(d). Versions released before this change keep the licence they were released with. Read the [redistribution limits](docs/scope.md#what-this-deliberately-does-not-ship) before handling generated material.
 
