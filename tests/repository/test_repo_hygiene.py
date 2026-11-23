@@ -148,3 +148,23 @@ def test_agents_reach_the_same_snapshot_from_llms_txt() -> None:
     for needed in ("AUS_ACCOUNTING_RULINGS_ROOT", "aus-accounting-mcp` server (0.12.0)", "fadden search build dist", "cite-check"):
         assert needed in llms
     assert 'AUS_ACCOUNTING_RULINGS_ROOT="$PWD/dist/rulings"' in readme
+
+
+def test_comparison_rows_carry_the_sources_read_on_17_november() -> None:
+    # Eight sources read on 17 November 2026 had no row, so a reader comparing
+    # them with this builder found nothing; each row is dated in its table's intro.
+    comparison = (ROOT / "docs" / "comparison.md").read_text(encoding="utf-8")
+    rows = {line.split("](", 1)[0] for line in comparison.splitlines() if line.startswith("| [")}
+
+    for name in (
+        "| [Elfworks",
+        "| [Westlaw Advantage Australia",
+        "| [Habeas",
+        "| [Australian Master Tax Guide online",
+        "| [Australian Tax Legislation 2026 Volumes 1-4",
+        "| [ParlInfo",
+        "| [Danielkgr/legal-rag-evaluation",
+        "| [auraofintelligence/australian-legal-engine",
+    ):
+        assert name in rows
+    assert "ParlInfo Search (version 1.34.11) and the Bills pages were read on 17 November 2026." in comparison
