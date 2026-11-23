@@ -102,6 +102,8 @@ On 12 November 2026 the `corpus-2026-11-11` archive matched its `SHA256SUMS`, an
 
 On 15 November 2026 the archive again matched its `SHA256SUMS`, and `aus-accounting-mcp` 0.9.0 from PyPI, run as the README's `doctor` command on Linux, reported the folder OK with 9,439 section rows in 9 title indexes and 1,664 rate rows; through that server, `search_tax_legislation` returned `C2004A05138:0035:8-1` first for 'general deductions' and `search_tax_rates` returned rows from the folder.
 
+On 23 November 2026 the `corpus-2026-11-23` archive (45,221,614 bytes) matched its `SHA256SUMS`. With `AUS_ACCOUNTING_CORPUS_ROOT` set to its `dist` folder and `AUS_ACCOUNTING_RULINGS_ROOT` to `dist/rulings`, `aus-accounting-mcp` 0.12.0 from PyPI, run as the README's `doctor` command on Windows, reported the corpus OK with 9,439 section rows in 9 title indexes and 1,664 rate rows, and the rulings OK with 535 paragraph rows from 8 documents in 1 run, none withheld. Through that server, `search_tax_legislation` returned `C2004A05138:0035:8-1` first for 'general deductions' and `search_ato_rulings` returned paragraphs of CR 2026/89 for 'software'. Version 0.9.0, the README's earlier pin, refused the rulings folder ('document 4 names an unsupported family'). On Linux, `fadden search build dist` from `main` at `d831d54` indexed the same folder's Acts (9 titles, 9,439 rows, 3,825 definitions, 32,522 section references), and `search query --json` answered from it.
+
 ## Retrieval baseline on real law
 
 Measured on 5 November 2026 over `tests/fixtures/retrieval_real_law.tsv`: 46 queries
