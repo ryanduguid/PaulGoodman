@@ -48,8 +48,9 @@ do not describe a local Windows full-suite failure in those paths as a radar reg
 without proving it.
 
 The radar is the Rust `tax-radar-au` binary. The `rust` job runs its formatting, Clippy,
-tests and release build on Ubuntu and Windows, and the Ubuntu test legs build it for the
-cross-system contract test in `tests/corpus/test_monitor_contract.py`.
+tests and release build on Ubuntu and Windows, and uploads the Linux release binaries for
+the Ubuntu test legs and the cross-system contract test in
+`tests/corpus/test_monitor_contract.py`.
 
 `tests/fadden_golden.rs` replays `tests/golden/`: fabricated cases each run through the
 Python stages the `fadden` binary replaced, on Windows and Linux, with what Python printed
@@ -78,8 +79,7 @@ changed: #284 (0ee6bc4) re-recorded index digests and usage text, and 17f1d15 ad
 The fenced list records the unique single-line commands. The multiline binary-smoke gate
 is reproduced exactly in the next section.
 ```bash
-rustup toolchain install
-cargo build --locked --release
+chmod +x target/release/tax-radar-au target/release/fadden
 uv run --locked --extra dev pytest tests
 uv run --locked --extra dev pytest tests/corpus/test_live_evidence_bundle_export.py tests/corpus/test_live_evidence_publication_paths.py
 uv run --locked --extra dev coverage run --branch --source=fadden -m pytest tests
@@ -91,12 +91,15 @@ uv run --locked --extra dev coverage combine coverage-data/ubuntu/.coverage cove
 uv run --locked --extra dev coverage report --fail-under=99
 uv run --locked --extra dev --python 3.14 python -m build
 python -m venv /tmp/venv && /tmp/venv/bin/pip install --no-index dist/tax_radar_au-*.whl && cd /tmp && /tmp/venv/bin/python -c "import fadden.capture_register"
+rustup toolchain install
 cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked
 cargo test --locked --features fake-http --test fadden_golden
+cargo build --locked --release
 cargo build --locked
 cargo audit && cargo audit --file fuzz/Cargo.lock
+cargo deny --locked check licenses sources
 uv run --locked --extra dev ruff check .
 uv run --locked --extra dev mypy
 uv audit --locked --no-config --python-version 3.14

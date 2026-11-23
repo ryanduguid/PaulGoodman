@@ -18,14 +18,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::types::Value as Sql;
 use rusqlite::{Connection, OpenFlags, params_from_iter};
-use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
 use super::as_at;
 use super::corpus_paths::{child, register_id, register_id_str};
 use super::quotes::{self, Quotation};
 use super::rulings::canonical_docid;
-use super::{Exc, Run};
+use super::{Exc, Run, sha256_hex as hex};
 use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyjson::{self, Json, PyStr};
 use crate::pyos::{OsError, Style};
@@ -548,13 +547,6 @@ fn read_all(mut file: std::fs::File, path: &str) -> Result<Vec<u8>, OsError> {
     file.read_to_end(&mut data)
         .map_err(|e| OsError::new(&e, Some(path), Style::Errno))?;
     Ok(data)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 pub struct Title {

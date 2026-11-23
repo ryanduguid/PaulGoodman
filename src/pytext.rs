@@ -1,23 +1,7 @@
 //! CPython text rules argparse formatting depends on: `str.isspace`, `str.strip`,
 //! decimal digit values and `repr()` of a string.
 
-use crate::pyunicode::{
-    DECIMAL_ZERO as DECIMAL_ZEROS, NOT_PRINTABLE as PY_NOT_PRINTABLE, SPACE as PY_SPACE,
-};
-
-fn in_ranges(table: &[(u32, u32)], cp: u32) -> bool {
-    table
-        .binary_search_by(|&(low, high)| {
-            if high < cp {
-                std::cmp::Ordering::Less
-            } else if low > cp {
-                std::cmp::Ordering::Greater
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        })
-        .is_ok()
-}
+use crate::py;
 
 /// Rust strings cannot hold the lone surrogates a Python str can (command-line
 /// bytes decoded with surrogateescape, or unpaired UTF-16 on Windows). Text
@@ -70,20 +54,11 @@ pub fn py_len(text: &str) -> usize {
     code_points(text).count()
 }
 
-pub fn is_space(cp: u32) -> bool {
-    in_ranges(PY_SPACE, cp)
-}
-
-/// `str.strip()` with no argument.
-pub fn strip(text: &str) -> &str {
-    text.trim_matches(|ch: char| is_space(ch as u32))
-}
+pub use crate::py::strip;
 
 /// The digit value of a Unicode decimal digit (category Nd), as `unicodedata.decimal`.
 pub fn decimal_value(cp: u32) -> Option<u32> {
-    let index = DECIMAL_ZEROS.partition_point(|&zero| zero <= cp);
-    let zero = *DECIMAL_ZEROS.get(index.checked_sub(1)?)?;
-    (cp - zero < 10).then_some(cp - zero)
+    char::from_u32(cp).and_then(py::decimal_value)
 }
 
 /// The gateway's control-character rule: any code point below 32, or 127.
@@ -104,7 +79,7 @@ pub fn repr_code_points(cps: &[u32]) -> String {
                 out.push('\\');
                 out.push(quote);
             }
-            _ if in_ranges(PY_NOT_PRINTABLE, cp) => {
+            _ if char::from_u32(cp).is_none_or(|ch| !py::is_printable(ch)) => {
                 if cp < 0x100 {
                     out.push_str(&format!("\\x{cp:02x}"));
                 } else if cp < 0x10000 {

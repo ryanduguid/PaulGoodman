@@ -21,6 +21,7 @@ env:
 
 jobs:
   test:
+    needs: rust
     permissions:
       contents: read
     strategy:
@@ -56,19 +57,17 @@ jobs:
           version: "0.13.5"
           enable-cache: true
       # tests/corpus/test_monitor_contract.py feeds the exported contract to
-      # the Rust tax-radar-au binary named by TAX_RADAR_AU_BIN.
-      - name: install the pinned Rust toolchain
+      # the Rust tax-radar-au binary named by TAX_RADAR_AU_BIN, and the corpus
+      # tests run the Rust fadden binary from target/release/fadden.
+      - name: download the Linux release binaries from the rust job
         if: matrix.os == 'ubuntu-latest'
-        run: rustup toolchain install
-      - name: restore the dependency build cache
-        if: matrix.os == 'ubuntu-latest'
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          # Pull requests read main's cache and never write their own.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: build the tax-radar-au binary for the cross-system contract test
+          name: rust-linux-release-binaries
+          path: target/release
+      - name: restore executable permissions on the downloaded binaries
         if: matrix.os == 'ubuntu-latest'
-        run: cargo build --locked --release
+        run: chmod +x target/release/tax-radar-au target/release/fadden
       # No -q here: pyproject's addopts already sets it, and a second -q makes
       # it -qq, which drops the pass/fail count from the log. Without the count
       # a test file that stops being collected leaves every leg green.
@@ -254,10 +253,20 @@ jobs:
       # The Python-parity fixtures for the stages that fetch need the scripted
       # responses; the default test run covers the other stages' fixtures.
       - run: cargo test --locked --features fake-http --test fadden_golden
-      # Main keeps compiling the release profile; pull requests skip it. The
-      # test job runs the release binary on Linux for every event.
-      - if: github.event_name != 'pull_request'
+      # Linux always compiles the release profile so the Ubuntu test jobs reuse
+      # its binaries; Windows compiles the release profile on main.
+      - if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         run: cargo build --locked --release
+      - name: keep the Linux release binaries for the Python test jobs
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-linux-release-binaries
+          path: |
+            target/release/tax-radar-au
+            target/release/fadden
+          if-no-files-found: error
+          retention-days: 1
       # The demo's debug build reuses the tests' artefacts. The samples ship in
       # the repository beside the binary; run the demo from a directory outside
       # the checkout so nothing resolves relative to it.
@@ -274,10 +283,12 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-audit@0.22.2
+          tool: cargo-audit@0.22.2,cargo-deny@0.22.0
           fallback: none
       - if: matrix.os == 'ubuntu-latest'
         run: cargo audit && cargo audit --file fuzz/Cargo.lock
+      - if: matrix.os == 'ubuntu-latest'
+        run: cargo deny --locked check licenses sources
 
   lint:
     permissions:

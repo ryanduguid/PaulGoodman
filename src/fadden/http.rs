@@ -448,7 +448,7 @@ impl Net {
         let host = host.to_lowercase();
         let (hostonly, _) = split_port(&host);
         for name in no_proxy.split(',') {
-            let name = py_strip(name);
+            let name = py::strip(name);
             if name.is_empty() {
                 continue;
             }
@@ -1143,19 +1143,9 @@ fn chunk_size(line: &[u8]) -> Option<i128> {
 
 // ---------------------------------------------------------------- URL text
 
-/// `str.isspace()` for the characters header text holds.
-fn py_space(c: char) -> bool {
-    matches!(c, '\t'..='\r' | '\x1c'..='\x1f' | ' ' | '\u{85}' | '\u{a0}')
-        || (c > '\u{ff}' && c.is_whitespace())
-}
-
-fn py_strip(s: &str) -> &str {
-    s.trim_matches(py_space)
-}
-
 /// `int(text)` of a str.
 fn py_int(text: &str) -> Option<BigInt> {
-    py::parse_int(py_strip(text), 10).ok()
+    py::parse_int(py::strip(text), 10).ok()
 }
 
 /// `str.split(None, maxsplit)`.
@@ -1164,19 +1154,19 @@ fn split_ws(s: &str, maxsplit: usize) -> Vec<String> {
     let mut parts = Vec::new();
     let mut i = 0;
     while parts.len() < maxsplit {
-        while i < chars.len() && py_space(chars[i]) {
+        while i < chars.len() && py::is_space(chars[i]) {
             i += 1;
         }
         if i == chars.len() {
             break;
         }
         let start = i;
-        while i < chars.len() && !py_space(chars[i]) {
+        while i < chars.len() && !py::is_space(chars[i]) {
             i += 1;
         }
         parts.push(chars[start..i].iter().collect());
     }
-    while i < chars.len() && py_space(chars[i]) {
+    while i < chars.len() && py::is_space(chars[i]) {
         i += 1;
     }
     if i < chars.len() {
@@ -1187,12 +1177,12 @@ fn split_ws(s: &str, maxsplit: usize) -> Vec<String> {
 
 /// `urllib.request.unwrap(url)`: `<URL:...>` and surrounding whitespace off.
 fn unwrap(url: &str) -> &str {
-    let mut url = py_strip(url);
+    let mut url = py::strip(url);
     if url.len() >= 2 && url.starts_with('<') && url.ends_with('>') {
-        url = py_strip(&url[1..url.len() - 1]);
+        url = py::strip(&url[1..url.len() - 1]);
     }
     if let Some(rest) = url.strip_prefix("URL:") {
-        url = py_strip(rest);
+        url = py::strip(rest);
     }
     url
 }

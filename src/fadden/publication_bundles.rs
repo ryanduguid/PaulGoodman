@@ -11,6 +11,7 @@ use crate::pyjson::{obj, text_json};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
+use super::capture_register::safe_output_leaf;
 use super::corpus_paths::{self, abspath, ordinary, same_location};
 use super::monitor_contract::{self, COLLECTIONS, CONTENT_KINDS, CONTENT_MEDIA_TYPES};
 use super::{Exc, Run};
@@ -50,11 +51,6 @@ fn safe_name(text: &[u32], max_rest: usize, lower_only: bool, min_rest: usize) -
         return false;
     };
     first(head) && (min_rest..=max_rest).contains(&tail.len()) && tail.iter().all(|&cp| rest(cp))
-}
-
-/// `SAFE_OUTPUT_LEAF.fullmatch(name)`.
-fn safe_output_leaf(name: &str) -> bool {
-    safe_name(&pts(name), 99, false, 0)
 }
 
 /// `_required_text(value, field)`: non-empty, trimmed text without controls.

@@ -60,8 +60,9 @@ do not describe a local Windows full-suite failure in those paths as a radar reg
 without proving it.
 
 The radar is the Rust `tax-radar-au` binary. The `rust` job runs its formatting, Clippy,
-tests and release build on Ubuntu and Windows, and the Ubuntu test legs build it for the
-cross-system contract test in `tests/corpus/test_monitor_contract.py`.
+tests and release build on Ubuntu and Windows, and uploads the Linux release binaries for
+the Ubuntu test legs and the cross-system contract test in
+`tests/corpus/test_monitor_contract.py`.
 
 `tests/fadden_golden.rs` replays `tests/golden/`: fabricated cases each run through the
 Python stages the `fadden` binary replaced, on Windows and Linux, with what Python printed
