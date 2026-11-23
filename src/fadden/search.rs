@@ -1231,9 +1231,10 @@ fn uncaptured_exclusions(runs: &[RulingsRun]) -> usize {
 
 /// The register ID a cited name stands for, if exactly one title has it.
 fn named(names: &[(pyvalue::Key, Option<String>)], name: &str) -> Option<String> {
+    let key = pyvalue::Key::Str(name.chars().map(u32::from).collect());
     names
         .iter()
-        .find(|(k, _)| *k == pyvalue::Key::Str(name.chars().map(u32::from).collect()))
+        .find(|(k, _)| *k == key)
         .and_then(|(_, v)| v.clone())
 }
 
