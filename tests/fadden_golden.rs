@@ -18,7 +18,7 @@
 //!
 //! No Python search stage remains, so the search cases were edited by hand where
 //! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
-//! 17f1d15 added the `refs` line saying an index holds no rulings.
+//! #286 (7d6fdcc) added the `refs` line saying an index holds no rulings.
 //!
 //! The rulings cases' `LICENCE-NOTICE.md` digest was re-recorded by hand when
 //! the stage's notice dropped a sentence the ATO's copyright notice does not ask
