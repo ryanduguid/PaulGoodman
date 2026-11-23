@@ -12,7 +12,7 @@ version 7.1.0, read on 24 September 2026.
 
 | | Open Australian Legal Corpus | This builder |
 | --- | --- | --- |
-| What you get | A published dataset, loadable directly | Code, and a published snapshot of 9 principal Acts ([`corpus-2026-11-11`](https://github.com/ryanduguid/PaulGoodman/releases/tag/corpus-2026-11-11)); you build anything wider yourself (`python -m fadden`) |
+| What you get | A published dataset, loadable directly | Code, and a published snapshot of 9 principal Acts and 8 ATO rulings and determinations ([`corpus-2026-11-23`](https://github.com/ryanduguid/PaulGoodman/releases/tag/corpus-2026-11-23)); you build anything wider yourself (`python -m fadden`) |
 | Coverage | 9 sources covering the Commonwealth, 5 states and Norfolk Island, including court decisions; 4,818 Commonwealth Acts and 27,538 Commonwealth instruments from the Federal Register | Commonwealth Acts and instruments whose titles match the tax keywords in [scope](scope.md) (946 titles in the dated build), plus named ATO rulings through the `rulings` stage |
 | Unit | One record per document, with its whole text | Legislation: one row per section, with `row_id`, `section`, `heading` and `container`; `granularity` is `table_block` or `whole_act` where a title cannot be split into sections. Rulings: one row per numbered paragraph, with its own fields ([rulings](rulings.md)) |
 | Version | Latest known version of each document; the card gives the collection date as 10 March 2025 | Legislation: the in-force compilation at build time, or the last one the Register published where the in-force version has none (`version_is_current: false`); `compilation_number`, `compilation_date` and `version_is_current` are on every row. Rulings: `fetched_on` only; no compilation status |
