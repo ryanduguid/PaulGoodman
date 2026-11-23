@@ -3,7 +3,7 @@
 //!
 //! The C parser reads the string's UTF-8 bytes as a NUL-terminated buffer,
 //! so a read past the end sees `0`; partial digit runs keep the digits read.
-use crate::py::Date;
+use crate::py::{Date, days_in_month, is_leap, ord_to_ymd, ymd_to_ord};
 use crate::pyvalue::repr_points;
 
 /// A parsed `datetime`: its date, clock and UTC offset in microseconds.
@@ -38,44 +38,6 @@ impl Buf<'_> {
     }
 }
 
-fn is_leap(year: i32) -> bool {
-    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-}
-
-fn days_in_month(year: i32, month: i32) -> i32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        _ if is_leap(year) => 29,
-        _ => 28,
-    }
-}
-
-fn ymd_to_ord(year: i32, month: i32, day: i32) -> i64 {
-    let y = i64::from(year) - 1;
-    let before_year = y * 365 + y / 4 - y / 100 + y / 400;
-    let before_month: i64 = (1..month).map(|m| i64::from(days_in_month(year, m))).sum();
-    before_year + before_month + i64::from(day)
-}
-
-/// `ord_to_ymd`, without a range limit.
-fn ord_to_ymd(ordinal: i64) -> (i32, i32, i32) {
-    let mut year = ((ordinal - 1) * 400 / 146_097 + 1) as i32;
-    while ymd_to_ord(year + 1, 1, 1) <= ordinal {
-        year += 1;
-    }
-    while ymd_to_ord(year, 1, 1) > ordinal {
-        year -= 1;
-    }
-    let mut rest = (ordinal - ymd_to_ord(year, 1, 1) + 1) as i32;
-    let mut month = 1;
-    while rest > days_in_month(year, month) {
-        rest -= days_in_month(year, month);
-        month += 1;
-    }
-    (year, month, rest)
-}
-
 /// `iso_to_ymd`: 0 on success, else its negative code.
 fn iso_to_ymd(iso_year: i32, week: i32, day: i32) -> Result<(i32, i32, i32), i32> {
     if !(1..=9999).contains(&iso_year) {
@@ -97,7 +59,8 @@ fn iso_to_ymd(iso_year: i32, week: i32, day: i32) -> Result<(i32, i32, i32), i32
     if first_weekday > 3 {
         monday += 7;
     }
-    Ok(ord_to_ymd(monday + i64::from((week - 1) * 7 + day - 1)))
+    let (year, month, day) = ord_to_ymd(monday + i64::from((week - 1) * 7 + day - 1));
+    Ok((year, month as i32, day as i32))
 }
 
 /// `parse_isoformat_date(dtstr, len)`: the date, or a negative code.
@@ -345,7 +308,7 @@ pub fn datetime_fromisoformat(string: &[u32]) -> Result<DateTime, String> {
     }
     let [mut hour, minute, second, microsecond] = clock;
     if hour == 24 && (1..=12).contains(&month) {
-        let dim = days_in_month(year, month);
+        let dim = days_in_month(year, month as u32) as i32;
         if day <= dim {
             if minute != 0 || second != 0 || microsecond != 0 {
                 return Err("minute, second, and microsecond must be 0 when hour is 24".into());
@@ -451,6 +414,11 @@ mod tests {
             "date value out of range"
         );
         assert_eq!(parse("2026-W01-1").unwrap().date.isoformat(), "2025-12-29");
+        assert_eq!(parse("0001-W01-1").unwrap().date.isoformat(), "0001-01-01");
+        assert_eq!(
+            parse("9999-W52-6").unwrap_err(),
+            "year must be in 1..9999, not 10000"
+        );
         assert_eq!(
             date_fromisoformat("20261024").unwrap().isoformat(),
             "2026-10-24"

@@ -650,11 +650,11 @@ pub const MAX_DATE: Date = Date {
     day: 31,
 };
 
-fn is_leap(year: i32) -> bool {
+pub(crate) fn is_leap(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-fn days_in_month(year: i32, month: u32) -> u32 {
+pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -670,6 +670,29 @@ fn days_before_year(year: i32) -> i64 {
 
 fn days_before_month(year: i32, month: u32) -> i64 {
     (1..month).map(|m| i64::from(days_in_month(year, m))).sum()
+}
+
+pub(crate) fn ymd_to_ord(year: i32, month: u32, day: u32) -> i64 {
+    days_before_year(year) + days_before_month(year, month) + i64::from(day)
+}
+
+/// Proleptic Gregorian ordinal to `(year, month, day)`, without a range limit.
+pub(crate) fn ord_to_ymd(ordinal: i64) -> (i32, u32, u32) {
+    // Estimate the year, then correct it.
+    let mut year = ((ordinal - 1) * 400 / 146_097 + 1) as i32;
+    while days_before_year(year + 1) < ordinal {
+        year += 1;
+    }
+    while days_before_year(year) >= ordinal {
+        year -= 1;
+    }
+    let mut rest = ordinal - days_before_year(year);
+    let mut month = 1;
+    while rest > i64::from(days_in_month(year, month)) {
+        rest -= i64::from(days_in_month(year, month));
+        month += 1;
+    }
+    (year, month, rest as u32)
 }
 
 impl Date {
@@ -696,32 +719,15 @@ impl Date {
 
     /// The proleptic Gregorian ordinal, 1 for 0001-01-01.
     pub fn ordinal(&self) -> i64 {
-        days_before_year(self.year) + days_before_month(self.year, self.month) + i64::from(self.day)
+        ymd_to_ord(self.year, self.month, self.day)
     }
 
     pub fn from_ordinal(ordinal: i64) -> Option<Date> {
         if !(1..=MAX_DATE.ordinal()).contains(&ordinal) {
             return None;
         }
-        // Estimate the year, then correct it.
-        let mut year = ((ordinal - 1) * 400 / 146_097 + 1) as i32;
-        while days_before_year(year + 1) < ordinal {
-            year += 1;
-        }
-        while days_before_year(year) >= ordinal {
-            year -= 1;
-        }
-        let mut rest = ordinal - days_before_year(year);
-        let mut month = 1;
-        while rest > i64::from(days_in_month(year, month)) {
-            rest -= i64::from(days_in_month(year, month));
-            month += 1;
-        }
-        Some(Date {
-            year,
-            month,
-            day: rest as u32,
-        })
+        let (year, month, day) = ord_to_ymd(ordinal);
+        Some(Date { year, month, day })
     }
 
     /// `date + timedelta(days=n)`, or None where Python raises OverflowError.
