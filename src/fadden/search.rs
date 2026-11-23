@@ -3545,10 +3545,10 @@ fn execute_query(
     Ok(refused_code(dated.as_ref()))
 }
 
-/// What `define` says of a term it found no definition paragraph for.
-const UNDEFINED_NOTE: &str = "No definition paragraph found. The term may be defined another way \
-or in a row this index does not read as definitions; this is not a finding that it has its \
-ordinary meaning.";
+/// What `define --json` says of a term it found no definition paragraph for.
+const UNDEFINED_NOTE: &str = "No definition paragraph found. The term may be defined another way, \
+in a title this index does not hold or in a row it does not read as definitions; this is not a \
+finding that it has its ordinary meaning.";
 
 fn execute_define(
     args: &crate::argparse::Namespace,
@@ -3586,7 +3586,7 @@ fn execute_define(
                 ("defined".into(), Json::Bool(false)),
                 (
                     "register_id".into(),
-                    title.as_deref().map_or(Json::Null, Json::str),
+                    to_json(optional_rid(title.as_deref())?),
                 ),
                 ("longer_terms".into(), Json::Int(longer_terms.into())),
                 ("note".into(), Json::str(UNDEFINED_NOTE)),
@@ -3616,7 +3616,10 @@ fn execute_define(
     }
     caps.marker("rows", found.len(), withheld, false, run)?;
     if undefined && longer_terms == 0 {
-        run.print(UNDEFINED_NOTE);
+        run.print(
+            "No definition paragraph found. The term may be defined another way or in a row this \
+             index does not read as definitions; this is not a finding that it has its ordinary meaning.",
+        );
     }
     if let Some(report) = &dated {
         print_dated(report, false, &mut caps, run)?;

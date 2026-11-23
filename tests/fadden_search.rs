@@ -3617,9 +3617,9 @@ fn define_json_says_when_the_term_itself_is_not_defined() {
     let c = case();
     built(&c);
     let dir = c.out.parent().unwrap();
-    let note = "No definition paragraph found. The term may be defined another way or in a \
-                row this index does not read as definitions; this is not a finding that it \
-                has its ordinary meaning.";
+    let note = "No definition paragraph found. The term may be defined another way, in a \
+                title this index does not hold or in a row it does not read as definitions; \
+                this is not a finding that it has its ordinary meaning.";
     let status = |term: &str, title: Value, longer: usize| {
         json!({"term": term, "defined": false, "register_id": title,
                "longer_terms": longer, "note": note})
@@ -3655,4 +3655,37 @@ fn define_json_says_when_the_term_itself_is_not_defined() {
     let found = json_lines(&["define", "index.sqlite", "WIDGET", "--json"], dir);
     assert!(found.iter().all(|item| item.get("defined").is_none()));
     assert_eq!(found.len(), 2);
+}
+
+#[test]
+fn the_undefined_line_counts_every_longer_term_before_the_caps() {
+    let c = case();
+    let mut titles = sample_titles();
+    let other = &mut titles.get_mut(OTHER).unwrap().1[1];
+    other["text"] =
+        json!("widget means a small device.\n\napproved widget means a widget on the list.");
+    write_corpus(&c.root, &titles, &[]);
+    build(&c);
+    let dir = c.out.parent().unwrap();
+    let args = [
+        "define",
+        "index.sqlite",
+        "approved",
+        "--json",
+        "--follow",
+        "--limit",
+        "1",
+    ];
+    let lines = json_lines(&args, dir);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(
+        (&lines[0]["defined"], &lines[0]["longer_terms"]),
+        (&json!(false), &json!(2))
+    );
+    assert_eq!(lines[1]["term"], "approved gadget");
+    assert!(lines[1]["refers_to"].is_array());
+    assert_eq!(
+        (&lines[2]["shown"], &lines[2]["withheld"]),
+        (&json!(1), &json!(1))
+    );
 }

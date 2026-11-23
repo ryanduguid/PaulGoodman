@@ -769,3 +769,46 @@ fn refusals_count_against_the_character_budget_after_the_rows() {
     assert!(out.contains("[truncated] 0 refusals shown, 1 withheld: past --limit 10"));
     assert!(!out.contains(&format!("refused {SUPERSEDED}")));
 }
+
+#[test]
+fn a_dated_define_says_a_term_is_undefined_only_when_no_title_was_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    let args = [
+        "define",
+        &index,
+        "gizmo",
+        "--title",
+        CURRENT,
+        "--as-at",
+        NEXT_VERSION,
+        "--json",
+    ];
+    let (code, out, _) = cli(dir.path(), &args);
+    assert_eq!(code, 0);
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        (&lines[0]["defined"], &lines[0]["register_id"]),
+        (&json!(false), &json!(CURRENT))
+    );
+    assert!(lines[1].get("as_at_summary").is_some());
+    // A refused title may define the term, so the refused run has no such line.
+    let refused = [
+        "define",
+        &index,
+        "gizmo",
+        "--title",
+        CURRENT,
+        "--as-at",
+        "2099-06-30",
+        "--json",
+    ];
+    let (code, out, _) = cli(dir.path(), &refused);
+    assert_eq!(code, 1);
+    assert!(
+        json_lines(&out)
+            .iter()
+            .all(|line| line.get("defined").is_none())
+    );
+}
