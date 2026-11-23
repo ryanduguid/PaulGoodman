@@ -3299,9 +3299,16 @@ fn print_refusals(refusals: &[Json], json: bool, run: &mut Run) -> Result<(), Ex
     Ok(())
 }
 
-/// Prints a dated report's refusals and summary.
-fn print_dated(report: &DatedReport, json: bool, run: &mut Run) -> Result<(), Exc> {
-    print_refusals(&report.refusals, json, run)?;
+/// Prints a dated report's refusals, capped after the rows, and its summary.
+fn print_dated(
+    report: &DatedReport,
+    json: bool,
+    caps: &mut Caps,
+    run: &mut Run,
+) -> Result<(), Exc> {
+    let (refusals, withheld) = caps.keep(report.refusals.clone());
+    print_refusals(&refusals, json, run)?;
+    caps.marker("refusals", refusals.len(), withheld, json, run)?;
     if json {
         return run.print_points(&dumps_line(&report.summary, false));
     }
@@ -3332,11 +3339,13 @@ const MAX_CHARS_RANGE: std::ops::RangeInclusive<i64> = 1_000..=100_000;
 
 /// What `--limit` and `--max-chars` let a command print: rows in order, while
 /// each list stays within the limit and the JSON form of every row kept so far
-/// stays within the character budget, shared by all of a command's lists.
+/// stays within the character budget, shared by all of a command's lists. Once
+/// a row passes the budget, every later row and list is withheld.
 struct Caps {
     limit: i64,
     max_chars: i64,
     left: usize,
+    spent: bool,
 }
 
 impl Caps {
@@ -3357,6 +3366,7 @@ impl Caps {
             limit: int("limit"),
             max_chars,
             left: usize::try_from(max_chars).unwrap_or_default(),
+            spent: false,
         })
     }
 
@@ -3365,8 +3375,10 @@ impl Caps {
         let total = rows.len();
         let mut kept = Vec::new();
         for row in rows {
+            // Code points, as `dumps_line` gives them.
             let size = dumps_line(&row, false).len();
-            if i64::try_from(kept.len()).unwrap_or(i64::MAX) >= self.limit || size > self.left {
+            self.spent = self.spent || size > self.left;
+            if self.spent || i64::try_from(kept.len()).unwrap_or(i64::MAX) >= self.limit {
                 break;
             }
             self.left -= size;
@@ -3384,13 +3396,20 @@ impl Caps {
     }
 
     /// The marker after a list that lost rows: a JSON line, or a text line.
-    fn marker(&self, shown: usize, withheld: usize, json: bool, run: &mut Run) -> Result<(), Exc> {
+    fn marker(
+        &self,
+        list: &str,
+        shown: usize,
+        withheld: usize,
+        json: bool,
+        run: &mut Run,
+    ) -> Result<(), Exc> {
         if withheld == 0 {
             return Ok(());
         }
         if !json {
             run.print(&format!(
-                "[truncated] {shown} rows shown, {withheld} withheld: {}",
+                "[truncated] {shown} {list} shown, {withheld} withheld: {}",
                 self.past()
             ));
             return Ok(());
@@ -3398,6 +3417,7 @@ impl Caps {
         let count = |n: usize| Json::Int(n.into());
         let marker = object(vec![
             ("truncated".into(), Json::Bool(true)),
+            ("list".into(), Json::str(list)),
             ("shown".into(), count(shown)),
             ("withheld".into(), count(withheld)),
             ("limit".into(), Json::Int(self.limit.into())),
@@ -3483,9 +3503,9 @@ fn execute_query(
         for hit in &hits {
             run.print_points(&dumps_line(hit, false))?;
         }
-        caps.marker(hits.len(), withheld, true, run)?;
+        caps.marker("rows", hits.len(), withheld, true, run)?;
         if let Some(report) = &dated {
-            print_dated(report, true, run)?;
+            print_dated(report, true, &mut caps, run)?;
         }
         return Ok(refused_code(dated.as_ref()));
     }
@@ -3513,9 +3533,9 @@ fn execute_query(
             crate::py::split_whitespace(&s("snippet")).join(" ")
         ));
     }
-    caps.marker(hits.len(), withheld, false, run)?;
+    caps.marker("rows", hits.len(), withheld, false, run)?;
     if let Some(report) = &dated {
-        print_dated(report, false, run)?;
+        print_dated(report, false, &mut caps, run)?;
     }
     run.print(&format!(
         "{} rows. {}",
@@ -3551,9 +3571,9 @@ fn execute_define(
         for item in &found {
             run.print_points(&dumps_line(item, false))?;
         }
-        caps.marker(found.len(), withheld, true, run)?;
+        caps.marker("rows", found.len(), withheld, true, run)?;
         if let Some(report) = &dated {
-            print_dated(report, true, run)?;
+            print_dated(report, true, &mut caps, run)?;
         }
         return Ok(refused_code(dated.as_ref()));
     }
@@ -3564,7 +3584,7 @@ fn execute_define(
         run.print(&format!("   {}", s("definition").replace("\n\n", "\n   ")));
         print_refers_to(item, run);
     }
-    caps.marker(found.len(), withheld, false, run)?;
+    caps.marker("rows", found.len(), withheld, false, run)?;
     if found.is_empty() && withheld == 0 && refused_code(dated.as_ref()) == 0 {
         run.print(
             "No definition paragraph found. The term may be defined another way or in a row this \
@@ -3572,7 +3592,7 @@ fn execute_define(
         );
     }
     if let Some(report) = &dated {
-        print_dated(report, false, run)?;
+        print_dated(report, false, &mut caps, run)?;
     }
     run.print(&source_line(connection)?);
     Ok(refused_code(dated.as_ref()))

@@ -3489,7 +3489,7 @@ fn max_chars_withholds_the_hits_past_the_budget_and_says_so() {
     assert_eq!(shown, &all[..2]);
     assert_eq!(
         *marker,
-        json!({"truncated": true, "shown": 2, "withheld": all.len() - 2,
+        json!({"truncated": true, "list": "rows", "shown": 2, "withheld": all.len() - 2,
                "limit": 10, "max_chars": budget})
     );
     let (code, text, _) = cli(
@@ -3520,7 +3520,7 @@ fn define_and_refs_take_a_limit_and_mark_what_they_withhold() {
     assert_eq!(capped[0], all[0]);
     assert_eq!(
         capped[1],
-        json!({"truncated": true, "shown": 1, "withheld": 1, "limit": 1, "max_chars": 20000})
+        json!({"truncated": true, "list": "rows", "shown": 1, "withheld": 1, "limit": 1, "max_chars": 20000})
     );
     let (_, text, _) = cli(&["define", "index.sqlite", "widget", "--limit", "1"], dir);
     assert!(
@@ -3565,4 +3565,49 @@ fn define_and_refs_take_a_limit_and_mark_what_they_withhold() {
             )
         );
     }
+}
+
+#[test]
+fn the_character_budget_is_shared_by_refs_lists_in_order() {
+    let c = case();
+    built(&c);
+    let dir = c.out.parent().unwrap();
+    let row = format!("{ACT}:0002:2{NBH}1");
+    let entries = |report: &Value| -> Vec<Value> {
+        ["cites", "cited_by"]
+            .iter()
+            .flat_map(|key| report[*key].as_array().unwrap().clone())
+            .collect()
+    };
+    let full = &json_lines(&["refs", "index.sqlite", &row, "--json"], dir)[0];
+    let cites = full["cites"].as_array().unwrap().len();
+    let all = entries(full);
+    let mut kept_counts = Vec::new();
+    for budget in (1000..=6000).step_by(50) {
+        let max = budget.to_string();
+        let capped = &json_lines(
+            &["refs", "index.sqlite", &row, "--json", "--max-chars", &max],
+            dir,
+        )[0];
+        let kept = entries(capped);
+        // Whatever the budget, the rows kept are the first rows of the lists in order.
+        assert_eq!(kept, all[..kept.len()], "budget {budget}");
+        let withheld: u64 = match capped.get("truncated") {
+            Some(t) => t["withheld"]
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|n| n.as_u64().unwrap())
+                .sum(),
+            None => 0,
+        };
+        assert_eq!(kept.len() + usize::try_from(withheld).unwrap(), all.len());
+        kept_counts.push(kept.len());
+    }
+    // The budget cut inside cited_by after keeping every cite, and also let all through.
+    assert!(
+        kept_counts.iter().any(|&n| n > cites && n < all.len()),
+        "{kept_counts:?}"
+    );
+    assert_eq!(kept_counts.last(), Some(&all.len()));
 }
