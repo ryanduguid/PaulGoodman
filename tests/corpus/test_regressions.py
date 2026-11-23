@@ -950,6 +950,39 @@ class GeneratedReadmeTests(unittest.TestCase):
             self.assertIn("no published compilation", paragraph, paragraph)
 
 
+class StateRegisterLicenceTests(unittest.TestCase):
+    """A state or territory register needs its terms read and recorded in
+    scope.md before any stage reads it.  Hold one row per register with one
+    of the 5 readings, and hold NOTICE to the attribution wording of every
+    register a stage reads."""
+
+    READINGS = {"allowed with attribution", "allowed for personal or internal use only",
+                "unclear", "not allowed", "unread"}
+    REGISTERS = ("NSW", "Vic", "Qld", "WA", "SA", "Tas", "ACT", "NT")
+
+    def test_scope_records_a_reading_for_each_register(self):
+        scope = (REPO / "docs" / "scope.md").read_text(encoding="utf-8")
+        section = scope.split("### State and territory registers", 1)
+        self.assertEqual(len(section), 2, "no state register section in scope.md")
+        rows = {}
+        for line in section[1].splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if line.startswith("| ") and cells[0] in self.REGISTERS:
+                rows[cells[0]] = cells
+        self.assertEqual(set(rows), set(self.REGISTERS))
+        for name, cells in rows.items():
+            with self.subTest(register=name):
+                self.assertIn(cells[-1].strip("`"), self.READINGS)
+                self.assertRegex(cells[1], r"<https://[^>]+>")
+
+    def test_notice_carries_the_queensland_attribution(self):
+        notice = " ".join((REPO / "NOTICE").read_text(encoding="utf-8").split())
+        self.assertIn(
+            "Based on content from the Queensland Legislation website at [full date "
+            "of download]. For the latest information on Queensland Government "
+            "legislation please go to https://www.legislation.qld.gov.au.", notice)
+
+
 class ShippedIntermediateTests(unittest.TestCase):
     def test_build_md_records_that_the_shipped_manifest_predates_the_fix(self):
         """manifest_md.json still holds the pre-fix parse of F2025L00281 - the
