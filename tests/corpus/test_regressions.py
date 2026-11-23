@@ -977,10 +977,17 @@ class StateRegisterLicenceTests(unittest.TestCase):
 
     def test_notice_carries_the_queensland_attribution(self):
         notice = " ".join((REPO / "NOTICE").read_text(encoding="utf-8").split())
-        self.assertIn(
-            "Based on content from the Queensland Legislation website at [full date "
-            "of download]. For the latest information on Queensland Government "
-            "legislation please go to https://www.legislation.qld.gov.au.", notice)
+        qld = notice[notice.index("Queensland Legislation website under"):]
+        for required in (
+                "Based on content from the Queensland Legislation website at [full date "
+                "of download]. For the latest information on Queensland Government "
+                "legislation please go to https://www.legislation.qld.gov.au.",
+                "https://creativecommons.org/licenses/by/4.0/",
+                "(c) The State of Queensland (Office of the Queensland Parliamentary Counsel)",
+                "material under other specified licences are excluded",
+                "with the date filled in"):
+            with self.subTest(required=required):
+                self.assertIn(required, qld)
 
 
 class ShippedIntermediateTests(unittest.TestCase):
