@@ -741,3 +741,31 @@ fn a_schema_2_index_is_refused_by_every_read_command() {
         assert!(err.contains("different schema version"), "{args:?}: {err}");
     }
 }
+
+#[test]
+fn refusals_count_against_the_character_budget_after_the_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build(dir.path(), Some(NEXT_VERSION));
+    let args = ["query", &index, "widget", "--as-at", NEXT_VERSION, "--json"];
+    let (_, out, _) = cli(dir.path(), &args);
+    let sizes: Vec<usize> = out.lines().map(|l| l.chars().count()).collect();
+    let budget = 1000.max(sizes[0] + sizes[1]);
+    assert!(sizes[0] + sizes[1] + sizes[2] > budget);
+    let max = budget.to_string();
+    let capped = [&args[..], &["--max-chars", &max]].concat();
+    let (code, out, _) = cli(dir.path(), &capped);
+    assert_eq!(code, 1);
+    let lines = json_lines(&out);
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[1]["as_at"]["status"], "captured");
+    assert_eq!(
+        lines[2],
+        json!({"truncated": true, "list": "refusals", "shown": 0, "withheld": 1,
+               "limit": 10, "max_chars": budget})
+    );
+    assert_eq!(lines[3]["as_at_summary"]["withheld_rows"], 1);
+    let text = [&args[..5], &["--max-chars", &max]].concat();
+    let (_, out, _) = cli(dir.path(), &text);
+    assert!(out.contains("[truncated] 0 refusals shown, 1 withheld: past --limit 10"));
+    assert!(!out.contains(&format!("refused {SUPERSEDED}")));
+}

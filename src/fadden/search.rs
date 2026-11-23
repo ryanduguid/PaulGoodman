@@ -2952,6 +2952,8 @@ fn parser() -> Parser {
                 .arg(Action::option("--title").help("look only in this register id"))
                 .arg(Action::option("--as-at").metavar("DATE").help(AS_AT_HELP))
                 .arg(Action::flag("--follow").help("also list the provisions each definition cites"))
+                .arg(limit_option(20))
+                .arg(max_chars_option())
                 .arg(Action::flag("--json"))
         })
         .sub(
@@ -2964,14 +2966,33 @@ fn parser() -> Parser {
                         Action::flag("--terms")
                             .help("also list the asterisked defined terms the row uses"),
                     )
+                    .arg(limit_option(100).help("at most this many entries in each list"))
+                    .arg(max_chars_option())
                     .arg(Action::flag("--json"))
             },
         )
 }
 
-fn query_arguments(parser: Parser) -> Parser {
+/// `--limit 1-100`, defaulting to `default`.
+fn limit_option(default: i64) -> Action {
     let limits: Vec<String> = (1..=100).map(|n| n.to_string()).collect();
     let limits: Vec<&str> = limits.iter().map(String::as_str).collect();
+    Action::option("--limit")
+        .int()
+        .default(crate::argparse::Value::Int(default))
+        .choices(&limits)
+        .metavar("1-100")
+}
+
+fn max_chars_option() -> Action {
+    Action::option("--max-chars")
+        .int()
+        .default(crate::argparse::Value::Int(MAX_CHARS))
+        .metavar("N")
+        .help("withhold the rows past N characters of JSON, 1000 to 100000")
+}
+
+fn query_arguments(parser: Parser) -> Parser {
     parser
         .arg(Action::positional("index"))
         .arg(Action::positional("words").one_or_more())
@@ -2979,13 +3000,8 @@ fn query_arguments(parser: Parser) -> Parser {
         .arg(Action::option("--as-at").metavar("DATE").help(AS_AT_HELP))
         .arg(Action::flag("--exact").help("match only the words as typed"))
         .arg(Action::flag("--stem").help("rank by English word forms alone"))
-        .arg(
-            Action::option("--limit")
-                .int()
-                .default(crate::argparse::Value::Int(10))
-                .choices(&limits)
-                .metavar("1-100"),
-        )
+        .arg(limit_option(10))
+        .arg(max_chars_option())
         .arg(Action::flag("--json").help("print one object per hit"))
 }
 
@@ -3283,9 +3299,16 @@ fn print_refusals(refusals: &[Json], json: bool, run: &mut Run) -> Result<(), Ex
     Ok(())
 }
 
-/// Prints a dated report's refusals and summary.
-fn print_dated(report: &DatedReport, json: bool, run: &mut Run) -> Result<(), Exc> {
-    print_refusals(&report.refusals, json, run)?;
+/// Prints a dated report's refusals, capped after the rows, and its summary.
+fn print_dated(
+    report: &DatedReport,
+    json: bool,
+    caps: &mut Caps,
+    run: &mut Run,
+) -> Result<(), Exc> {
+    let (refusals, withheld) = caps.keep(report.refusals.clone());
+    print_refusals(&refusals, json, run)?;
+    caps.marker("refusals", refusals.len(), withheld, json, run)?;
     if json {
         return run.print_points(&dumps_line(&report.summary, false));
     }
@@ -3308,6 +3331,130 @@ fn print_dated(report: &DatedReport, json: bool, run: &mut Run) -> Result<(), Ex
 /// Exit 1 if a dated report refused a title, so no caller reads a refusal as no rows.
 fn refused_code(dated: Option<&DatedReport>) -> i32 {
     i32::from(dated.is_some_and(|report| !report.refusals.is_empty()))
+}
+
+/// The default `--max-chars`, and the least and most it accepts.
+const MAX_CHARS: i64 = 20_000;
+const MAX_CHARS_RANGE: std::ops::RangeInclusive<i64> = 1_000..=100_000;
+
+/// What `--limit` and `--max-chars` let a command print: rows in order, while
+/// each list stays within the limit and the JSON form of every row kept so far
+/// stays within the character budget, shared by all of a command's lists. Once
+/// a row passes the budget, every later row and list is withheld.
+struct Caps {
+    limit: i64,
+    max_chars: i64,
+    left: usize,
+    spent: bool,
+}
+
+impl Caps {
+    fn of(args: &crate::argparse::Namespace) -> Result<Self, Exc> {
+        let int = |key: &str| match args.get(key) {
+            Some(crate::argparse::Value::Int(n)) => *n,
+            _ => MAX_CHARS,
+        };
+        let max_chars = int("max_chars");
+        if !MAX_CHARS_RANGE.contains(&max_chars) {
+            return Err(refused(format!(
+                "--max-chars must be from {} to {}",
+                MAX_CHARS_RANGE.start(),
+                MAX_CHARS_RANGE.end()
+            )));
+        }
+        Ok(Self {
+            limit: int("limit"),
+            max_chars,
+            left: usize::try_from(max_chars).unwrap_or_default(),
+            spent: false,
+        })
+    }
+
+    /// The rows kept, and how many were withheld.
+    fn keep(&mut self, rows: Vec<Json>) -> (Vec<Json>, usize) {
+        let total = rows.len();
+        let mut kept = Vec::new();
+        for row in rows {
+            // Code points, as `dumps_line` gives them.
+            let size = dumps_line(&row, false).len();
+            self.spent = self.spent || size > self.left;
+            if self.spent || i64::try_from(kept.len()).unwrap_or(i64::MAX) >= self.limit {
+                break;
+            }
+            self.left -= size;
+            kept.push(row);
+        }
+        let withheld = total - kept.len();
+        (kept, withheld)
+    }
+
+    fn past(&self) -> String {
+        format!(
+            "past --limit {} or --max-chars {}",
+            self.limit, self.max_chars
+        )
+    }
+
+    /// The marker after a list that lost rows: a JSON line, or a text line.
+    fn marker(
+        &self,
+        list: &str,
+        shown: usize,
+        withheld: usize,
+        json: bool,
+        run: &mut Run,
+    ) -> Result<(), Exc> {
+        if withheld == 0 {
+            return Ok(());
+        }
+        if !json {
+            run.print(&format!(
+                "[truncated] {shown} {list} shown, {withheld} withheld: {}",
+                self.past()
+            ));
+            return Ok(());
+        }
+        let count = |n: usize| Json::Int(n.into());
+        let marker = object(vec![
+            ("truncated".into(), Json::Bool(true)),
+            ("list".into(), Json::str(list)),
+            ("shown".into(), count(shown)),
+            ("withheld".into(), count(withheld)),
+            ("limit".into(), Json::Int(self.limit.into())),
+            ("max_chars".into(), Json::Int(self.max_chars.into())),
+        ]);
+        run.print_points(&dumps_line(&marker, false))
+    }
+
+    /// `refs`: caps each list in the report, in its order, and adds `truncated`
+    /// naming the lists that lost entries. A report that lost none is unchanged.
+    fn report(&mut self, mut report: Json) -> (Json, Vec<(String, usize)>) {
+        let mut withheld = Vec::new();
+        if let Json::Object(pairs) = &mut report {
+            for (key, value) in pairs {
+                if let Json::Array(items) = value {
+                    let (kept, lost) = self.keep(std::mem::take(items));
+                    *items = kept;
+                    if lost > 0 {
+                        withheld.push((key.as_str().unwrap_or_default().to_string(), lost));
+                    }
+                }
+            }
+        }
+        if withheld.is_empty() {
+            return (report, withheld);
+        }
+        let lists = withheld
+            .iter()
+            .map(|(name, lost)| (name.clone(), Json::Int((*lost).into())))
+            .collect();
+        let truncated = object(vec![
+            ("withheld".into(), object(lists)),
+            ("limit".into(), Json::Int(self.limit.into())),
+            ("max_chars".into(), Json::Int(self.max_chars.into())),
+        ]);
+        (with_field(report, "truncated", truncated), withheld)
+    }
 }
 
 type QueryFn = fn(&Connection, &[String], Option<&str>, i64) -> Result<Vec<Json>, Exc>;
@@ -3349,13 +3496,16 @@ fn execute_query(
     connection: &Connection,
     run: &mut Run,
 ) -> Result<i32, Exc> {
+    let mut caps = Caps::of(args)?;
     let (hits, dated) = query_results(args, connection)?;
+    let (hits, withheld) = caps.keep(hits);
     if args.flag("json") {
         for hit in &hits {
             run.print_points(&dumps_line(hit, false))?;
         }
+        caps.marker("rows", hits.len(), withheld, true, run)?;
         if let Some(report) = &dated {
-            print_dated(report, true, run)?;
+            print_dated(report, true, &mut caps, run)?;
         }
         return Ok(refused_code(dated.as_ref()));
     }
@@ -3383,8 +3533,9 @@ fn execute_query(
             crate::py::split_whitespace(&s("snippet")).join(" ")
         ));
     }
+    caps.marker("rows", hits.len(), withheld, false, run)?;
     if let Some(report) = &dated {
-        print_dated(report, false, run)?;
+        print_dated(report, false, &mut caps, run)?;
     }
     run.print(&format!(
         "{} rows. {}",
@@ -3399,6 +3550,7 @@ fn execute_define(
     connection: &Connection,
     run: &mut Run,
 ) -> Result<i32, Exc> {
+    let mut caps = Caps::of(args)?;
     let title = args.str("title");
     let term = list(args, "term").join(" ");
     let dated = args
@@ -3414,12 +3566,14 @@ fn execute_define(
     } else {
         found
     };
+    let (found, withheld) = caps.keep(found);
     if args.flag("json") {
         for item in &found {
             run.print_points(&dumps_line(item, false))?;
         }
+        caps.marker("rows", found.len(), withheld, true, run)?;
         if let Some(report) = &dated {
-            print_dated(report, true, run)?;
+            print_dated(report, true, &mut caps, run)?;
         }
         return Ok(refused_code(dated.as_ref()));
     }
@@ -3430,14 +3584,15 @@ fn execute_define(
         run.print(&format!("   {}", s("definition").replace("\n\n", "\n   ")));
         print_refers_to(item, run);
     }
-    if found.is_empty() && refused_code(dated.as_ref()) == 0 {
+    caps.marker("rows", found.len(), withheld, false, run)?;
+    if found.is_empty() && withheld == 0 && refused_code(dated.as_ref()) == 0 {
         run.print(
             "No definition paragraph found. The term may be defined another way or in a row this \
              index does not read as definitions; this is not a finding that it has its ordinary meaning.",
         );
     }
     if let Some(report) = &dated {
-        print_dated(report, false, run)?;
+        print_dated(report, false, &mut caps, run)?;
     }
     run.print(&source_line(connection)?);
     Ok(refused_code(dated.as_ref()))
@@ -3512,6 +3667,7 @@ fn execute_refs(
     connection: &Connection,
     run: &mut Run,
 ) -> Result<i32, Exc> {
+    let mut caps = Caps::of(args)?;
     let row_id = args.str("row_id").unwrap_or_default();
     let mut report = refs(connection, &row_id)?;
     if args.flag("terms") {
@@ -3519,6 +3675,7 @@ fn execute_refs(
         report = with_field(report, "terms", Json::Array(terms));
         report = with_field(report, "unresolved_terms", Json::Int(unresolved.into()));
     }
+    let (report, withheld) = caps.report(report);
     if args.flag("json") {
         run.print_points(&dumps_line(&report, false))?;
         return Ok(0);
@@ -3545,9 +3702,10 @@ fn execute_refs(
             ));
         }
     }
+    let rulings_withheld = withheld.iter().any(|(name, _)| name == "cited_by_rulings");
     // Text output tells an index holding no rulings from one where none cites the row.
     match report.at("cited_by_rulings") {
-        Json::Array(rulings) if rulings.is_empty() => {
+        Json::Array(rulings) if rulings.is_empty() && !rulings_withheld => {
             run.print("  no captured ruling cites this by its Act");
             run.print(RULINGS_NOTICE);
         }
@@ -3571,6 +3729,17 @@ fn execute_refs(
             run.print(RULINGS_NOTICE);
         }
         _ => run.print("  this index holds no rulings; build with --rulings to list them"),
+    }
+    if !withheld.is_empty() {
+        let lists: Vec<String> = withheld
+            .iter()
+            .map(|(name, lost)| format!("{lost} {name}"))
+            .collect();
+        run.print(&format!(
+            "  [truncated] withheld {}: {}",
+            lists.join(", "),
+            caps.past()
+        ));
     }
     run.print(&source_line(connection)?);
     Ok(0)

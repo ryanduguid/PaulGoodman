@@ -45,7 +45,8 @@
 //! Search schema 4 deliberately adds captured-window metadata and a Porter
 //! index. Its valid databases use the independent Python logical oracle in
 //! `search-indexes.json`, including original and new FTS postings; malformed
-//! files keep their frozen hashes. Query usage adds only the `--exact` and `--stem` flags.
+//! files keep their frozen hashes. Query usage adds only the `--exact` and `--stem` flags
+//! and the `--max-chars` option.
 //! `capture_register`, `rulings`, `probe13`, `discover` and `versions` fetch
 //! over HTTP, so their cases need the scripted responses of the `fake-http`
 //! feature: `cargo test --features fake-http --test fadden_golden`. That build
@@ -646,7 +647,7 @@ fn run_case(family: &str, case: &Value, shared_module: &Path, dates: &[String]) 
                 let text = if family == "search" && argv.first().is_some_and(|a| a == "query") {
                     text.replace(
                         "                                     [--limit 1-100] [--json]\n",
-                        "                                     [--exact] [--stem] [--limit 1-100]\n                                     [--json]\n",
+                        "                                     [--exact] [--stem] [--limit 1-100]\n                                     [--max-chars N] [--json]\n",
                     )
                 } else {
                     text.to_string()
