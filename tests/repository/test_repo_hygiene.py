@@ -168,3 +168,16 @@ def test_comparison_rows_carry_the_sources_read_on_17_november() -> None:
     ):
         assert name in rows
     assert "ParlInfo Search (version 1.34.11) and the Bills pages were read on 17 November 2026." in comparison
+
+
+def test_attribution_runs_are_never_cancelled() -> None:
+    # Readying a pull request started a second run in the same group, which cancelled
+    # the synchronize run and left a cancelled check that blocked the merge.
+    workflow = (ROOT / ".github" / "workflows" / "no-ai-attribution.yml").read_text(encoding="utf-8")
+
+    assert "cancel-in-progress: true" not in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert (
+        "group: attribution-${{ github.event_name }}-${{ github.event_name == 'pull_request_target'"
+        " && github.event.pull_request.number || github.run_id }}"
+    ) in workflow
