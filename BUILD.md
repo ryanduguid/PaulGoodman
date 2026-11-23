@@ -523,6 +523,16 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   `the`, `if` or `reduced` that continue an entry. It returns every title's
   definition of the term, or terms that begin with it when none matches exactly.
   An empty result is not a finding that the term has its ordinary meaning.
+- `query`, `define` and `refs` cap what they print so an agent's context window is
+  not flooded. `--limit` caps the rows (`query` 10, `define` 20, and 100 in each of
+  `refs`'s lists by default; 1 to 100), and `--max-chars` (default 20,000; 1,000 to
+  100,000) caps the characters of the rows' JSON forms, counted together across a
+  command's lists, so text and `--json` keep the same rows. Rows are kept in order
+  until the next would pass either cap. When rows are withheld, `query` and `define`
+  print `[truncated] N rows shown, M withheld: past --limit L or --max-chars C`, or in
+  JSON a last line `{"truncated": true, "shown": N, "withheld": M, "limit": L,
+  "max_chars": C}`; `refs` prints `[truncated] withheld ...` naming each list, or adds
+  `truncated` with a count per list. Output that passes neither cap is unchanged.
 - `query --as-at DATE` and `define --as-at DATE` answer from a title only when its
   `as_at` status on that date is `captured`. Each other title that matched, or that
   `--title` named, is refused by name with its status, the rows withheld and the next

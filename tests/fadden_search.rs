@@ -3447,3 +3447,122 @@ fn other_rows_agrees_with_grading_every_indexed_row() {
     assert!(compared >= FORMS.len(), "{compared} compared");
     assert!(repeated >= 8, "{repeated} repeated");
 }
+
+/// Each line of a `--json` run that exits 0.
+fn json_lines(args: &[&str], dir: &Path) -> Vec<Value> {
+    let (code, out, err) = cli(args, dir);
+    assert_eq!(code, 0, "{err}");
+    out.lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[test]
+fn max_chars_withholds_the_hits_past_the_budget_and_says_so() {
+    let c = case();
+    built(&c);
+    let dir = c.out.parent().unwrap();
+    let (code, out, err) = cli(&["query", "index.sqlite", "widget", "--json"], dir);
+    assert_eq!(code, 0, "{err}");
+    let all: Vec<Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert!(all.len() >= 3 && all.iter().all(|h| h.get("truncated").is_none()));
+    // A budget that holds the first 2 lines and not the third.
+    let sizes: Vec<usize> = out.lines().map(|l| l.chars().count()).collect();
+    let budget = 1000.max(sizes[0] + sizes[1]);
+    assert!(sizes[0] + sizes[1] + sizes[2] > budget);
+    let max = budget.to_string();
+    let capped = json_lines(
+        &[
+            "query",
+            "index.sqlite",
+            "widget",
+            "--json",
+            "--max-chars",
+            &max,
+        ],
+        dir,
+    );
+    let (marker, shown) = capped.split_last().unwrap();
+    assert_eq!(shown, &all[..2]);
+    assert_eq!(
+        *marker,
+        json!({"truncated": true, "shown": 2, "withheld": all.len() - 2,
+               "limit": 10, "max_chars": budget})
+    );
+    let (code, text, _) = cli(
+        &["query", "index.sqlite", "widget", "--max-chars", &max],
+        dir,
+    );
+    assert_eq!(code, 0);
+    assert!(text.contains(&format!(
+        "[truncated] 2 rows shown, {} withheld: past --limit 10 or --max-chars {budget}\n",
+        all.len() - 2
+    )));
+    assert!(text.contains("\n2 rows. "));
+    let (_, text, _) = cli(&["query", "index.sqlite", "widget"], dir);
+    assert!(!text.contains("[truncated]"));
+}
+
+#[test]
+fn define_and_refs_take_a_limit_and_mark_what_they_withhold() {
+    let c = case();
+    built(&c);
+    let dir = c.out.parent().unwrap();
+    let all = json_lines(&["define", "index.sqlite", "widget", "--json"], dir);
+    assert_eq!(all.len(), 2);
+    let capped = json_lines(
+        &["define", "index.sqlite", "widget", "--json", "--limit", "1"],
+        dir,
+    );
+    assert_eq!(capped[0], all[0]);
+    assert_eq!(
+        capped[1],
+        json!({"truncated": true, "shown": 1, "withheld": 1, "limit": 1, "max_chars": 20000})
+    );
+    let (_, text, _) = cli(&["define", "index.sqlite", "widget", "--limit", "1"], dir);
+    assert!(
+        text.contains(
+            "[truncated] 1 rows shown, 1 withheld: past --limit 1 or --max-chars 20000\n"
+        )
+    );
+
+    let row = format!("{ACT}:0002:2{NBH}1");
+    let full = &json_lines(&["refs", "index.sqlite", &row, "--json"], dir)[0];
+    let count = |report: &Value, key: &str| report[key].as_array().unwrap().len();
+    assert!(count(full, "cites") >= 2 && count(full, "cited_by") >= 2);
+    assert!(full.get("truncated").is_none());
+    let capped = &json_lines(
+        &["refs", "index.sqlite", &row, "--json", "--limit", "1"],
+        dir,
+    )[0];
+    assert_eq!(capped["cites"], json!([full["cites"][0]]));
+    assert_eq!(capped["cited_by"], json!([full["cited_by"][0]]));
+    assert_eq!(
+        capped["truncated"],
+        json!({"withheld": {"cites": count(full, "cites") - 1,
+                            "cited_by": count(full, "cited_by") - 1},
+               "limit": 1, "max_chars": 20000})
+    );
+    let (_, text, _) = cli(&["refs", "index.sqlite", &row, "--limit", "1"], dir);
+    assert!(text.contains(&format!(
+        "  [truncated] withheld {} cites, {} cited_by: past --limit 1 or --max-chars 20000\n",
+        count(full, "cites") - 1,
+        count(full, "cited_by") - 1
+    )));
+    for bad in ["999", "100001"] {
+        assert_eq!(
+            cli(
+                &["query", "index.sqlite", "widget", "--max-chars", bad],
+                dir
+            ),
+            (
+                1,
+                String::new(),
+                "error: --max-chars must be from 1000 to 100000\n".into()
+            )
+        );
+    }
+}
