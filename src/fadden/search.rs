@@ -3545,6 +3545,11 @@ fn execute_query(
     Ok(refused_code(dated.as_ref()))
 }
 
+/// What `define --json` says of a term it found no definition paragraph for.
+const UNDEFINED_NOTE: &str = "No definition paragraph found. The term may be defined another way, \
+in a title this index does not hold or in a row it does not read as definitions; this is not a \
+finding that it has its ordinary meaning.";
+
 fn execute_define(
     args: &crate::argparse::Namespace,
     connection: &Connection,
@@ -3566,8 +3571,28 @@ fn execute_define(
     } else {
         found
     };
+    // Only a lookup that refused no title can say the term itself is not defined.
+    let key = term_key(&term);
+    let undefined = refused_code(dated.as_ref()) == 0
+        && !found
+            .iter()
+            .any(|item| term_key(&pyvalue::py_str(item.at("term"))) == key);
+    let longer_terms = found.len();
     let (found, withheld) = caps.keep(found);
     if args.flag("json") {
+        if undefined {
+            let status = object(vec![
+                ("term".into(), Json::str(&term)),
+                ("defined".into(), Json::Bool(false)),
+                (
+                    "register_id".into(),
+                    to_json(optional_rid(title.as_deref())?),
+                ),
+                ("longer_terms".into(), Json::Int(longer_terms.into())),
+                ("note".into(), Json::str(UNDEFINED_NOTE)),
+            ]);
+            run.print_points(&dumps_line(&status, false))?;
+        }
         for item in &found {
             run.print_points(&dumps_line(item, false))?;
         }
@@ -3577,6 +3602,11 @@ fn execute_define(
         }
         return Ok(refused_code(dated.as_ref()));
     }
+    if undefined && longer_terms > 0 {
+        run.print(&format!(
+            "{term} has no definition of its own here; the defined terms below begin with it."
+        ));
+    }
     for item in &found {
         let s = |k: &str| pyvalue::py_str(item.get(k).unwrap_or(&Json::Null));
         run.print(&format!("{} ({}, {})", s("term"), s("act"), s("heading")));
@@ -3585,7 +3615,7 @@ fn execute_define(
         print_refers_to(item, run);
     }
     caps.marker("rows", found.len(), withheld, false, run)?;
-    if found.is_empty() && withheld == 0 && refused_code(dated.as_ref()) == 0 {
+    if undefined && longer_terms == 0 {
         run.print(
             "No definition paragraph found. The term may be defined another way or in a row this \
              index does not read as definitions; this is not a finding that it has its ordinary meaning.",

@@ -18,7 +18,9 @@
 //!
 //! No Python search stage remains, so the search cases were edited by hand where
 //! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
-//! #286 (7d6fdcc) added the `refs` line saying an index holds no rulings.
+//! #286 (7d6fdcc) added the `refs` line saying an index holds no rulings, and
+//! `define --json` gained the `"defined": false` line it prints first for a term
+//! with no definition of its own (3 steps).
 //!
 //! The rulings cases' `LICENCE-NOTICE.md` digest was re-recorded by hand when
 //! the stage's notice dropped a sentence the ATO's copyright notice does not ask

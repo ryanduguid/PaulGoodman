@@ -522,7 +522,12 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   `head company:` in ITAA 1997 s 995-1, unless the paragraph opens with words such as
   `the`, `if` or `reduced` that continue an entry. It returns every title's
   definition of the term, or terms that begin with it when none matches exactly.
-  An empty result is not a finding that the term has its ordinary meaning.
+  An empty result is not a finding that the term has its ordinary meaning. When no
+  definition of the term itself is found (in `--title`'s Act, if given), `--json`
+  prints first `{"term": ..., "defined": false, "register_id": ..., "longer_terms":
+  N, "note": ...}`, N counting the longer terms listed after it, and text output
+  says the listed terms only begin with it. An `--as-at` run that refused a title
+  prints no such line, since the refused title may define the term.
 - `query`, `define` and `refs` cap what they print so an agent's context window is
   not flooded. `--limit` caps the rows (`query` 10, `define` 20, and 100 in each of
   `refs`'s lists by default; 1 to 100), and `--max-chars` (default 20,000; 1,000 to
