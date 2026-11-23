@@ -168,3 +168,16 @@ def test_comparison_adds_only_rows_where_this_builder_is_ahead() -> None:
     ):
         assert name not in rows
     assert "Parliament's own records" not in comparison
+
+
+def test_attribution_runs_are_never_cancelled() -> None:
+    # Readying a pull request started a second run in the same group, which cancelled
+    # the synchronize run and left a cancelled check that blocked the merge.
+    workflow = (ROOT / ".github" / "workflows" / "no-ai-attribution.yml").read_text(encoding="utf-8")
+
+    assert "cancel-in-progress: true" not in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert (
+        "group: attribution-${{ github.event_name }}-${{ github.event_name == 'pull_request_target'"
+        " && github.event.pull_request.number || github.run_id }}"
+    ) in workflow
