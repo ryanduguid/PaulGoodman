@@ -9,16 +9,17 @@
 
 <div align="center">
 
-[![tests](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml)
-[![Codecov](https://codecov.io/gh/ryanduguid/PaulGoodman/graph/badge.svg)](https://codecov.io/gh/ryanduguid/PaulGoodman)
-[![CodeQL](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml)
-[![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_au-tax-legislation-corpus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_au-tax-legislation-corpus)
-[![Codacy code quality](https://app.codacy.com/project/badge/Grade/a474c8d33a4a4bd6bd97993f5c4113bd)](https://app.codacy.com/gh/ryanduguid/PaulGoodman/dashboard)<br>
+[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/PaulGoodman/ci.yml?branch=main&label=tests&labelColor=000000&style=flat)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/ci.yml)
+[![Codecov](https://img.shields.io/codecov/c/github/ryanduguid/PaulGoodman?label=Codecov&labelColor=000000&style=flat)](https://codecov.io/gh/ryanduguid/PaulGoodman)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/ryanduguid/PaulGoodman/codeql.yml?branch=main&label=CodeQL&labelColor=000000&style=flat)](https://github.com/ryanduguid/PaulGoodman/actions/workflows/codeql.yml)
+[![SonarCloud](https://img.shields.io/sonar/quality_gate/ryanduguid_au-tax-legislation-corpus?server=https%3A%2F%2Fsonarcloud.io&label=SonarCloud&labelColor=000000&style=flat)](https://sonarcloud.io/summary/new_code?id=ryanduguid_au-tax-legislation-corpus)
+[![Codacy code quality](https://img.shields.io/codacy/grade/a474c8d33a4a4bd6bd97993f5c4113bd?label=Codacy&labelColor=000000&style=flat)](https://app.codacy.com/gh/ryanduguid/PaulGoodman/dashboard)<br>
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/PaulGoodman.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/PaulGoodman)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15425/badge)](https://www.bestpractices.dev/projects/15425)
+[![OpenSSF Best Practices](https://img.shields.io/cii/level/15425?label=Best%20Practices&labelColor=000000&style=flat)](https://www.bestpractices.dev/projects/15425)
 [![SLSA provenance](.github/assets/badges/slsa.svg)](https://github.com/ryanduguid/PaulGoodman/attestations)
 [![VirusTotal](.github/assets/badges/virustotal.svg)](https://github.com/ryanduguid/PaulGoodman/releases/latest)<br>
-[![release](https://badgen.net/github/release/ryanduguid/PaulGoodman/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/PaulGoodman/releases)
+[![code release](https://img.shields.io/github/v/release/ryanduguid/PaulGoodman?filter=v*&label=code%20release&color=66023C&labelColor=000000&style=flat)](https://github.com/ryanduguid/PaulGoodman/releases)
+[![corpus snapshot](https://img.shields.io/github/v/release/ryanduguid/PaulGoodman?filter=corpus-*&label=corpus%20snapshot&color=66023C&labelColor=000000&style=flat)](https://github.com/ryanduguid/PaulGoodman/releases?q=corpus&expanded=true)
 ![python: 3.14+](.github/assets/badges/python.svg)
 [![licence: Apache-2.0](.github/assets/badges/licence.svg)](LICENSE)
 
