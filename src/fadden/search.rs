@@ -2015,6 +2015,47 @@ impl Dated {
     }
 }
 
+/// The fields `--json` gives a row so its text can be checked on the register.
+/// Text output prints none of them, so it drops them before `--max-chars`
+/// measures a row, and caps text as it did before they were added.
+const SOURCE_FIELDS: [&str; 3] = ["text", "register_page", "source_url"];
+
+fn drop_source_fields(value: &mut Json) {
+    if let Json::Object(pairs) = value {
+        pairs.retain(|(key, _)| !key.as_str().is_some_and(|k| SOURCE_FIELDS.contains(&k)));
+    }
+}
+
+/// The entries of the list `name` in an object.
+fn entries_mut<'a>(value: &'a mut Json, name: &str) -> impl Iterator<Item = &'a mut Json> {
+    let list = match value {
+        Json::Object(pairs) => pairs
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, member)| member),
+        _ => None,
+    };
+    match list {
+        Some(Json::Array(items)) => items.iter_mut(),
+        _ => [].iter_mut(),
+    }
+}
+
+/// Drops the source fields from the rows each entry of the list `name` reaches.
+fn drop_reached_source_fields(value: &mut Json, name: &str) {
+    for entry in entries_mut(value, name) {
+        entries_mut(entry, "rows").for_each(drop_source_fields);
+    }
+}
+
+/// A `refs` report as text output measures it: without the source fields.
+fn refs_for_text(mut report: Json) -> Json {
+    drop_source_fields(&mut report);
+    entries_mut(&mut report, "cited_by").for_each(drop_source_fields);
+    drop_reached_source_fields(&mut report, "cites");
+    report
+}
+
 /// `value` with one more member, if it is an object.
 fn with_field(mut value: Json, key: &str, member: Json) -> Json {
     if let Json::Object(pairs) = &mut value {
@@ -3713,7 +3754,13 @@ fn execute_define(
         None => define(connection, &term, title.as_deref())?,
     };
     let found = if args.flag("follow") {
-        follow_definitions(connection, found)?
+        let mut followed = follow_definitions(connection, found)?;
+        if !args.flag("json") {
+            for item in &mut followed {
+                drop_reached_source_fields(item, "refers_to");
+            }
+        }
+        followed
     } else {
         found
     };
@@ -3851,6 +3898,9 @@ fn execute_refs(
         let (terms, unresolved) = defined_terms(connection, &row_id)?;
         report = with_field(report, "terms", Json::Array(terms));
         report = with_field(report, "unresolved_terms", Json::Int(unresolved.into()));
+    }
+    if !args.flag("json") {
+        report = refs_for_text(report);
     }
     let (report, withheld) = caps.report(report);
     if args.flag("json") {
