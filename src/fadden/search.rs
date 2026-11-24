@@ -1701,7 +1701,9 @@ fn target_sql(kind: &str) -> String {
         _ => "section_key",
     };
     format!(
-        "SELECT row_id, heading, container FROM rows WHERE register_id = ? AND {column} = ? ORDER BY id"
+        "SELECT r.row_id, r.heading, r.container, r.text, t.register_page, t.source_url FROM rows r \
+JOIN titles t ON t.register_id = r.register_id WHERE r.register_id = ? AND r.{column} = ? \
+ORDER BY r.id"
     )
 }
 
@@ -2404,7 +2406,8 @@ pub fn defined_terms(connection: &Connection, row_id: &str) -> Result<(Vec<Json>
 pub fn refs(connection: &Connection, row_id: &str) -> Result<Json, Exc> {
     let found = rows_of(
         connection,
-        "SELECT * FROM rows WHERE row_id = ?",
+        "SELECT r.*, t.register_page, t.source_url FROM rows r \
+JOIN titles t ON t.register_id = r.register_id WHERE r.row_id = ?",
         &[Sql::Text(row_id.into())],
     )?;
     let Some(row) = found.into_iter().next() else {
@@ -2425,8 +2428,9 @@ pub fn refs(connection: &Connection, row_id: &str) -> Result<Json, Exc> {
     };
     let inbound: Vec<Json> = rows_of(
         connection,
-        "SELECT DISTINCT r.row_id, r.heading, f.kind, f.citation FROM refs f \
-JOIN rows r ON r.row_id = f.from_row_id WHERE f.to_register_id = ? AND r.row_id != ? \
+        "SELECT DISTINCT r.row_id, r.heading, r.text, f.kind, f.citation, t.register_page, \
+t.source_url FROM refs f JOIN rows r ON r.row_id = f.from_row_id \
+JOIN titles t ON t.register_id = r.register_id WHERE f.to_register_id = ? AND r.row_id != ? \
 AND ((f.kind = 'section' AND f.to_key = ?) OR (f.kind = 'division' AND f.to_key = ?) \
 OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
         &[
@@ -2447,6 +2451,9 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
         ("division".into(), field(&row, "division_key").clone()),
         ("subdivision".into(), field(&row, "subdivision_key").clone()),
         ("heading".into(), field(&row, "heading").clone()),
+        ("text".into(), field(&row, "text").clone()),
+        ("register_page".into(), field(&row, "register_page").clone()),
+        ("source_url".into(), field(&row, "source_url").clone()),
         ("cites".into(), Json::Array(outbound)),
         ("cited_by".into(), Json::Array(inbound)),
     ];
@@ -2713,11 +2720,13 @@ fn nearest_sections(connection: &Connection, rid: &str, key: &str) -> Result<Vec
 }
 
 /// The columns of the cited title that pin a result to the build.
-const TITLE_FIELDS: [&str; 4] = [
+const TITLE_FIELDS: [&str; 6] = [
     "compilation_number",
     "compilation_date",
     "retrieved",
     "sections_sha256",
+    "register_page",
+    "source_url",
 ];
 
 /// One citation found in a draft: kind, key, the Act it names, its text and where it ends.
@@ -2775,7 +2784,8 @@ fn sources_digest(connection: &Connection) -> Result<Json, Exc> {
 /// `quote` graded against the row `row_id`, pinned to the row's title in this build.
 pub fn quote(connection: &Connection, row_id: &str, quote: &str) -> Result<Json, Exc> {
     let sql = "SELECT r.row_id, r.register_id, r.text, t.compilation_number, \
-               t.compilation_date, t.retrieved, t.sections_sha256, t.version_is_current \
+               t.compilation_date, t.retrieved, t.sections_sha256, t.version_is_current, \
+               t.register_page, t.source_url \
                FROM rows r JOIN titles t ON t.register_id = r.register_id WHERE r.row_id = ?";
     let found = rows_of(connection, sql, &[Sql::Text(row_id.to_string())])?;
     let Some(row) = found.into_iter().next() else {
@@ -2793,6 +2803,7 @@ pub fn quote(connection: &Connection, row_id: &str, quote: &str) -> Result<Json,
         ("row_id".into(), Json::str(row_id)),
         ("register_id".into(), field(&row, "register_id").clone()),
         ("quote".into(), Json::str(quote)),
+        ("text".into(), Json::str(text)),
         ("grade".into(), Json::str(graded.grade)),
         ("matched_words".into(), count(graded.matched_words)),
         ("quote_words".into(), count(Some(graded.quote_words))),
@@ -2928,6 +2939,11 @@ fn citation_report(
     let graded = matches!(outcome, "resolved" | "assumed") && kind == "section";
     let row = row_ids.first().filter(|_| graded);
     let quotations = sentence_quotations(connection, draft, end, quotes, row)?;
+    // The verbatim text of the one row a section citation reached.
+    let text = rows
+        .first()
+        .filter(|_| graded)
+        .map_or(Json::Null, |r| field(r, "text").clone());
     let nearest = match &target {
         Some(rid) if outcome == "not_held" && kind == "section" => {
             Json::Array(nearest_sections(connection, rid, &key)?)
@@ -2944,6 +2960,7 @@ fn citation_report(
         ("reason".into(), text_or_null(reason.map(str::to_string))),
         ("register_id".into(), text_or_null(target)),
         ("rows".into(), Json::Array(row_ids)),
+        ("text".into(), text),
         ("nearest".into(), nearest),
         ("quotations".into(), quotations),
     ];
