@@ -8,8 +8,10 @@
 //! (`HOWAFFECTED`) sits between provisions, so it is left out of the rows.
 use super::Exc;
 use super::state::refused;
-use super::state_xml::{Attrs, Item, Parsed, Row, Text, attribute, collapse};
-use crate::htmlparser::{self, Event};
+use super::state_xml::{
+    Handler, Item, Level, Parsed, Row, Text, attribute, collapse, finished, push_row, title_fields,
+    walk,
+};
 
 /// Structural levels: element, number attribute and the word before the number.
 const LEVELS: [(&str, &str, &str); 5] = [
@@ -100,22 +102,6 @@ fn anchor(attrs: &[(String, Option<String>)]) -> Option<String> {
     attribute(attrs, "id").map(|id| id.replace('/', "@"))
 }
 
-#[derive(Debug, Default)]
-struct Level {
-    id: Option<String>,
-    no: String,
-    heading: String,
-    item: usize,
-    /// The row holding this level's own text, until a child level or section opens.
-    row: Option<usize>,
-}
-
-impl Level {
-    fn label(&self) -> String {
-        collapse(&format!("{} {}", self.no, self.heading))
-    }
-}
-
 #[derive(Default)]
 struct Walker {
     stack: Vec<String>,
@@ -144,15 +130,13 @@ impl Walker {
             Some(index) => index,
             None if !create => return None,
             None => {
-                let index = self.rows.len();
-                self.rows.push(Row {
+                let row = Row {
                     heading: level.label(),
                     kind: "container",
                     anchor: level.id.clone(),
                     ..Row::default()
-                });
-                self.texts.push(Text::default());
-                self.items.push(Item::Row(depth, index));
+                };
+                let index = push_row(&mut self.rows, &mut self.texts, &mut self.items, depth, row);
                 level.row = Some(index);
                 index
             }
@@ -226,15 +210,14 @@ impl Walker {
         if let Some(level) = self.levels.last_mut() {
             level.row = None;
         }
-        let index = self.rows.len();
-        self.rows.push(Row {
+        let row = Row {
             container: self.levels.last().map(Level::label),
             kind: "section",
             anchor: anchor(attrs),
             ..Row::default()
-        });
-        self.texts.push(Text::default());
-        self.items.push(Item::Row(self.levels.len() + 1, index));
+        };
+        let depth = self.levels.len() + 1;
+        let index = push_row(&mut self.rows, &mut self.texts, &mut self.items, depth, row);
         let own = Level {
             no: attribute(attrs, no).map(collapse).unwrap_or_default(),
             ..Level::default()
@@ -347,9 +330,22 @@ impl Walker {
     }
 }
 
+impl Handler for Walker {
+    fn start(&mut self, name: &str, attrs: &[(String, Option<String>)], empty: bool) {
+        Walker::start(self, name, attrs, empty);
+    }
+    fn end(&mut self, name: &str) {
+        Walker::end(self, name);
+    }
+    fn data(&mut self, data: &str) {
+        Walker::data(self, data);
+    }
+}
+
 /// Parse one Tasmanian Act's whole-title XML, which must be the title `id` names.
 pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
-    let (walker, root) = walk(xml);
+    let mut walker = Walker::default();
+    let (root, _) = walk(xml, &mut walker);
     let Some((tag, attrs)) = root else {
         return Err(refused(format!("{id}: no XML document element")));
     };
@@ -358,41 +354,20 @@ pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
             "{id}: unexpected document element <{tag}>"
         )));
     }
-    let field = |name: &str| attribute(&attrs, name).unwrap_or_default().to_string();
-    if field("id") != id {
-        return Err(refused(format!("{id}: the XML is title {:?}", field("id"))));
-    }
-    let name = collapse(&field("title"));
-    if name != expected_name {
-        return Err(refused(format!(
-            "{id}: the register names it {name:?}, not {expected_name:?}; review the list"
-        )));
-    }
-    let valid = field("first.valid.date");
-    let as_at = valid.get(..10).unwrap_or_default().to_string();
-    if !super::iso::iso_date(&as_at.chars().map(u32::from).collect::<Vec<_>>()) {
-        return Err(refused(format!(
-            "{id}: no as-at date (first.valid.date {valid:?})"
-        )));
-    }
+    let (name, as_at) = title_fields(&attrs, id, expected_name)?;
     let Walker {
-        mut rows,
+        rows,
         texts,
         items,
         omitted,
         ..
     } = walker;
-    for (row, text) in rows.iter_mut().zip(texts) {
-        row.text = text.finish();
-    }
+    let mut rows = finished(rows, texts, id)?;
     // The register shows an omitted section's number only; say so in its row.
     for index in omitted {
         if rows[index].text.is_empty() {
             rows[index].text = "[omitted]".to_string();
         }
-    }
-    if rows.iter().all(|row| row.kind != "section") {
-        return Err(refused(format!("{id}: no sections found")));
     }
     Ok(Parsed {
         id: id.to_string(),
@@ -405,31 +380,4 @@ pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
         rows,
         items,
     })
-}
-
-fn walk(xml: &str) -> (Walker, Option<(String, Attrs)>) {
-    let mut walker = Walker::default();
-    let mut root: Option<(String, Attrs)> = None;
-    htmlparser::parse_each(xml, true, |positioned| {
-        match positioned.event {
-            Event::StartTag(name, attrs) => {
-                if root.is_none() {
-                    root = Some((name, attrs));
-                } else {
-                    walker.start(&name, &attrs, false);
-                }
-            }
-            Event::StartEndTag(name, attrs) => {
-                if root.is_some() {
-                    walker.start(&name, &attrs, true);
-                }
-            }
-            Event::EndTag(name) => walker.end(&name),
-            Event::Data(data) => walker.data(&data),
-            _ => {}
-        }
-        Ok::<(), std::convert::Infallible>(())
-    })
-    .unwrap_or_else(|never| match never {});
-    (walker, root)
 }

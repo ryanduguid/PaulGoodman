@@ -109,17 +109,17 @@ pub(super) fn collapse(text: &str) -> String {
 }
 
 #[derive(Debug, Default)]
-struct Level {
-    id: Option<String>,
-    no: String,
-    heading: String,
-    item: usize,
-    /// The row holding this level's own text, until a child level or clause opens.
-    row: Option<usize>,
+pub(super) struct Level {
+    pub(super) id: Option<String>,
+    pub(super) no: String,
+    pub(super) heading: String,
+    pub(super) item: usize,
+    /// The row holding this level's own text, until a child level or section opens.
+    pub(super) row: Option<usize>,
 }
 
 impl Level {
-    fn label(&self) -> String {
+    pub(super) fn label(&self) -> String {
         collapse(&format!("{} {}", self.no, self.heading))
     }
 }
@@ -165,15 +165,13 @@ impl Walker {
             Some(index) => index,
             None if !create => return None,
             None => {
-                let index = self.rows.len();
-                self.rows.push(Row {
+                let row = Row {
                     heading: level.label(),
                     kind: "container",
                     anchor: level.id.clone(),
                     ..Row::default()
-                });
-                self.texts.push(Text::default());
-                self.items.push(Item::Row(depth, index));
+                };
+                let index = push_row(&mut self.rows, &mut self.texts, &mut self.items, depth, row);
                 level.row = Some(index);
                 index
             }
@@ -242,15 +240,14 @@ impl Walker {
         if let Some(level) = self.levels.last_mut() {
             level.row = None;
         }
-        let index = self.rows.len();
-        self.rows.push(Row {
+        let row = Row {
             container: self.levels.last().map(Level::label),
             kind: "section",
             anchor: attribute(attrs, "id").map(str::to_string),
             ..Row::default()
-        });
-        self.texts.push(Text::default());
-        self.items.push(Item::Row(self.levels.len() + 1, index));
+        };
+        let depth = self.levels.len() + 1;
+        let index = push_row(&mut self.rows, &mut self.texts, &mut self.items, depth, row);
         self.clause = Some((index, Level::default(), Text::default()));
     }
 
@@ -386,9 +383,35 @@ fn document(root: Option<(String, Attrs)>, id: &str) -> Result<(&'static str, At
 
 /// Parse one title's whole-title XML, which must be the title `id` names.
 pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
-    let (walker, root, comments) = walk(xml);
+    let mut walker = Walker::default();
+    let (root, comments) = walk(xml, &mut walker);
     let (collection, attrs) = document(root, id)?;
+    let (name, as_at) = title_fields(&attrs, id, expected_name)?;
     let field = |name: &str| attribute(&attrs, name).unwrap_or_default().to_string();
+    let Walker {
+        rows, texts, items, ..
+    } = walker;
+    let rows = finished(rows, texts, id)?;
+    Ok(Parsed {
+        id: id.to_string(),
+        name,
+        collection,
+        as_at,
+        in_force: field("in.force"),
+        disclaimer: disclaimer(&comments),
+        rows,
+        items,
+    })
+}
+
+/// The id, title and as-at date a title's root element must carry: its name
+/// and as-at date, or why it is refused.
+pub(super) fn title_fields(
+    attrs: &[(String, Option<String>)],
+    id: &str,
+    expected_name: &str,
+) -> Result<(String, String), Exc> {
+    let field = |name: &str| attribute(attrs, name).unwrap_or_default().to_string();
     if field("id") != id {
         return Err(refused(format!("{id}: the XML is title {:?}", field("id"))));
     }
@@ -405,34 +428,57 @@ pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
             "{id}: no as-at date (first.valid.date {valid:?})"
         )));
     }
-    let Walker {
-        mut rows,
-        texts,
-        items,
-        ..
-    } = walker;
+    Ok((name, as_at))
+}
+
+/// Each row with its gathered text; a title with no section is refused.
+pub(super) fn finished(mut rows: Vec<Row>, texts: Vec<Text>, id: &str) -> Result<Vec<Row>, Exc> {
     for (row, text) in rows.iter_mut().zip(texts) {
         row.text = text.finish();
     }
     if rows.iter().all(|row| row.kind != "section") {
         return Err(refused(format!("{id}: no sections found")));
     }
-    Ok(Parsed {
-        id: id.to_string(),
-        name,
-        collection,
-        as_at,
-        in_force: field("in.force"),
-        disclaimer: disclaimer(&comments),
-        rows,
-        items,
-    })
+    Ok(rows)
 }
 
-/// Walks the document: the walker's rows, the root element and the comments
+/// Opens a row and its text, placed at `depth` in document order.
+pub(super) fn push_row(
+    rows: &mut Vec<Row>,
+    texts: &mut Vec<Text>,
+    items: &mut Vec<Item>,
+    depth: usize,
+    row: Row,
+) -> usize {
+    let index = rows.len();
+    rows.push(row);
+    texts.push(Text::default());
+    items.push(Item::Row(depth, index));
+    index
+}
+
+/// What a register's XML walker does with each event after the root element.
+pub(super) trait Handler {
+    fn start(&mut self, name: &str, attrs: &[(String, Option<String>)], empty: bool);
+    fn end(&mut self, name: &str);
+    fn data(&mut self, data: &str);
+}
+
+impl Handler for Walker {
+    fn start(&mut self, name: &str, attrs: &[(String, Option<String>)], empty: bool) {
+        Walker::start(self, name, attrs, empty);
+    }
+    fn end(&mut self, name: &str) {
+        Walker::end(self, name);
+    }
+    fn data(&mut self, data: &str) {
+        Walker::data(self, data);
+    }
+}
+
+/// Walks the document through `walker`: the root element and the comments
 /// before it.
-fn walk(xml: &str) -> (Walker, Option<(String, Attrs)>, Vec<String>) {
-    let mut walker = Walker::default();
+pub(super) fn walk(xml: &str, walker: &mut impl Handler) -> (Option<(String, Attrs)>, Vec<String>) {
     let mut root: Option<(String, Attrs)> = None;
     let mut comments: Vec<String> = Vec::new();
     htmlparser::parse_each(xml, true, |positioned| {
@@ -457,5 +503,5 @@ fn walk(xml: &str) -> (Walker, Option<(String, Attrs)>, Vec<String>) {
         Ok::<(), std::convert::Infallible>(())
     })
     .unwrap_or_else(|never| match never {});
-    (walker, root, comments)
+    (root, comments)
 }
