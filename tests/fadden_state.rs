@@ -489,3 +489,232 @@ fn a_sources_file_naming_an_unknown_source_is_refused() {
         "{error}"
     );
 }
+
+const TAS_SAMPLE: &str = include_str!("fixtures/tas-sample-act.xml");
+const TAS_ID: &str = "act-2099-001";
+const TAS_NAME: &str = "Sample Duties Act 2099";
+
+/// Tasmania, reading only the fabricated sample title.
+const TAS_ONE: Source = Source {
+    titles: &[(TAS_ID, TAS_NAME)],
+    ..state::SOURCES[1]
+};
+
+#[test]
+fn tasmanian_xml_becomes_section_rows_without_its_amendment_history() {
+    assert_eq!(state::SOURCES[1].code, "tas");
+    let parsed = tax_radar_au::fadden::state_tas::parse(TAS_SAMPLE, TAS_ID, TAS_NAME).unwrap();
+    assert_eq!(parsed.collection, "Act");
+    assert_eq!(parsed.as_at, "2099-07-01");
+    assert_eq!(parsed.disclaimer, None);
+    let rows: Vec<_> = parsed
+        .rows
+        .iter()
+        .map(|r| {
+            (
+                r.section.as_deref(),
+                r.kind,
+                r.heading.as_str(),
+                r.container.as_deref(),
+                r.anchor.as_deref(),
+                r.text.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                Some("3"),
+                "section",
+                "3 Interpretation",
+                Some("Part 2 General"),
+                Some("GS3@EN"),
+                "In this Act \u{2013}\n\ndutiable value means \u{2013}\n\n(a) the price paid; or\n\n(b) the unencumbered value;",
+            ),
+            (
+                Some("4"),
+                "section",
+                "4 Commencement",
+                Some("Part 2 General"),
+                Some("GS4@EN"),
+                "(1) This Act commences on 1 July 2099.\n\n(2) Duty is worked out as follows:\n\n[formula]\n\nwhere the rate is in Schedule 1.",
+            ),
+            (
+                Some("5"),
+                "section",
+                "5",
+                Some("Part 2 General"),
+                Some("GS5@EN"),
+                "[omitted]",
+            ),
+            (
+                None,
+                "container",
+                "Schedule 1 Rates",
+                None,
+                Some("JS1@EN"),
+                "Section 4",
+            ),
+            (
+                Some("1"),
+                "section",
+                "1 Rate table",
+                Some("Schedule 1 Rates"),
+                Some("JS1@GC1@EN"),
+                "Value | Rate\n\nup to $10 | nil",
+            ),
+        ]
+    );
+    let refused = |xml: &str, id: &str, name: &str| {
+        tax_radar_au::fadden::state_tas::parse(xml, id, name)
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(refused(TAS_SAMPLE, "act-2099-002", TAS_NAME).contains("the XML is title"));
+    assert!(refused(TAS_SAMPLE, TAS_ID, "Other Act 2099").contains("review the list"));
+    let regulation = TAS_SAMPLE
+        .replace("<ACT ", "<SR ")
+        .replace("</ACT>", "</SR>");
+    assert!(refused(&regulation, TAS_ID, TAS_NAME).contains("unexpected document element"));
+}
+
+#[test]
+fn the_tasmanian_stage_carries_its_attribution_on_every_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tas");
+    let tas = &state::SOURCES[1];
+    let mut register = Register::default();
+    register.answers.insert(
+        "https://www.legislation.tas.gov.au/robots.txt".into(),
+        Ok("User-agent: *\nDisallow: /admin/\n".into()),
+    );
+    register
+        .answers
+        .insert(tas.xml_url(TAS_ID), Ok(TAS_SAMPLE.to_string()));
+    assert_eq!(run(&mut register, &TAS_ONE, &root), Ok(0));
+    assert_eq!(
+        register.asked[1],
+        format!("https://www.legislation.tas.gov.au/view/whole/xml/inforce/current/{TAS_ID}")
+    );
+    assert_eq!(register.slept, [5.0]);
+    let sources: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("sources.json")).unwrap()).unwrap();
+    assert_eq!(sources["state_register"], "tas");
+    let attribution = "Based on material from the Tasmanian Legislation website at 2099-01-02. \
+                       For the latest information on Tasmanian Government legislation please go \
+                       to www.legislation.tas.gov.au.";
+    let copyright = "©The State of Tasmania (The Department of Premier and Cabinet) 2026";
+    let licence_url = "https://creativecommons.org/licenses/by/4.0/";
+    let terms_url = "https://www.legislation.tas.gov.au/copyrightanddisclaimer";
+    let source_url = tas.xml_url(TAS_ID);
+    let title_page = tas.title_page(TAS_ID);
+    assert_eq!(sources["source"], "Tasmanian Legislation website");
+    assert_eq!(sources["terms_url"], terms_url);
+    assert_eq!(sources["licence"], "CC BY 4.0");
+    assert_eq!(sources["licence_url"], licence_url);
+    assert_eq!(sources["copyright"], copyright);
+    assert_eq!(sources["attribution"], attribution);
+    assert_eq!(sources["titles"][0]["register_page"], title_page);
+    assert_eq!(sources["titles"][0]["source_url"], source_url);
+    let rows = lines(&root.join(format!("markdown/{TAS_ID}/sections.jsonl")));
+    assert_eq!(rows.len(), 5);
+    assert_eq!(
+        rows[0]["register_page"],
+        format!(
+            "https://www.legislation.tas.gov.au/view/whole/html/inforce/current/{TAS_ID}#GS3@EN"
+        )
+    );
+    for row in &rows {
+        assert_eq!(row["attribution"], attribution);
+        assert_eq!(row["copyright"], copyright);
+        assert_eq!(row["licence"], "CC BY 4.0");
+        assert_eq!(row["licence_url"], licence_url);
+        assert_eq!(row["source_url"], source_url);
+        assert_eq!(row["disclaimer"], serde_json::Value::Null);
+        assert_eq!(row["authorised"], false);
+        assert_eq!(row["state_register"], "tas");
+        assert!(row["register_page"].as_str().unwrap().starts_with(&format!(
+            "https://www.legislation.tas.gov.au/view/whole/html/inforce/current/{TAS_ID}#"
+        )));
+    }
+    let markdown =
+        std::fs::read_to_string(root.join(format!("markdown/{TAS_ID}/{TAS_ID}.md"))).unwrap();
+    for line in [
+        format!("title: \"{TAS_NAME}\""),
+        format!("register_id: \"{TAS_ID}\""),
+        "state_register: \"tas\"".to_string(),
+        "as_at: \"2099-07-01\"".to_string(),
+        "retrieved: \"2099-01-02\"".to_string(),
+        format!("register_page: \"{title_page}\""),
+        format!("source_url: \"{source_url}\""),
+        "licence: \"CC BY 4.0\"".to_string(),
+        format!("licence_url: \"{licence_url}\""),
+        format!("copyright: \"{copyright}\""),
+        format!("attribution: \"{attribution}\""),
+        "authorised: false".to_string(),
+    ] {
+        assert!(markdown.contains(&line), "missing {line} in:\n{markdown}");
+    }
+    let index = dir.path().join("tas.sqlite");
+    let counts = search::build(&root.display().to_string(), &index.display().to_string()).unwrap();
+    assert_eq!(counts[..2], [1, 5]);
+    let connection = search::open_index(&index.display().to_string()).unwrap();
+    assert_eq!(
+        search::index_source(&connection).unwrap().map(|s| s.code),
+        Some("tas")
+    );
+}
+
+#[test]
+fn tasmanian_self_closing_cells_omitted_sections_and_schedule_parts_keep_structure() {
+    let paired = r#"<ACT FIRST.VALID.DATE="2099-07-01" TITLE="Sample Act 2099" ID="act-2099-002"><BODY><CHAPTER CHAPNO="1" NOFORMAT="ARABIC" ID="HC1/EN"><HEADING>Body</HEADING><SECTION OMITTED="YESOMIT" SECNO="2" NOFORMAT="ARABIC" ID="GS2/EN"></SECTION><SECTION SECNO="3" NOFORMAT="ARABIC" ID="GS3/EN"><HEADNOTE>Table</HEADNOTE><TABLE><TGROUP COLS="3"><TBODY><ROW><ENTRY><PARA>A</PARA></ENTRY><ENTRY></ENTRY><ENTRY><PARA>C</PARA></ENTRY></ROW></TBODY></TGROUP></TABLE></SECTION></CHAPTER></BODY><TAIL><SCHEDULE SCHEDULENO="1" NOFORMAT="ARABIC" ID="JS1/EN"><HEADING>Rates</HEADING><S.PART PARTNO="1" NOFORMAT="ARABIC" ID="JS1/HS1/EN"><HEADING>General</HEADING><S.DIVISION DIVNO="2" NOFORMAT="ARABIC" ID="JS1/HS1/HT2/EN"><HEADING>Exemptions</HEADING><S.CLAUSE CLAUSENO="1" NOFORMAT="ARABIC" ID="JS1/HS1/HT2/GC1/EN"><HEADNOTE>Exempt</HEADNOTE><TEXT>Nil.</TEXT></S.CLAUSE></S.DIVISION></S.PART></SCHEDULE></TAIL></ACT>"#;
+    let self_closing = paired
+        .replace(
+            r#"<SECTION OMITTED="YESOMIT" SECNO="2" NOFORMAT="ARABIC" ID="GS2/EN"></SECTION>"#,
+            r#"<SECTION OMITTED="YESOMIT" SECNO="2" NOFORMAT="ARABIC" ID="GS2/EN"/>"#,
+        )
+        .replace("<ENTRY></ENTRY>", "<ENTRY/>");
+    let a =
+        tax_radar_au::fadden::state_tas::parse(paired, "act-2099-002", "Sample Act 2099").unwrap();
+    let b =
+        tax_radar_au::fadden::state_tas::parse(&self_closing, "act-2099-002", "Sample Act 2099")
+            .unwrap();
+    let rows = |p: tax_radar_au::fadden::state::Parsed| -> Vec<_> {
+        p.rows
+            .into_iter()
+            .map(|r| (r.section, r.kind, r.heading, r.container, r.anchor, r.text))
+            .collect()
+    };
+    let ra = rows(a);
+    assert_eq!(ra, rows(b));
+    assert_eq!(
+        ra,
+        [
+            (
+                Some("2".into()),
+                "section",
+                "2".into(),
+                Some("Chapter 1 Body".into()),
+                Some("GS2@EN".into()),
+                "[omitted]".into(),
+            ),
+            (
+                Some("3".into()),
+                "section",
+                "3 Table".into(),
+                Some("Chapter 1 Body".into()),
+                Some("GS3@EN".into()),
+                "A | | C".into(),
+            ),
+            (
+                Some("1".into()),
+                "section",
+                "1 Exempt".into(),
+                Some("Division 2 Exemptions".into()),
+                Some("JS1@HS1@HT2@GC1@EN".into()),
+                "Nil.".into(),
+            ),
+        ]
+    );
+}

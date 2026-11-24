@@ -989,6 +989,20 @@ class StateRegisterLicenceTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, qld)
 
+    def test_notice_carries_the_tasmanian_attribution(self):
+        notice = " ".join((REPO / "NOTICE").read_text(encoding="utf-8").split())
+        tas = notice[notice.index("Tasmanian Legislation website under"):]
+        for required in (
+                "Based on material from the Tasmanian Legislation website at [full date "
+                "of download]. For the latest information on Tasmanian Government "
+                "legislation please go to www.legislation.tas.gov.au.",
+                "https://creativecommons.org/licenses/by/4.0/",
+                "©The State of Tasmania (The Department of Premier and Cabinet) 2026",
+                "material under other specified licences are excluded",
+                "with the date filled in"):
+            with self.subTest(required=required):
+                self.assertIn(required, tas)
+
 
 class ShippedIntermediateTests(unittest.TestCase):
     def test_build_md_records_that_the_shipped_manifest_predates_the_fix(self):

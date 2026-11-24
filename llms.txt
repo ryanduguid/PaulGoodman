@@ -37,7 +37,7 @@
 - **Human in the loop**: it generates deterministic change candidates. It establishes no current law, legal effect, workflow update or client action.
 
 ## What talks to the network, and when
-Documented network access is 7 builder stages that reach the Federal Register, and `rulings` and `rulings_targets`, which reach the ATO Legal Database, and `state`, which reaches the Queensland Legislation website. The review queue itself makes no network request.
+Documented network access is 7 builder stages that reach the Federal Register, and `rulings` and `rulings_targets`, which reach the ATO Legal Database, and `state`, which reaches the Queensland or Tasmanian Legislation website. The review queue itself makes no network request.
 - `discover` waits 3 seconds after each keyword and collection query and 2 seconds between full pages; its request count depends on the matching titles, plus 1 request for the reviewed named titles in `docs/scope.md`. `versions` resolves up to 8 titles a request: for 946 titles with no ambiguous groups, 119 resolution requests plus 1 diagnostic, with 178.5 seconds of fixed pauses (`BUILD.md`).
 - `download` fetches one EPUB per title through `curl`, sleeping 10 seconds between titles to honour the Register's `robots.txt` Crawl-delay. All 946 titles take about 2 hours 40 minutes, and titles already downloaded at the same version are skipped.
 - `probe13` reads version history for the titles `download` recorded as `no_epub`, and `retry13` downloads the latest published compilation for those it can recover.
@@ -47,6 +47,7 @@ Documented network access is 7 builder stages that reach the Federal Register, a
 - `rulings` fetches only the named targets, one request a second, HTML only, at most 8 MiB a page, from `https://www.ato.gov.au`. There is no discovery crawl.
 - `rulings_targets` reads one saved Legal Database RSS feed, or fetches one feed URL under `https://www.ato.gov.au/law/view/rss`, and writes only the docids `rulings` accepts.
 - `state --source qld` reads robots.txt, then fetches 7 named titles as whole-title XML from `https://www.legislation.qld.gov.au`, one request at a time with a 5-second pause.
+- `state --source tas` does the same for 6 named titles from `https://www.legislation.tas.gov.au`.
 - `as_at`, `authorities`, `compare_builds`, `search`, `witness`, `extract`, `pii_scan`, `pii_scan2`, `finalize`, `rates`, `dist`, `dist_verify`, `export_monitor_contract`, `export_publication_bundles` and `export_live_evidence_bundles` make no request at all. The monitor and publication exporters project facts a caller has already collected.
 
 ## Docs

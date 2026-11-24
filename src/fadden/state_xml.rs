@@ -62,14 +62,14 @@ const BREAKS: [&str; 15] = [
 /// marked `- `), a number joined to the block it labels, table cells joined
 /// with ` | `.
 #[derive(Debug, Default)]
-struct Text {
+pub(super) struct Text {
     lines: Vec<String>,
     current: String,
     join: bool,
 }
 
 impl Text {
-    fn brk(&mut self) {
+    pub(super) fn brk(&mut self) {
         if std::mem::take(&mut self.join) {
             return;
         }
@@ -80,19 +80,19 @@ impl Text {
     }
 
     /// Text joins a following block only until text of its own arrives.
-    fn push(&mut self, text: &str) {
+    pub(super) fn push(&mut self, text: &str) {
         if !text.trim().is_empty() {
             self.join = false;
         }
         self.current.push_str(text);
     }
 
-    fn glue(&mut self, text: &str) {
+    pub(super) fn glue(&mut self, text: &str) {
         self.current.push_str(text);
         self.join = true;
     }
 
-    fn finish(mut self) -> String {
+    pub(super) fn finish(mut self) -> String {
         self.join = false;
         self.brk();
         self.lines
@@ -104,23 +104,197 @@ impl Text {
     }
 }
 
-fn collapse(text: &str) -> String {
+pub(super) fn collapse(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[derive(Debug, Default)]
-struct Level {
-    id: Option<String>,
-    no: String,
-    heading: String,
-    item: usize,
-    /// The row holding this level's own text, until a child level or clause opens.
-    row: Option<usize>,
+pub(super) struct Level {
+    pub(super) id: Option<String>,
+    pub(super) no: String,
+    pub(super) heading: String,
+    pub(super) item: usize,
+    /// The row holding this level's own text, until a child level or section opens.
+    pub(super) row: Option<usize>,
 }
 
 impl Level {
-    fn label(&self) -> String {
+    pub(super) fn label(&self) -> String {
         collapse(&format!("{} {}", self.no, self.heading))
+    }
+}
+
+pub(super) type Attrs = Vec<(String, Option<String>)>;
+
+pub(super) fn attribute<'a>(attrs: &'a [(String, Option<String>)], name: &str) -> Option<&'a str> {
+    attrs
+        .iter()
+        .find(|(key, _)| key == name)
+        .and_then(|(_, value)| value.as_deref())
+}
+
+/// Shared row, level, table and text builder for state-register XML walkers.
+#[derive(Default)]
+pub(super) struct Rows {
+    levels: Vec<Level>,
+    section: Option<(usize, Level, Text)>,
+    entries: Vec<usize>,
+    texts: Vec<Text>,
+    rows: Vec<Row>,
+    items: Vec<Item>,
+}
+
+impl Rows {
+    /// The text a data event belongs to: the open section's, else the innermost
+    /// level's own row, opened on first use.
+    pub(super) fn target(&mut self, create: bool) -> Option<&mut Text> {
+        if let Some((_, _, text)) = self.section.as_mut() {
+            return Some(text);
+        }
+        let depth = self.levels.len();
+        let level = self.levels.last_mut()?;
+        let index = match level.row {
+            Some(index) => index,
+            None if !create => return None,
+            None => {
+                let row = Row {
+                    heading: level.label(),
+                    kind: "container",
+                    anchor: level.id.clone(),
+                    ..Row::default()
+                };
+                let index = push_row(&mut self.rows, &mut self.texts, &mut self.items, depth, row);
+                level.row = Some(index);
+                index
+            }
+        };
+        self.texts.get_mut(index)
+    }
+
+    pub(super) fn owner(&mut self) -> Option<&mut Level> {
+        match self.section.as_mut() {
+            Some((_, level, _)) => Some(level),
+            None => self.levels.last_mut(),
+        }
+    }
+
+    /// Opens a chapter, part, division, subdivision or schedule and reserves its heading.
+    pub(super) fn open_level(&mut self, id: Option<String>, no: String) {
+        if let Some(level) = self.levels.last_mut() {
+            level.row = None;
+        }
+        let item = self.items.len();
+        self.items
+            .push(Item::Heading(self.levels.len() + 1, String::new()));
+        self.levels.push(Level {
+            id,
+            no,
+            item,
+            ..Level::default()
+        });
+    }
+
+    /// Updates the innermost level's heading item when outside a section.
+    pub(super) fn set_level_heading(&mut self) {
+        if self.section.is_none()
+            && let Some(level) = self.levels.last()
+            && let Some(Item::Heading(_, text)) = self.items.get_mut(level.item)
+        {
+            *text = level.label();
+        }
+    }
+
+    pub(super) fn pop_level(&mut self) {
+        self.levels.pop();
+        if let Some(level) = self.levels.last_mut() {
+            level.row = None;
+        }
+    }
+
+    /// Opens a section row, returning its index, filled in on `close_section`.
+    pub(super) fn open_section(&mut self, anchor: Option<String>, no: String) -> usize {
+        if let Some(level) = self.levels.last_mut() {
+            level.row = None;
+        }
+        let row = Row {
+            container: self.levels.last().map(Level::label),
+            kind: "section",
+            anchor,
+            ..Row::default()
+        };
+        let depth = self.levels.len() + 1;
+        let index = push_row(&mut self.rows, &mut self.texts, &mut self.items, depth, row);
+        let own = Level {
+            no,
+            ..Level::default()
+        };
+        self.section = Some((index, own, Text::default()));
+        index
+    }
+
+    pub(super) fn close_section(&mut self) {
+        if let Some((index, own, text)) = self.section.take() {
+            let row = &mut self.rows[index];
+            let no = collapse(&own.no);
+            row.section = (!no.is_empty()).then_some(no);
+            row.heading = own.label();
+            self.texts[index] = text;
+        }
+    }
+
+    /// Starts a block break, optional numbered prefix, list marker or table cell separator.
+    pub(super) fn open_block(
+        &mut self,
+        name: &str,
+        is_break: bool,
+        number: Option<&str>,
+        list_marker: Option<&str>,
+    ) {
+        let in_entry = !self.entries.is_empty();
+        if name == "entry" {
+            let first = self.entries.last().is_none_or(|n| *n == 0);
+            if let Some(count) = self.entries.last_mut() {
+                *count += 1;
+            }
+            if !first && let Some(text) = self.target(false) {
+                text.glue(" | ");
+            }
+            return;
+        }
+        if name == "row" {
+            self.entries.push(0);
+        }
+        if (is_break || number.is_some())
+            && let Some(text) = self.target(number.is_some())
+        {
+            if in_entry && name != "row" {
+                text.push(" ");
+            } else {
+                text.brk();
+                if let Some(marker) = list_marker {
+                    text.push(marker);
+                }
+            }
+            if let Some(number) = number {
+                text.push(number);
+                text.glue(" ");
+            }
+        }
+    }
+
+    pub(super) fn end_row(&mut self) {
+        self.entries.pop();
+    }
+
+    pub(super) fn push_data(&mut self, data: &str) {
+        if let Some(text) = self.target(!data.trim().is_empty()) {
+            text.push(data);
+        }
+    }
+
+    pub(super) fn finish(self, id: &str) -> Result<(Vec<Row>, Vec<Item>), Exc> {
+        let rows = finished(self.rows, self.texts, id)?;
+        Ok((rows, self.items))
     }
 }
 
@@ -134,60 +308,11 @@ enum Capture {
 struct Walker {
     stack: Vec<String>,
     skip: usize,
-    levels: Vec<Level>,
-    clause: Option<(usize, Level, Text)>,
     capture: Option<Capture>,
-    entries: Vec<usize>,
-    texts: Vec<Text>,
-    rows: Vec<Row>,
-    items: Vec<Item>,
+    rows: Rows,
 }
 
-type Attrs = Vec<(String, Option<String>)>;
-
-fn attribute<'a>(attrs: &'a [(String, Option<String>)], name: &str) -> Option<&'a str> {
-    attrs
-        .iter()
-        .find(|(key, _)| key == name)
-        .and_then(|(_, value)| value.as_deref())
-}
-
-impl Walker {
-    /// The text a data event belongs to: the open clause's, else the innermost
-    /// level's own row, opened on first use.
-    fn target(&mut self, create: bool) -> Option<&mut Text> {
-        if let Some((_, _, text)) = self.clause.as_mut() {
-            return Some(text);
-        }
-        let depth = self.levels.len();
-        let level = self.levels.last_mut()?;
-        let index = match level.row {
-            Some(index) => index,
-            None if !create => return None,
-            None => {
-                let index = self.rows.len();
-                self.rows.push(Row {
-                    heading: level.label(),
-                    kind: "container",
-                    anchor: level.id.clone(),
-                    ..Row::default()
-                });
-                self.texts.push(Text::default());
-                self.items.push(Item::Row(depth, index));
-                level.row = Some(index);
-                index
-            }
-        };
-        self.texts.get_mut(index)
-    }
-
-    fn owner(&mut self) -> Option<&mut Level> {
-        match self.clause.as_mut() {
-            Some((_, level, _)) => Some(level),
-            None => self.levels.last_mut(),
-        }
-    }
-
+impl Handler for Walker {
     fn start(&mut self, name: &str, attrs: &[(String, Option<String>)], empty: bool) {
         if self.skip > 0 || SKIPPED.contains(&name) {
             if !empty {
@@ -214,75 +339,18 @@ impl Walker {
             return;
         }
         if LEVELS.contains(&name) {
-            self.open_level(attrs);
+            self.rows
+                .open_level(attribute(attrs, "id").map(str::to_string), String::new());
         } else if name == "clause" {
-            self.open_clause(attrs);
+            self.rows
+                .open_section(attribute(attrs, "id").map(str::to_string), String::new());
         } else {
-            self.open_block(name);
-        }
-    }
-
-    /// A chapter, part, division, subdivision or schedule: its heading's place.
-    fn open_level(&mut self, attrs: &[(String, Option<String>)]) {
-        if let Some(level) = self.levels.last_mut() {
-            level.row = None;
-        }
-        let item = self.items.len();
-        self.items
-            .push(Item::Heading(self.levels.len() + 1, String::new()));
-        self.levels.push(Level {
-            id: attribute(attrs, "id").map(str::to_string),
-            item,
-            ..Level::default()
-        });
-    }
-
-    /// A section: its row, filled in when it closes.
-    fn open_clause(&mut self, attrs: &[(String, Option<String>)]) {
-        if let Some(level) = self.levels.last_mut() {
-            level.row = None;
-        }
-        let index = self.rows.len();
-        self.rows.push(Row {
-            container: self.levels.last().map(Level::label),
-            kind: "section",
-            anchor: attribute(attrs, "id").map(str::to_string),
-            ..Row::default()
-        });
-        self.texts.push(Text::default());
-        self.items.push(Item::Row(self.levels.len() + 1, index));
-        self.clause = Some((index, Level::default(), Text::default()));
-    }
-
-    /// A block inside the text: a paragraph break, a list item's marker or a
-    /// table cell's separator.
-    fn open_block(&mut self, name: &str) {
-        let in_entry = !self.entries.is_empty();
-        if name == "entry" {
-            let first = self.entries.last().is_none_or(|n| *n == 0);
-            if let Some(count) = self.entries.last_mut() {
-                *count += 1;
-            }
-            if !first && let Some(text) = self.target(false) {
-                text.glue(" | ");
-            }
-            return;
-        }
-        if name == "row" {
-            self.entries.push(0);
-        }
-        if BREAKS.contains(&name)
-            && let Some(text) = self.target(false)
-        {
-            if in_entry && name != "row" {
-                text.push(" ");
-            } else {
-                text.brk();
-                // A list item is marked as the Commonwealth rows mark one.
-                if name == "li" {
-                    text.push("- ");
-                }
-            }
+            self.rows.open_block(
+                name,
+                BREAKS.contains(&name),
+                None,
+                (name == "li").then_some("- "),
+            );
         }
     }
 
@@ -299,39 +367,25 @@ impl Walker {
             let parent = self.stack.last().map(String::as_str);
             if parent.is_some_and(|p| LEVELS.contains(&p) || p == "clause") {
                 self.capture = None;
-                if let Some(level) = self.levels.last()
-                    && self.clause.is_none()
-                    && let Some(Item::Heading(_, text)) = self.items.get_mut(level.item)
-                {
-                    *text = level.label();
-                }
+                self.rows.set_level_heading();
                 return;
             }
         }
         if name == "no" {
-            if let Some(text) = self.target(false) {
+            if let Some(text) = self.rows.target(false) {
                 text.glue(" ");
             }
             return;
         }
         if name == "row" {
-            self.entries.pop();
+            self.rows.end_row();
         }
         if LEVELS.contains(&name) {
-            self.levels.pop();
-            if let Some(level) = self.levels.last_mut() {
-                level.row = None;
-            }
+            self.rows.pop_level();
             return;
         }
-        if name == "clause"
-            && let Some((index, own, text)) = self.clause.take()
-        {
-            let row = &mut self.rows[index];
-            let no = collapse(&own.no);
-            row.section = (!no.is_empty()).then_some(no);
-            row.heading = own.label();
-            self.texts[index] = text;
+        if name == "clause" {
+            self.rows.close_section();
         }
     }
 
@@ -341,20 +395,16 @@ impl Walker {
         }
         match self.capture {
             Some(Capture::No) => {
-                if let Some(level) = self.owner() {
+                if let Some(level) = self.rows.owner() {
                     level.no.push_str(data);
                 }
             }
             Some(Capture::Heading) => {
-                if let Some(level) = self.owner() {
+                if let Some(level) = self.rows.owner() {
                     level.heading.push_str(data);
                 }
             }
-            None => {
-                if let Some(text) = self.target(!data.trim().is_empty()) {
-                    text.push(data);
-                }
-            }
+            None => self.rows.push_data(data),
         }
     }
 }
@@ -386,9 +436,32 @@ fn document(root: Option<(String, Attrs)>, id: &str) -> Result<(&'static str, At
 
 /// Parse one title's whole-title XML, which must be the title `id` names.
 pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
-    let (walker, root, comments) = walk(xml);
+    let mut walker = Walker::default();
+    let (root, comments) = walk(xml, &mut walker);
     let (collection, attrs) = document(root, id)?;
+    let (name, as_at) = title_fields(&attrs, id, expected_name)?;
     let field = |name: &str| attribute(&attrs, name).unwrap_or_default().to_string();
+    let (rows, items) = walker.rows.finish(id)?;
+    Ok(Parsed {
+        id: id.to_string(),
+        name,
+        collection,
+        as_at,
+        in_force: field("in.force"),
+        disclaimer: disclaimer(&comments),
+        rows,
+        items,
+    })
+}
+
+/// The id, title and as-at date a title's root element must carry: its name
+/// and as-at date, or why it is refused.
+pub(super) fn title_fields(
+    attrs: &[(String, Option<String>)],
+    id: &str,
+    expected_name: &str,
+) -> Result<(String, String), Exc> {
+    let field = |name: &str| attribute(attrs, name).unwrap_or_default().to_string();
     if field("id") != id {
         return Err(refused(format!("{id}: the XML is title {:?}", field("id"))));
     }
@@ -405,34 +478,45 @@ pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
             "{id}: no as-at date (first.valid.date {valid:?})"
         )));
     }
-    let Walker {
-        mut rows,
-        texts,
-        items,
-        ..
-    } = walker;
+    Ok((name, as_at))
+}
+
+/// Each row with its gathered text; a title with no section is refused.
+fn finished(mut rows: Vec<Row>, texts: Vec<Text>, id: &str) -> Result<Vec<Row>, Exc> {
     for (row, text) in rows.iter_mut().zip(texts) {
         row.text = text.finish();
     }
     if rows.iter().all(|row| row.kind != "section") {
         return Err(refused(format!("{id}: no sections found")));
     }
-    Ok(Parsed {
-        id: id.to_string(),
-        name,
-        collection,
-        as_at,
-        in_force: field("in.force"),
-        disclaimer: disclaimer(&comments),
-        rows,
-        items,
-    })
+    Ok(rows)
 }
 
-/// Walks the document: the walker's rows, the root element and the comments
+/// Opens a row and its text, placed at `depth` in document order.
+fn push_row(
+    rows: &mut Vec<Row>,
+    texts: &mut Vec<Text>,
+    items: &mut Vec<Item>,
+    depth: usize,
+    row: Row,
+) -> usize {
+    let index = rows.len();
+    rows.push(row);
+    texts.push(Text::default());
+    items.push(Item::Row(depth, index));
+    index
+}
+
+/// What a register's XML walker does with each event after the root element.
+pub(super) trait Handler {
+    fn start(&mut self, name: &str, attrs: &[(String, Option<String>)], empty: bool);
+    fn end(&mut self, name: &str);
+    fn data(&mut self, data: &str);
+}
+
+/// Walks the document through `walker`: the root element and the comments
 /// before it.
-fn walk(xml: &str) -> (Walker, Option<(String, Attrs)>, Vec<String>) {
-    let mut walker = Walker::default();
+pub(super) fn walk(xml: &str, walker: &mut impl Handler) -> (Option<(String, Attrs)>, Vec<String>) {
     let mut root: Option<(String, Attrs)> = None;
     let mut comments: Vec<String> = Vec::new();
     htmlparser::parse_each(xml, true, |positioned| {
@@ -457,5 +541,5 @@ fn walk(xml: &str) -> (Walker, Option<(String, Attrs)>, Vec<String>) {
         Ok::<(), std::convert::Infallible>(())
     })
     .unwrap_or_else(|never| match never {});
-    (walker, root, comments)
+    (root, comments)
 }

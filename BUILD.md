@@ -488,6 +488,21 @@ unless `--source` names it, and refuse a Commonwealth index under any other
 `--as-at` and `--rulings` apply only to them. Queensland numbers divisions
 within each part, so a cited division can match more than one row.
 
+`python -m fadden state --source tas --out NEW_DIR` does the same for the
+reviewed Tasmanian Acts, from
+`https://www.legislation.tas.gov.au/view/whole/xml/inforce/current/<id>`: the
+Duties Act 2001, the Land Tax Act 2000, the Land Tax Rating Act 2000, the
+Payroll Tax Act 2008, the Taxation Administration Act 1997 and the First Home
+Owner Grant Act 2000. Tasmania's XML has its own vocabulary, read by
+`src/fadden/state_tas.rs`: numbers are attributes, shown as `(1)` or `(a)`
+before their text; a date element is written as `1 July 2001`; an equation,
+published as an image, becomes `[formula]`; a schedule's clauses are rows
+like sections; a section the register marks omitted keeps its row, with
+the text `[omitted]`; and the amendment history between provisions is left out.
+Each row's `register_page` links its anchor on the register's HTML page. The
+XML carries no disclaimer, so `disclaimer` is `null`; the rows carry the
+copyright notice and the changed-material attribution docs/scope.md records.
+
 ## Searching a built corpus
 
 `python -m fadden search` indexes a finished corpus root into one SQLite file and

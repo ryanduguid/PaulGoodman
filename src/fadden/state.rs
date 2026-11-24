@@ -49,6 +49,8 @@ pub struct Source {
     pub attribution: &'static str,
     /// Reviewed register ids and the title each must carry.
     pub titles: &'static [(&'static str, &'static str)],
+    /// Reads one title's whole-title XML as rows: the register's own vocabulary.
+    pub parse: fn(&str, &str, &str) -> Result<Parsed, Exc>,
 }
 
 /// Queensland: terms at <https://www.legislation.qld.gov.au/copyright>, read on
@@ -76,9 +78,33 @@ https://www.legislation.qld.gov.au.",
             "First Home Owner Grant and Other Home Owner Grants Act 2000",
         ),
     ],
+    parse,
 };
 
-pub const SOURCES: [Source; 1] = [QLD];
+/// Tasmania: terms at <https://www.legislation.tas.gov.au/copyrightanddisclaimer>,
+/// read on 24 November 2026 (docs/scope.md): CC BY 4.0, keep the copyright
+/// notice, and this attribution for changed material. Titles confirmed on the
+/// register that day.
+const TAS: Source = Source {
+    code: "tas",
+    name: "Tasmania",
+    host: "www.legislation.tas.gov.au",
+    website: "Tasmanian Legislation website",
+    terms_url: "https://www.legislation.tas.gov.au/copyrightanddisclaimer",
+    copyright: "©The State of Tasmania (The Department of Premier and Cabinet) 2026",
+    attribution: "Based on material from the Tasmanian Legislation website at {date}. For the latest information on Tasmanian Government legislation please go to www.legislation.tas.gov.au.",
+    titles: &[
+        ("act-2001-015", "Duties Act 2001"),
+        ("act-2000-074", "Land Tax Act 2000"),
+        ("act-2000-073", "Land Tax Rating Act 2000"),
+        ("act-2008-016", "Payroll Tax Act 2008"),
+        ("act-1997-074", "Taxation Administration Act 1997"),
+        ("act-2000-019", "First Home Owner Grant Act 2000"),
+    ],
+    parse: super::state_tas::parse,
+};
+
+pub const SOURCES: [Source; 2] = [QLD, TAS];
 
 /// The source named `code`.
 pub fn source(code: &str) -> Option<&'static Source> {
@@ -372,7 +398,7 @@ fn fetch_title(
     };
     let xml =
         std::str::from_utf8(&raw).map_err(|_| refused(format!("{id}: the XML is not UTF-8")))?;
-    let parsed = parse(xml, id, name)?;
+    let parsed = (source.parse)(xml, id, name)?;
     let texts: Vec<&str> = parsed
         .rows
         .iter()
