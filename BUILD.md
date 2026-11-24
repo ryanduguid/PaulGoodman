@@ -459,6 +459,35 @@ and rate metadata are escaped as literal Markdown.
 
 `python -m fadden rulings_targets FEED --out TARGETS.json` writes that target list from the ATO's 'All Rulings and Determinations' RSS feed, a saved copy or its URL, keeping only the families `rulings` accepts; it fetches nothing but the feed ([targets from the ATO's feed](docs/rulings.md#targets-from-the-atos-feed)).
 
+## Deriving state revenue titles
+
+`python -m fadden state --source qld --out NEW_DIR` fetches the reviewed
+Queensland titles in `src/fadden/state.rs` as whole-title XML from
+`https://www.legislation.qld.gov.au/view/whole/xml/inforce/current/<id>` and
+writes a corpus root: `sources.json` naming `"state_register": "qld"`, `markdown/<id>/`
+with one row per section (a schedule's text is one row under its heading) and
+`raw/<id>.xml`, the exact bytes each title returned. It reads robots.txt
+first and refuses a disallowed path, sends one request at a time with a
+5-second pause (longer if robots.txt sets a crawl delay) and a User-Agent
+naming only the tool, and writes nothing unless every title arrives, parses,
+carries the name the list expects and passes the corpus personal-data
+patterns. Each row keeps the register's as-at date as `compilation_date`,
+`compilation_number: null`, a link to its section on the register, the
+copyright notice and the attribution docs/scope.md records; the title's
+disclaimer goes in `sources.json` and the Markdown front matter.
+
+```bash
+python -m fadden state --source qld --out qld
+python -m fadden search build qld --out qld.sqlite
+python -m fadden search query qld.sqlite liable land tax --source qld
+```
+
+An index holds one source. `query`, `define` and `refs` refuse a state index
+unless `--source` names it, and refuse a Commonwealth index under any other
+`--source`; `cite-check` and `quote` read Commonwealth indexes only, and
+`--as-at` and `--rulings` apply only to them. Queensland numbers divisions
+within each part, so a cited division can match more than one row.
+
 ## Searching a built corpus
 
 `python -m fadden search` indexes a finished corpus root into one SQLite file and

@@ -24,6 +24,7 @@ use super::as_at;
 use super::corpus_paths::{child, register_id, register_id_str};
 use super::quotes::{self, Quotation};
 use super::rulings::canonical_docid;
+use super::state::{self, Source};
 use super::{Exc, Run, sha256_hex as hex};
 use crate::argparse::{Action, Exit, Get, Parser};
 use crate::pyjson::{self, Json, PyStr};
@@ -572,9 +573,70 @@ fn get<'a>(value: &'a Json, key: &str) -> &'a Json {
     value.get(key).unwrap_or(&Json::Null)
 }
 
+/// A title id as `source` spells them: Federal Register ids when it is None.
+fn title_id(source: Option<&Source>, value: &Json) -> Result<String, Exc> {
+    match source {
+        None => register_id(value),
+        Some(_) => state::title_id(value),
+    }
+}
+
+/// One `sections.jsonl` line as a row object with a text.
+fn load_row(line: &str, place: &str) -> Result<Json, Exc> {
+    let row = match pyjson::loads_standard(line) {
+        Ok(row) => row,
+        Err(pyjson::DecodeError::Invalid(message)) if message.starts_with("Exceeds the limit") => {
+            return Err(Exc::value(message));
+        }
+        Err(error @ pyjson::DecodeError::Recursion(_)) => return Err(super::json_error(error)),
+        Err(_) => return Err(refused(format!("{place} is not JSON"))),
+    };
+    if !matches!(row.get("text"), Some(Json::Str(_))) {
+        return Err(refused(format!("{place} is not a sections.jsonl row")));
+    }
+    Ok(row)
+}
+
+/// Refuses a row whose ids, compilation or `authorised` flag disagree with
+/// its title in `sources.json`.
+fn check_row(row: &Json, place: &str, rid: &str, ordinal: usize, title: &Json) -> Result<(), Exc> {
+    let section = get(row, "section");
+    let mut expected: Vec<u32> = format!("{rid}:{ordinal:04}:")
+        .chars()
+        .map(u32::from)
+        .collect();
+    if section.truthy() {
+        expected.extend(pyvalue::str_points(section));
+    } else {
+        expected.push(u32::from('-'));
+    }
+    let expected = Json::Str(PyStr::from_code_points(expected));
+    if !py_eq(get(row, "register_id"), &Json::str(rid)) {
+        return Err(refused(format!("{place} names another title")));
+    }
+    if !py_eq(get(row, "row_id"), &expected) {
+        return Err(refused(format!(
+            "{place} has row_id {}, expected {}",
+            repr(get(row, "row_id")),
+            repr(&expected)
+        )));
+    }
+    for field in ["compilation_number", "compilation_date"] {
+        if !py_eq(get(row, field), get(title, field)) {
+            return Err(refused(format!(
+                "{place} {field} differs from sources.json"
+            )));
+        }
+    }
+    if !matches!(row.get("authorised"), Some(Json::Bool(false))) {
+        return Err(refused(format!("{place} is not marked authorised: false")));
+    }
+    Ok(())
+}
+
 /// `"%s" % value`: `str()`, with a lone surrogate kept for binding to refuse.
-fn read_title(root: &str, title: &Json) -> Result<Title, Exc> {
-    let rid = register_id(get(title, "register_id"))?;
+fn read_title(root: &str, title: &Json, source: Option<&Source>) -> Result<Title, Exc> {
+    let rid = title_id(source, get(title, "register_id"))?;
     let data = read_bytes(root, &rid, "sections.jsonl")?;
     let markdown = read_bytes(root, &rid, &format!("{rid}.md"))?;
     let (text, markdown_text) = match (std::str::from_utf8(&data), std::str::from_utf8(&markdown)) {
@@ -595,51 +657,8 @@ fn read_title(root: &str, title: &Json) -> Result<Title, Exc> {
             continue;
         }
         let place = format!("{rid}/sections.jsonl:{number}");
-        let row = match pyjson::loads_standard(line) {
-            Ok(row) => row,
-            Err(pyjson::DecodeError::Invalid(message))
-                if message.starts_with("Exceeds the limit") =>
-            {
-                return Err(Exc::value(message));
-            }
-            Err(error @ pyjson::DecodeError::Recursion(_)) => return Err(super::json_error(error)),
-            Err(_) => return Err(refused(format!("{place} is not JSON"))),
-        };
-        if !matches!(row.get("text"), Some(Json::Str(_))) {
-            return Err(refused(format!("{place} is not a sections.jsonl row")));
-        }
-        let ordinal = rows.len() + 1;
-        let section = get(&row, "section");
-        let mut expected: Vec<u32> = format!("{rid}:{ordinal:04}:")
-            .chars()
-            .map(u32::from)
-            .collect();
-        if section.truthy() {
-            expected.extend(pyvalue::str_points(section));
-        } else {
-            expected.push(u32::from('-'));
-        }
-        let expected = Json::Str(PyStr::from_code_points(expected));
-        if !py_eq(get(&row, "register_id"), &Json::str(&rid)) {
-            return Err(refused(format!("{place} names another title")));
-        }
-        if !py_eq(get(&row, "row_id"), &expected) {
-            return Err(refused(format!(
-                "{place} has row_id {}, expected {}",
-                repr(get(&row, "row_id")),
-                repr(&expected)
-            )));
-        }
-        for field in ["compilation_number", "compilation_date"] {
-            if !py_eq(get(&row, field), get(title, field)) {
-                return Err(refused(format!(
-                    "{place} {field} differs from sources.json"
-                )));
-            }
-        }
-        if !matches!(row.get("authorised"), Some(Json::Bool(false))) {
-            return Err(refused(format!("{place} is not marked authorised: false")));
-        }
+        let row = load_row(line, &place)?;
+        check_row(&row, &place, &rid, rows.len() + 1, title)?;
         rows.push(row);
     }
     if !py_eq(&Json::Int(rows.len().into()), get(title, "jsonl_rows")) {
@@ -659,7 +678,12 @@ fn read_title(root: &str, title: &Json) -> Result<Title, Exc> {
     })
 }
 
-fn read_corpus(root: &str) -> Result<(Vec<u8>, Json, Vec<Title>), Exc> {
+type Corpus = (Vec<u8>, Json, Vec<Title>, Option<&'static Source>);
+
+/// The corpus at `root`. A `sources.json` without `state_register` is a
+/// Commonwealth corpus (whose `source` names the Federal Register); one with it
+/// must name a state register `state` knows.
+fn read_corpus(root: &str) -> Result<Corpus, Exc> {
     let path = child(root, &["sources.json"])?;
     let sources_bytes = crate::pyio::open(&path)
         .and_then(|file| read_all(file, &path))
@@ -672,6 +696,17 @@ fn read_corpus(root: &str) -> Result<(Vec<u8>, Json, Vec<Title>), Exc> {
         }
         Err(_) => return Err(not_finished()),
     };
+    let source = sources
+        .get("state_register")
+        .map(|value| {
+            value.as_str().and_then(state::source).ok_or_else(|| {
+                refused(format!(
+                    "sources.json names an unknown state register: {}",
+                    repr(value)
+                ))
+            })
+        })
+        .transpose()?;
     let listed = match sources.get("titles") {
         Some(Json::Array(items)) if items.iter().all(|t| matches!(t, Json::Object(_))) => {
             items.clone()
@@ -680,7 +715,7 @@ fn read_corpus(root: &str) -> Result<(Vec<u8>, Json, Vec<Title>), Exc> {
     };
     let ids = listed
         .iter()
-        .map(|t| register_id(get(t, "register_id")))
+        .map(|t| title_id(source, get(t, "register_id")))
         .collect::<Result<BTreeSet<String>, Exc>>()?;
     super::corpus_paths::refuse_unlisted_titles(root, &ids).map_err(|e| match e {
         Exc::Runtime(message) => refused(message),
@@ -688,9 +723,9 @@ fn read_corpus(root: &str) -> Result<(Vec<u8>, Json, Vec<Title>), Exc> {
     })?;
     let read = listed
         .iter()
-        .map(|title| read_title(root, title))
+        .map(|title| read_title(root, title, source))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok((sources_bytes, sources, read))
+    Ok((sources_bytes, sources, read, source))
 }
 
 const SCHEMA_SQL: &str = "
@@ -1153,7 +1188,15 @@ pub fn build_with_rulings(
             "the index destination's parent directory does not exist",
         ));
     }
-    let (sources_bytes, sources, read) = read_corpus(root)?;
+    let (sources_bytes, sources, read, source) = read_corpus(root)?;
+    if let Some(source) = source
+        && !rulings.is_empty()
+    {
+        return Err(refused(format!(
+            "rulings runs cite Commonwealth law; index them with a Commonwealth corpus, not {}",
+            source.code
+        )));
+    }
     let runs = rulings
         .iter()
         .map(|dir| read_rulings_run(dir))
@@ -1177,7 +1220,15 @@ pub fn build_with_rulings(
         }
     }
     let counts = publish(&destination, |temporary| {
-        write_index(temporary, &read, &sources, &sources_bytes, &names, &runs)
+        write_index(
+            temporary,
+            &read,
+            &sources,
+            &sources_bytes,
+            &names,
+            &runs,
+            source,
+        )
     })?;
     Ok((
         [read.len(), counts.rows, counts.definitions, counts.refs],
@@ -1326,6 +1377,7 @@ fn write_index(
     sources_bytes: &[u8],
     names: &[(pyvalue::Key, Option<String>)],
     runs: &[RulingsRun],
+    source: Option<&Source>,
 ) -> Result<Counts, Exc> {
     let connection = Connection::open(temporary).map_err(|e| sqlite_error(&e))?;
     connection
@@ -1389,6 +1441,10 @@ fn write_index(
             ),
             ("sources_sha256".to_string(), Json::str(&hex(sources_bytes))),
         ];
+        // Only a state index names its source, so a Commonwealth index is unchanged.
+        if let Some(source) = source {
+            meta.push(("source".to_string(), Json::str(source.code)));
+        }
         for (name, value) in [
             ("titles", read.len()),
             ("rows", counts.rows),
@@ -1649,11 +1705,54 @@ fn target_sql(kind: &str) -> String {
     )
 }
 
-fn optional_rid(title: Option<&str>) -> Result<Sql, Exc> {
+fn optional_rid(connection: &Connection, title: Option<&str>) -> Result<Sql, Exc> {
     match title.filter(|t| !t.is_empty()) {
-        Some(t) => Ok(Sql::Text(register_id_str(t)?)),
+        Some(t) => Ok(Sql::Text(match index_source(connection)? {
+            None => register_id_str(t)?,
+            Some(_) => state::title_id(&Json::str(t))?,
+        })),
         None => Ok(Sql::Null),
     }
+}
+
+const COMMONWEALTH: &str = "commonwealth";
+
+/// The state register an index was built from; None for a Commonwealth index.
+pub fn index_source(connection: &Connection) -> Result<Option<&'static Source>, Exc> {
+    let found = rows_of(
+        connection,
+        "SELECT value FROM meta WHERE key = 'source'",
+        &[],
+    )?;
+    let Some(row) = found.first() else {
+        return Ok(None);
+    };
+    let value = field(row, "value");
+    value
+        .as_str()
+        .and_then(state::source)
+        .map(Some)
+        .ok_or_else(|| {
+            refused(format!(
+                "the index names an unknown source: {}",
+                repr(value)
+            ))
+        })
+}
+
+/// Refuse an index whose source is not `wanted`, so no command mixes sources.
+fn check_source(connection: &Connection, wanted: &str, command: &str) -> Result<(), Exc> {
+    let held = index_source(connection)?.map_or(COMMONWEALTH, |s| s.code);
+    if held == wanted {
+        return Ok(());
+    }
+    Err(refused(if matches!(command, "query" | "define" | "refs") {
+        format!(
+            "the index holds {held} legislation, not {wanted}; pass --source {held} to search it"
+        )
+    } else {
+        format!("{command} reads only {COMMONWEALTH} indexes; this one holds {held} legislation")
+    }))
 }
 
 pub fn query(
@@ -1716,7 +1815,7 @@ fn ranked(
     only: Sql,
     mode: SearchMode,
 ) -> Result<Vec<Json>, Exc> {
-    let rid = optional_rid(title)?;
+    let rid = optional_rid(connection, title)?;
     let mut sections: Vec<String> = words
         .iter()
         .filter(|w| pyre::fullmatch(SECTION_RE, 0, &normalise(w)))
@@ -2042,7 +2141,7 @@ pub fn define(connection: &Connection, term: &str, title: Option<&str>) -> Resul
     if key.is_empty() {
         return Err(refused("the term is empty"));
     }
-    let rid = optional_rid(title)?;
+    let rid = optional_rid(connection, title)?;
     let exact = rows_of(
         connection,
         DEFINE_SQL,
@@ -2895,13 +2994,27 @@ fn source_line(connection: &Connection) -> Result<String, Exc> {
         lookup("corpus_retrieved").map_or_else(|| "None".to_string(), |v| pyvalue::py_str(&v));
     let digest = lookup("sources_sha256").map_or_else(String::new, |v| pyvalue::py_str(&v));
     let short: String = digest.chars().take(16).collect();
+    let notice = match index_source(connection)? {
+        None => NOTICE.to_string(),
+        Some(source) => source.notice(&retrieved),
+    };
     Ok(format!(
-        "Index of the corpus retrieved {retrieved}, sources.json sha256 {short}. {NOTICE}"
+        "Index of the corpus retrieved {retrieved}, sources.json sha256 {short}. {notice}"
     ))
 }
 
-fn describe(hit: &Json) -> String {
+/// A hit's provenance line; a state title has an as-at date, not a compilation.
+fn describe(hit: &Json, state_title: bool) -> String {
     let s = |k: &str| pyvalue::py_str(hit.get(k).unwrap_or(&Json::Null));
+    if state_title {
+        return format!(
+            "{}, as at {}, retrieved {}\n   {}",
+            s("row_id"),
+            s("compilation_date"),
+            s("retrieved"),
+            s("register_page")
+        );
+    }
     let state = if hit.get("version_is_current").is_some_and(Json::truthy) {
         "current"
     } else {
@@ -2955,6 +3068,7 @@ fn parser() -> Parser {
                 .arg(limit_option(20))
                 .arg(max_chars_option())
                 .arg(Action::flag("--json"))
+                .arg(source_option())
         })
         .sub(
             "refs",
@@ -2969,8 +3083,19 @@ fn parser() -> Parser {
                     .arg(limit_option(100).help("at most this many entries in each list"))
                     .arg(max_chars_option())
                     .arg(Action::flag("--json"))
+                    .arg(source_option())
             },
         )
+}
+
+/// `--source`: the legislation the index must hold; Commonwealth unless named.
+fn source_option() -> Action {
+    let mut codes = vec![COMMONWEALTH];
+    codes.extend(state::SOURCES.iter().map(|s| s.code));
+    Action::option("--source")
+        .default(crate::argparse::Value::Str(COMMONWEALTH.to_string()))
+        .choices(&codes)
+        .help("the index's source; an index of another source is refused")
 }
 
 /// `--limit 1-100`, defaulting to `default`.
@@ -3003,6 +3128,7 @@ fn query_arguments(parser: Parser) -> Parser {
         .arg(limit_option(10))
         .arg(max_chars_option())
         .arg(Action::flag("--json").help("print one object per hit"))
+        .arg(source_option())
 }
 
 /// Apart from `parser`, whose usage line is frozen by the Python parity fixtures.
@@ -3212,6 +3338,7 @@ fn print_citations(report: &[Json], connection: &Connection, run: &mut Run) -> R
 
 fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let connection = open_index(&args.str("index").unwrap_or_default())?;
+    check_source(&connection, COMMONWEALTH, "cite-check")?;
     let draft = read_draft(&args.str("draft").unwrap_or_default())?;
     let title = args.str("title");
     let (report, refusals) = match args.str("as_at") {
@@ -3246,6 +3373,7 @@ fn execute_cite_check(args: &crate::argparse::Namespace, run: &mut Run) -> Resul
 /// Exits 0 only if the row holds the quotation, `exact` or `normalised`.
 fn execute_quote(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc> {
     let connection = open_index(&args.str("index").unwrap_or_default())?;
+    check_source(&connection, COMMONWEALTH, "quote")?;
     let row_id = args.str("row_id").unwrap_or_default();
     let report = quote(
         &connection,
@@ -3527,7 +3655,8 @@ fn execute_query(
             s("act"),
             s("heading")
         ));
-        run.print(&format!("   {}", describe(hit)));
+        let state_title = index_source(connection)?.is_some();
+        run.print(&format!("   {}", describe(hit, state_title)));
         run.print(&format!(
             "   {}",
             crate::py::split_whitespace(&s("snippet")).join(" ")
@@ -3586,7 +3715,7 @@ fn execute_define(
                 ("defined".into(), Json::Bool(false)),
                 (
                     "register_id".into(),
-                    to_json(optional_rid(title.as_deref())?),
+                    to_json(optional_rid(connection, title.as_deref())?),
                 ),
                 ("longer_terms".into(), Json::Int(longer_terms.into())),
                 ("note".into(), Json::str(UNDEFINED_NOTE)),
@@ -3610,7 +3739,8 @@ fn execute_define(
     for item in &found {
         let s = |k: &str| pyvalue::py_str(item.get(k).unwrap_or(&Json::Null));
         run.print(&format!("{} ({}, {})", s("term"), s("act"), s("heading")));
-        run.print(&format!("   {}", describe(item)));
+        let state_title = index_source(connection)?.is_some();
+        run.print(&format!("   {}", describe(item, state_title)));
         run.print(&format!("   {}", s("definition").replace("\n\n", "\n   ")));
         print_refers_to(item, run);
     }
@@ -3807,6 +3937,15 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc>
         return Ok(0);
     }
     let connection = open_index(&args.str("index").unwrap_or_default())?;
+    let wanted = args
+        .str("source")
+        .unwrap_or_else(|| COMMONWEALTH.to_string());
+    check_source(&connection, &wanted, &command)?;
+    if wanted != COMMONWEALTH && args.str("as_at").is_some_and(|date| !date.is_empty()) {
+        return Err(refused(format!(
+            "--as-at reads the Commonwealth build's compilation windows; {wanted} titles carry only the register's as-at date"
+        )));
+    }
     match command.as_str() {
         "query" => execute_query(args, &connection, run),
         "define" => execute_define(args, &connection, run),

@@ -36,6 +36,9 @@ pub mod rulings;
 pub mod rulings_dist;
 pub mod rulings_targets;
 pub mod search;
+pub mod state;
+pub mod state_robots;
+pub mod state_xml;
 pub mod versions;
 pub mod witness;
 
