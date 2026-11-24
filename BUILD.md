@@ -497,7 +497,8 @@ Owner Grant Act 2000. Tasmania's XML has its own vocabulary, read by
 `src/fadden/state_tas.rs`: numbers are attributes, shown as `(1)` or `(a)`
 before their text; a date element is written as `1 July 2001`; an equation,
 published as an image, becomes `[formula]`; a schedule's clauses are rows
-like sections; and the amendment history between provisions is left out.
+like sections; a section the register marks omitted keeps its row, with
+the text `[omitted]`; and the amendment history between provisions is left out.
 Each row's `register_page` links its anchor on the register's HTML page. The
 XML carries no disclaimer, so `disclaimer` is `null`; the rows carry the
 copyright notice and the changed-material attribution docs/scope.md records.

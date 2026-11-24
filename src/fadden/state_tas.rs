@@ -127,6 +127,8 @@ struct Walker {
     texts: Vec<Text>,
     rows: Vec<Row>,
     items: Vec<Item>,
+    /// Rows of sections the register marks omitted (repealed), shown without text.
+    omitted: Vec<usize>,
 }
 
 impl Walker {
@@ -237,6 +239,9 @@ impl Walker {
             no: attribute(attrs, no).map(collapse).unwrap_or_default(),
             ..Level::default()
         };
+        if attribute(attrs, "omitted").is_some_and(|v| v.eq_ignore_ascii_case("yesomit")) {
+            self.omitted.push(index);
+        }
         self.section = Some((index, own, Text::default()));
     }
 
@@ -374,10 +379,17 @@ pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
         mut rows,
         texts,
         items,
+        omitted,
         ..
     } = walker;
     for (row, text) in rows.iter_mut().zip(texts) {
         row.text = text.finish();
+    }
+    // The register shows an omitted section's number only; say so in its row.
+    for index in omitted {
+        if rows[index].text.is_empty() {
+            rows[index].text = "[omitted]".to_string();
+        }
     }
     if rows.iter().all(|row| row.kind != "section") {
         return Err(refused(format!("{id}: no sections found")));

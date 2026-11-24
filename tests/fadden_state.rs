@@ -541,6 +541,14 @@ fn tasmanian_xml_becomes_section_rows_without_its_amendment_history() {
                 "(1) This Act commences on 1 July 2099.\n\n(2) Duty is worked out as follows:\n\n[formula]\n\nwhere the rate is in Schedule 1.",
             ),
             (
+                Some("5"),
+                "section",
+                "5",
+                Some("Part 2 General"),
+                Some("GS5@EN"),
+                "[omitted]",
+            ),
+            (
                 None,
                 "container",
                 "Schedule 1 Rates",
@@ -598,7 +606,7 @@ fn the_tasmanian_stage_carries_its_attribution_on_every_row() {
                        to www.legislation.tas.gov.au.";
     assert_eq!(sources["attribution"], attribution);
     let rows = lines(&root.join(format!("markdown/{TAS_ID}/sections.jsonl")));
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 5);
     assert_eq!(
         rows[0]["register_page"],
         format!(
@@ -620,7 +628,7 @@ fn the_tasmanian_stage_carries_its_attribution_on_every_row() {
     assert!(markdown.contains("attribution: \"Based on material from the Tasmanian Legislation"));
     let index = dir.path().join("tas.sqlite");
     let counts = search::build(&root.display().to_string(), &index.display().to_string()).unwrap();
-    assert_eq!(counts[..2], [1, 4]);
+    assert_eq!(counts[..2], [1, 5]);
     let connection = search::open_index(&index.display().to_string()).unwrap();
     assert_eq!(
         search::index_source(&connection).unwrap().map(|s| s.code),
