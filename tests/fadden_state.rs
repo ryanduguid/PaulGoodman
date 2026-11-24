@@ -489,3 +489,141 @@ fn a_sources_file_naming_an_unknown_source_is_refused() {
         "{error}"
     );
 }
+
+const TAS_SAMPLE: &str = include_str!("fixtures/tas-sample-act.xml");
+const TAS_ID: &str = "act-2099-001";
+const TAS_NAME: &str = "Sample Duties Act 2099";
+
+/// Tasmania, reading only the fabricated sample title.
+const TAS_ONE: Source = Source {
+    titles: &[(TAS_ID, TAS_NAME)],
+    ..state::SOURCES[1]
+};
+
+#[test]
+fn tasmanian_xml_becomes_section_rows_without_its_amendment_history() {
+    assert_eq!(state::SOURCES[1].code, "tas");
+    let parsed = tax_radar_au::fadden::state_tas::parse(TAS_SAMPLE, TAS_ID, TAS_NAME).unwrap();
+    assert_eq!(parsed.collection, "Act");
+    assert_eq!(parsed.as_at, "2099-07-01");
+    assert_eq!(parsed.disclaimer, None);
+    let rows: Vec<_> = parsed
+        .rows
+        .iter()
+        .map(|r| {
+            (
+                r.section.as_deref(),
+                r.kind,
+                r.heading.as_str(),
+                r.container.as_deref(),
+                r.anchor.as_deref(),
+                r.text.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                Some("3"),
+                "section",
+                "3 Interpretation",
+                Some("Part 2 General"),
+                Some("GS3@EN"),
+                "In this Act \u{2013}\n\ndutiable value means \u{2013}\n\n(a) the price paid; or\n\n(b) the unencumbered value;",
+            ),
+            (
+                Some("4"),
+                "section",
+                "4 Commencement",
+                Some("Part 2 General"),
+                Some("GS4@EN"),
+                "(1) This Act commences on 1 July 2099.\n\n(2) Duty is worked out as follows:\n\n[formula]\n\nwhere the rate is in Schedule 1.",
+            ),
+            (
+                None,
+                "container",
+                "Schedule 1 Rates",
+                None,
+                Some("JS1@EN"),
+                "Section 4",
+            ),
+            (
+                Some("1"),
+                "section",
+                "1 Rate table",
+                Some("Schedule 1 Rates"),
+                Some("JS1@GC1@EN"),
+                "Value | Rate\n\nup to $10 | nil",
+            ),
+        ]
+    );
+    let refused = |xml: &str, id: &str, name: &str| {
+        tax_radar_au::fadden::state_tas::parse(xml, id, name)
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(refused(TAS_SAMPLE, "act-2099-002", TAS_NAME).contains("the XML is title"));
+    assert!(refused(TAS_SAMPLE, TAS_ID, "Other Act 2099").contains("review the list"));
+    let regulation = TAS_SAMPLE
+        .replace("<ACT ", "<SR ")
+        .replace("</ACT>", "</SR>");
+    assert!(refused(&regulation, TAS_ID, TAS_NAME).contains("unexpected document element"));
+}
+
+#[test]
+fn the_tasmanian_stage_carries_its_attribution_on_every_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tas");
+    let tas = &state::SOURCES[1];
+    let mut register = Register::default();
+    register.answers.insert(
+        "https://www.legislation.tas.gov.au/robots.txt".into(),
+        Ok("User-agent: *\nDisallow: /admin/\n".into()),
+    );
+    register
+        .answers
+        .insert(tas.xml_url(TAS_ID), Ok(TAS_SAMPLE.to_string()));
+    assert_eq!(run(&mut register, &TAS_ONE, &root), Ok(0));
+    assert_eq!(
+        register.asked[1],
+        format!("https://www.legislation.tas.gov.au/view/whole/xml/inforce/current/{TAS_ID}")
+    );
+    assert_eq!(register.slept, [5.0]);
+    let sources: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("sources.json")).unwrap()).unwrap();
+    assert_eq!(sources["state_register"], "tas");
+    let attribution = "Based on material from the Tasmanian Legislation website at 2099-01-02. \
+                       For the latest information on Tasmanian Government legislation please go \
+                       to www.legislation.tas.gov.au.";
+    assert_eq!(sources["attribution"], attribution);
+    let rows = lines(&root.join(format!("markdown/{TAS_ID}/sections.jsonl")));
+    assert_eq!(rows.len(), 4);
+    assert_eq!(
+        rows[0]["register_page"],
+        format!(
+            "https://www.legislation.tas.gov.au/view/whole/html/inforce/current/{TAS_ID}#GS3@EN"
+        )
+    );
+    for row in &rows {
+        assert_eq!(row["attribution"], attribution);
+        assert_eq!(
+            row["copyright"],
+            "© The State of Tasmania (Department of Premier and Cabinet)"
+        );
+        assert_eq!(row["licence"], "CC BY 4.0");
+        assert_eq!(row["authorised"], false);
+        assert_eq!(row["state_register"], "tas");
+    }
+    let markdown =
+        std::fs::read_to_string(root.join(format!("markdown/{TAS_ID}/{TAS_ID}.md"))).unwrap();
+    assert!(markdown.contains("attribution: \"Based on material from the Tasmanian Legislation"));
+    let index = dir.path().join("tas.sqlite");
+    let counts = search::build(&root.display().to_string(), &index.display().to_string()).unwrap();
+    assert_eq!(counts[..2], [1, 4]);
+    let connection = search::open_index(&index.display().to_string()).unwrap();
+    assert_eq!(
+        search::index_source(&connection).unwrap().map(|s| s.code),
+        Some("tas")
+    );
+}

@@ -62,14 +62,14 @@ const BREAKS: [&str; 15] = [
 /// marked `- `), a number joined to the block it labels, table cells joined
 /// with ` | `.
 #[derive(Debug, Default)]
-struct Text {
+pub(super) struct Text {
     lines: Vec<String>,
     current: String,
     join: bool,
 }
 
 impl Text {
-    fn brk(&mut self) {
+    pub(super) fn brk(&mut self) {
         if std::mem::take(&mut self.join) {
             return;
         }
@@ -80,19 +80,19 @@ impl Text {
     }
 
     /// Text joins a following block only until text of its own arrives.
-    fn push(&mut self, text: &str) {
+    pub(super) fn push(&mut self, text: &str) {
         if !text.trim().is_empty() {
             self.join = false;
         }
         self.current.push_str(text);
     }
 
-    fn glue(&mut self, text: &str) {
+    pub(super) fn glue(&mut self, text: &str) {
         self.current.push_str(text);
         self.join = true;
     }
 
-    fn finish(mut self) -> String {
+    pub(super) fn finish(mut self) -> String {
         self.join = false;
         self.brk();
         self.lines
@@ -104,7 +104,7 @@ impl Text {
     }
 }
 
-fn collapse(text: &str) -> String {
+pub(super) fn collapse(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -143,9 +143,9 @@ struct Walker {
     items: Vec<Item>,
 }
 
-type Attrs = Vec<(String, Option<String>)>;
+pub(super) type Attrs = Vec<(String, Option<String>)>;
 
-fn attribute<'a>(attrs: &'a [(String, Option<String>)], name: &str) -> Option<&'a str> {
+pub(super) fn attribute<'a>(attrs: &'a [(String, Option<String>)], name: &str) -> Option<&'a str> {
     attrs
         .iter()
         .find(|(key, _)| key == name)
