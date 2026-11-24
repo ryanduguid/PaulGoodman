@@ -1,4 +1,6 @@
-# Unreleased
+# v0.8.0
+
+This candidate contains the corpus builder source. It excludes generated legislation and live evidence.
 
 - `state --source tas --out NEW_DIR` writes a corpus root of section rows from the Tasmanian Legislation website's whole-title XML for 6 reviewed revenue Acts: the Duties Act 2001, Land Tax Act 2000, Land Tax Rating Act 2000, Payroll Tax Act 2008, Taxation Administration Act 1997 and First Home Owner Grant Act 2000. It reads the website's own XML vocabulary, leaves out the amendment history between provisions, and carries the website's copyright notice and changed-material attribution on every row. `search build`, `query`, `define` and `refs` read such an index with `--source tas`. Commonwealth and Queensland output is unchanged.
 - `search refs --json` adds `text`, `register_page` and `source_url` to the row asked about, to each row it cites and to each row citing it; `define --follow` adds them to each row a definition reaches; `quote` adds the row's `text`, `register_page` and `source_url`; and `cite-check --json` adds `register_page`, `source_url` and the `text` of the one row a section citation reached. Text output is unchanged; a long `refs --json` report reaches the `--max-chars` cap sooner and marks the rows it withholds.
@@ -10,6 +12,12 @@
 - `search define` and `search refs --terms` read dictionary entries that have no defining verb, such as `head company:` before its paragraphs, `IRU is ...` and `market value has a meaning affected by Subdivision 960-S`. On the `corpus-2026-11-18` snapshot the index holds 3,825 definitions, up from 3,678, and unresolved asterisks in the ITAA 1997 fall from 4,972 to 2,075 (`docs/build-evidence.md`). Rebuild a local index with `search build` to pick them up; the corpus itself is unchanged.
 - `search define --follow` lists the provisions each definition cites, with the rows they reach, so the GST Act's `taxable supply` reaches sections 9-5, 78-50, 84-5 and 105-5. `search refs --terms` lists the asterisked defined terms a row uses and where each is defined, reading where each term ends from the title's own definitions (the ITAA 1997's for Schedule 1 to the TAA 1953). Both read the existing index; no rebuild is needed. Coverage is measured in `docs/build-evidence.md`.
 - `search query` also matches other English forms of each word, so `taxable supplies` reaches `taxable supply`. Rows holding the words as typed are favoured; a row only a word form matched is marked `*` in text and `stemmed: true` in JSON. `--exact` keeps the earlier exact-only search; `--stem` is unchanged. Measured in `docs/build-evidence.md`: base-form top-five hits stay at 21 of 32, and inflected top-ten hits rise from 1 to 7 of 14.
+- `versions --in-force-on` falls back to a filtered history request when the Register's first history page cannot reach the requested date, and refuses failed, incomplete or ambiguous lookups before replacing the manifest (#327).
+- `quick --in-force-on` retains genuine historical compilation omissions per requested date in `sources.json`, including dates with no separate compilation folder, and `dist` preserves and validates those omission records (#329).
+- `dist` and `dist_verify` scan decoded JSON and JSONL text of rulings runs, excluding machine counts and 64-character hex digests from phone-pattern matching whilst still scanning every other member (#335).
+- `rulings` strips markup from `DC.Title`, trims titles containing `DCTERMS.description` where that description ends, and refuses (and `dist` leaves out) titles still holding `<` or `>` or running past 400 characters (#336).
+- `llms.txt` and `README.md` route to the `corpus-2026-11-23` snapshot (#341).
+- Dependencies and builds: `rusqlite` 0.42.0 (#325), `fancy-regex` 0.20.2 (#324), `ruff` 0.17.4 (#322); release Cargo builds enable `strip = true`, and `deny.toml` checks crate licences and sources (#338).
 - Relicensed Ryan Duguid's original work under Apache-2.0. Earlier releases keep their original terms.
 
 # v0.7.0
