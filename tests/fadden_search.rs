@@ -3689,3 +3689,117 @@ fn the_undefined_line_counts_every_longer_term_before_the_caps() {
         (&json!(1), &json!(1))
     );
 }
+
+/// Every tool that answers with a provision gives its verbatim text and the register's
+/// page and source for its title, so a reader can check the text there.
+#[test]
+fn every_tool_gives_the_provision_text_and_its_register_links() {
+    let (_c, connection) = quoted_case();
+    let linked = |v: &Value, what: &str| {
+        for key in ["register_page", "source_url"] {
+            let url = v[key].as_str().unwrap_or_default();
+            assert!(url.starts_with("https://"), "{what} {key}: {v}");
+        }
+    };
+    let texted = |v: &Value, key: &str, what: &str| {
+        let text = v[key].as_str().unwrap_or_default();
+        assert!(!text.is_empty(), "{what} {key}: {v}");
+    };
+    let hits = values(search::query(&connection, &["widget".into()], None, 10).unwrap());
+    assert!(!hits.is_empty());
+    for hit in &hits {
+        linked(hit, "query");
+        texted(hit, "text", "query");
+    }
+    let found = search::define(&connection, "widget", None).unwrap();
+    let followed = values(search::follow_definitions(&connection, found).unwrap());
+    assert!(!followed.is_empty());
+    let mut reached = 0;
+    for hit in &followed {
+        linked(hit, "define");
+        texted(hit, "definition", "define");
+        for cited in hit["refers_to"].as_array().unwrap() {
+            for target in cited["rows"].as_array().unwrap() {
+                linked(target, "define --follow");
+                texted(target, "text", "define --follow");
+                reached += 1;
+            }
+        }
+    }
+    assert!(reached > 0, "no definition reached a row");
+    let report = value(&search::refs(&connection, &format!("{ACT}:0002:2{NBH}1")).unwrap());
+    linked(&report, "refs");
+    texted(&report, "text", "refs");
+    let targets: Vec<&Value> = report["cites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|cited| cited["rows"].as_array().unwrap())
+        .collect();
+    let citing = report["cited_by"].as_array().unwrap();
+    assert!(!targets.is_empty() && !citing.is_empty());
+    for row in targets.into_iter().chain(citing) {
+        linked(row, "refs row");
+        texted(row, "text", "refs row");
+    }
+    let draft = format!("{AT} says \"the widget costs less than\".");
+    let checked = values(search::cite_check(&connection, &draft, None).unwrap());
+    assert_eq!(checked[0]["outcome"], "resolved");
+    linked(&checked[0], "cite-check");
+    texted(&checked[0], "text", "cite-check");
+    let row = format!("{ACT}:0006:7-1");
+    let held = value(&search::refs(&connection, &row).unwrap());
+    assert_eq!(checked[0]["rows"], json!([row]));
+    assert_eq!(checked[0]["text"], held["text"]);
+    // A citation that reaches no row has no text, but keeps its title's links.
+    let draft = AT.replace("7-1", "7-99");
+    let unheld = values(search::cite_check(&connection, &draft, None).unwrap());
+    assert_eq!(unheld[0]["outcome"], "not_held");
+    assert_eq!(unheld[0]["text"], Value::Null);
+    linked(&unheld[0], "cite-check not_held");
+    let quoted = value(&search::quote(&connection, &row, "the widget costs less than").unwrap());
+    linked(&quoted, "quote");
+    texted(&quoted, "text", "quote");
+}
+
+/// Text output prints no provision text, so lengthening every row's text in the
+/// index changes no line `refs` or `define --follow` prints, whatever `--max-chars`.
+#[test]
+fn text_output_is_capped_without_the_provision_text() {
+    let (c, connection) = quoted_case();
+    drop(connection);
+    let dir = c.out.parent().unwrap();
+    let row = format!("{ACT}:0002:2{NBH}1");
+    let texts = || -> Vec<String> {
+        let mut texts = Vec::new();
+        for budget in (1000..=8000).step_by(250) {
+            let max = budget.to_string();
+            for args in [
+                vec!["refs", "index.sqlite", row.as_str(), "--max-chars", &max],
+                vec![
+                    "define",
+                    "index.sqlite",
+                    "widget",
+                    "--follow",
+                    "--max-chars",
+                    &max,
+                ],
+            ] {
+                let (code, out, err) = cli(&args, dir);
+                assert_eq!(code, 0, "{args:?}: {err}");
+                texts.push(out);
+            }
+        }
+        texts
+    };
+    let before = texts();
+    assert!(before.iter().any(|t| t.contains("[truncated]")));
+    assert!(before.iter().any(|t| !t.contains("[truncated]")));
+    let index = rusqlite::Connection::open(&c.out).unwrap();
+    let pad = " x".repeat(1500);
+    index
+        .execute("UPDATE rows SET text = text || ?1", [&pad])
+        .unwrap();
+    drop(index);
+    assert_eq!(texts(), before);
+}

@@ -607,6 +607,15 @@ python -m fadden search cite-check search.sqlite draft.md --as-at 2026-07-15
   cites, read and resolved as `refs` reads a row, with the rows each reaches. So the
   GST Act's `taxable supply has the meaning given by sections 9-5, 78-50, 84-5 and
   105-5` reaches those 4 sections. It has the same limits as `refs`.
+- Every row `query`, `refs`, `define --follow`, `cite-check --json` and `quote`
+  report carries its text as the index holds it, and its title's `register_page` and
+  `source_url`, so the text can be checked on the register: `refs --json` gives them
+  for the row asked about, each row it cites and each row citing it; `cite-check`
+  gives the text of the one row a section citation reached (otherwise `null`).
+  `define` gives the definition paragraph with the same 2 links. A ruling paragraph
+  under `cited_by_rulings` carries its source URL but not its text. Text output
+  prints none of the added fields, and `--max-chars` measures its rows without them,
+  so it withholds what it withheld before.
 - `refs --terms` adds `terms`: the defined terms a row marks with an asterisk, each
   with the definitions it reaches. The asterisk marks only where a term starts (ITAA
   1997 s 2-10, GST Act s 3-1), so `refs` takes the longest run of following words, up
