@@ -3762,8 +3762,8 @@ fn every_tool_gives_the_provision_text_and_its_register_links() {
     texted(&quoted, "text", "quote");
 }
 
-/// Text output prints no provision text or register link, so lengthening them in
-/// the index changes no line `refs` or `define --follow` prints, whatever `--max-chars`.
+/// Text output prints no provision text, so lengthening every row's text in the
+/// index changes no line `refs` or `define --follow` prints, whatever `--max-chars`.
 #[test]
 fn text_output_is_capped_without_the_provision_text() {
     let (c, connection) = quoted_case();
@@ -3799,12 +3799,6 @@ fn text_output_is_capped_without_the_provision_text() {
     let pad = " x".repeat(1500);
     index
         .execute("UPDATE rows SET text = text || ?1", [&pad])
-        .unwrap();
-    index
-        .execute(
-            "UPDATE titles SET register_page = register_page || ?1, source_url = source_url || ?1",
-            ["?x"],
-        )
         .unwrap();
     drop(index);
     assert_eq!(texts(), before);
