@@ -177,12 +177,12 @@ impl Walker {
         if name == "date" {
             let date = date_text(attrs);
             self.data(&date);
-        } else if name == "equation" {
-            if let Some(text) = self.target(true) {
-                text.brk();
-                text.push("[formula]");
-                text.brk();
-            }
+        } else if name == "equation"
+            && let Some(text) = self.target(true)
+        {
+            text.brk();
+            text.push("[formula]");
+            text.brk();
         }
         if empty {
             return;
