@@ -997,7 +997,7 @@ class StateRegisterLicenceTests(unittest.TestCase):
                 "of download]. For the latest information on Tasmanian Government "
                 "legislation please go to www.legislation.tas.gov.au.",
                 "https://creativecommons.org/licenses/by/4.0/",
-                "(c) The State of Tasmania (Department of Premier and Cabinet)",
+                "©The State of Tasmania (The Department of Premier and Cabinet) 2026",
                 "material under other specified licences are excluded",
                 "with the date filled in"):
             with self.subTest(required=required):

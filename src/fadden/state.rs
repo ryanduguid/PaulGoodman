@@ -91,7 +91,7 @@ const TAS: Source = Source {
     host: "www.legislation.tas.gov.au",
     website: "Tasmanian Legislation website",
     terms_url: "https://www.legislation.tas.gov.au/copyrightanddisclaimer",
-    copyright: "© The State of Tasmania (Department of Premier and Cabinet)",
+    copyright: "©The State of Tasmania (The Department of Premier and Cabinet) 2026",
     attribution: "Based on material from the Tasmanian Legislation website at {date}. For the latest information on Tasmanian Government legislation please go to www.legislation.tas.gov.au.",
     titles: &[
         ("act-2001-015", "Duties Act 2001"),

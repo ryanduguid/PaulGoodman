@@ -11,10 +11,12 @@ use super::state::refused;
 use super::state_xml::{Handler, Parsed, Rows, attribute, collapse, title_fields, walk};
 
 /// Structural levels: element, number attribute and the word before the number.
-const LEVELS: [(&str, &str, &str); 5] = [
+const LEVELS: [(&str, &str, &str); 7] = [
     ("chapter", "chapno", "Chapter"),
     ("part", "partno", "Part"),
+    ("s.part", "partno", "Part"),
     ("division", "divno", "Division"),
+    ("s.division", "divno", "Division"),
     ("subdivision", "subdivno", "Subdivision"),
     ("schedule", "scheduleno", "Schedule"),
 ];
@@ -109,6 +111,28 @@ struct Walker {
     omitted: Vec<usize>,
 }
 
+impl Walker {
+    fn close_element(&mut self, name: &str) {
+        if name == "definedterm"
+            && let Some(text) = self.rows.target(false)
+        {
+            // The term runs on into the text that defines it.
+            text.glue("");
+            return;
+        }
+        if name == "row" {
+            self.rows.end_row();
+        }
+        if level_of(name).is_some() {
+            self.rows.pop_level();
+            return;
+        }
+        if section_of(name).is_some() {
+            self.rows.close_section();
+        }
+    }
+}
+
 impl Handler for Walker {
     fn start(&mut self, name: &str, attrs: &[(String, Option<String>)], empty: bool) {
         if self.skip > 0 || SKIPPED.contains(&name) {
@@ -127,16 +151,17 @@ impl Handler for Walker {
             text.push("[formula]");
             text.brk();
         }
-        if empty {
-            return;
-        }
         let own = self
             .stack
             .last()
             .is_some_and(|p| level_of(p).is_some() || section_of(p).is_some());
-        self.stack.push(name.to_string());
+        if !empty {
+            self.stack.push(name.to_string());
+        }
         if own && matches!(name, "heading" | "headnote") && !self.heading {
-            self.heading = true;
+            if !empty {
+                self.heading = true;
+            }
             return;
         }
         if let Some((no, word)) = level_of(name) {
@@ -155,6 +180,9 @@ impl Handler for Walker {
             self.rows
                 .open_block(name, BREAKS.contains(&name), number.as_deref(), None);
         }
+        if empty {
+            self.close_element(name);
+        }
     }
 
     fn end(&mut self, name: &str) {
@@ -171,23 +199,7 @@ impl Handler for Walker {
             self.rows.set_level_heading();
             return;
         }
-        if name == "definedterm"
-            && let Some(text) = self.rows.target(false)
-        {
-            // The term runs on into the text that defines it.
-            text.glue("");
-            return;
-        }
-        if name == "row" {
-            self.rows.end_row();
-        }
-        if level_of(name).is_some() {
-            self.rows.pop_level();
-            return;
-        }
-        if section_of(name).is_some() {
-            self.rows.close_section();
-        }
+        self.close_element(name);
     }
 
     fn data(&mut self, data: &str) {

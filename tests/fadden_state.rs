@@ -604,7 +604,19 @@ fn the_tasmanian_stage_carries_its_attribution_on_every_row() {
     let attribution = "Based on material from the Tasmanian Legislation website at 2099-01-02. \
                        For the latest information on Tasmanian Government legislation please go \
                        to www.legislation.tas.gov.au.";
+    let copyright = "©The State of Tasmania (The Department of Premier and Cabinet) 2026";
+    let licence_url = "https://creativecommons.org/licenses/by/4.0/";
+    let terms_url = "https://www.legislation.tas.gov.au/copyrightanddisclaimer";
+    let source_url = tas.xml_url(TAS_ID);
+    let title_page = tas.title_page(TAS_ID);
+    assert_eq!(sources["source"], "Tasmanian Legislation website");
+    assert_eq!(sources["terms_url"], terms_url);
+    assert_eq!(sources["licence"], "CC BY 4.0");
+    assert_eq!(sources["licence_url"], licence_url);
+    assert_eq!(sources["copyright"], copyright);
     assert_eq!(sources["attribution"], attribution);
+    assert_eq!(sources["titles"][0]["register_page"], title_page);
+    assert_eq!(sources["titles"][0]["source_url"], source_url);
     let rows = lines(&root.join(format!("markdown/{TAS_ID}/sections.jsonl")));
     assert_eq!(rows.len(), 5);
     assert_eq!(
@@ -615,17 +627,35 @@ fn the_tasmanian_stage_carries_its_attribution_on_every_row() {
     );
     for row in &rows {
         assert_eq!(row["attribution"], attribution);
-        assert_eq!(
-            row["copyright"],
-            "© The State of Tasmania (Department of Premier and Cabinet)"
-        );
+        assert_eq!(row["copyright"], copyright);
         assert_eq!(row["licence"], "CC BY 4.0");
+        assert_eq!(row["licence_url"], licence_url);
+        assert_eq!(row["source_url"], source_url);
+        assert_eq!(row["disclaimer"], serde_json::Value::Null);
         assert_eq!(row["authorised"], false);
         assert_eq!(row["state_register"], "tas");
+        assert!(row["register_page"].as_str().unwrap().starts_with(&format!(
+            "https://www.legislation.tas.gov.au/view/whole/html/inforce/current/{TAS_ID}#"
+        )));
     }
     let markdown =
         std::fs::read_to_string(root.join(format!("markdown/{TAS_ID}/{TAS_ID}.md"))).unwrap();
-    assert!(markdown.contains("attribution: \"Based on material from the Tasmanian Legislation"));
+    for line in [
+        format!("title: \"{TAS_NAME}\""),
+        format!("register_id: \"{TAS_ID}\""),
+        "state_register: \"tas\"".to_string(),
+        "as_at: \"2099-07-01\"".to_string(),
+        "retrieved: \"2099-01-02\"".to_string(),
+        format!("register_page: \"{title_page}\""),
+        format!("source_url: \"{source_url}\""),
+        "licence: \"CC BY 4.0\"".to_string(),
+        format!("licence_url: \"{licence_url}\""),
+        format!("copyright: \"{copyright}\""),
+        format!("attribution: \"{attribution}\""),
+        "authorised: false".to_string(),
+    ] {
+        assert!(markdown.contains(&line), "missing {line} in:\n{markdown}");
+    }
     let index = dir.path().join("tas.sqlite");
     let counts = search::build(&root.display().to_string(), &index.display().to_string()).unwrap();
     assert_eq!(counts[..2], [1, 5]);
@@ -633,5 +663,58 @@ fn the_tasmanian_stage_carries_its_attribution_on_every_row() {
     assert_eq!(
         search::index_source(&connection).unwrap().map(|s| s.code),
         Some("tas")
+    );
+}
+
+#[test]
+fn tasmanian_self_closing_cells_omitted_sections_and_schedule_parts_keep_structure() {
+    let paired = r#"<ACT FIRST.VALID.DATE="2099-07-01" TITLE="Sample Act 2099" ID="act-2099-002"><BODY><CHAPTER CHAPNO="1" NOFORMAT="ARABIC" ID="HC1/EN"><HEADING>Body</HEADING><SECTION OMITTED="YESOMIT" SECNO="2" NOFORMAT="ARABIC" ID="GS2/EN"></SECTION><SECTION SECNO="3" NOFORMAT="ARABIC" ID="GS3/EN"><HEADNOTE>Table</HEADNOTE><TABLE><TGROUP COLS="3"><TBODY><ROW><ENTRY><PARA>A</PARA></ENTRY><ENTRY></ENTRY><ENTRY><PARA>C</PARA></ENTRY></ROW></TBODY></TGROUP></TABLE></SECTION></CHAPTER></BODY><TAIL><SCHEDULE SCHEDULENO="1" NOFORMAT="ARABIC" ID="JS1/EN"><HEADING>Rates</HEADING><S.PART PARTNO="1" NOFORMAT="ARABIC" ID="JS1/HS1/EN"><HEADING>General</HEADING><S.DIVISION DIVNO="2" NOFORMAT="ARABIC" ID="JS1/HS1/HT2/EN"><HEADING>Exemptions</HEADING><S.CLAUSE CLAUSENO="1" NOFORMAT="ARABIC" ID="JS1/HS1/HT2/GC1/EN"><HEADNOTE>Exempt</HEADNOTE><TEXT>Nil.</TEXT></S.CLAUSE></S.DIVISION></S.PART></SCHEDULE></TAIL></ACT>"#;
+    let self_closing = paired
+        .replace(
+            r#"<SECTION OMITTED="YESOMIT" SECNO="2" NOFORMAT="ARABIC" ID="GS2/EN"></SECTION>"#,
+            r#"<SECTION OMITTED="YESOMIT" SECNO="2" NOFORMAT="ARABIC" ID="GS2/EN"/>"#,
+        )
+        .replace("<ENTRY></ENTRY>", "<ENTRY/>");
+    let a =
+        tax_radar_au::fadden::state_tas::parse(paired, "act-2099-002", "Sample Act 2099").unwrap();
+    let b =
+        tax_radar_au::fadden::state_tas::parse(&self_closing, "act-2099-002", "Sample Act 2099")
+            .unwrap();
+    let rows = |p: tax_radar_au::fadden::state::Parsed| -> Vec<_> {
+        p.rows
+            .into_iter()
+            .map(|r| (r.section, r.kind, r.heading, r.container, r.anchor, r.text))
+            .collect()
+    };
+    let ra = rows(a);
+    assert_eq!(ra, rows(b));
+    assert_eq!(
+        ra,
+        [
+            (
+                Some("2".into()),
+                "section",
+                "2".into(),
+                Some("Chapter 1 Body".into()),
+                Some("GS2@EN".into()),
+                "[omitted]".into(),
+            ),
+            (
+                Some("3".into()),
+                "section",
+                "3 Table".into(),
+                Some("Chapter 1 Body".into()),
+                Some("GS3@EN".into()),
+                "A | | C".into(),
+            ),
+            (
+                Some("1".into()),
+                "section",
+                "1 Exempt".into(),
+                Some("Division 2 Exemptions".into()),
+                Some("JS1@HS1@HT2@GC1@EN".into()),
+                "Nil.".into(),
+            ),
+        ]
     );
 }
