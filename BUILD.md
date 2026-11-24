@@ -464,7 +464,7 @@ and rate metadata are escaped as literal Markdown.
 `python -m fadden state --source qld --out NEW_DIR` fetches the reviewed
 Queensland titles in `src/fadden/state.rs` as whole-title XML from
 `https://www.legislation.qld.gov.au/view/whole/xml/inforce/current/<id>` and
-writes a corpus root: `sources.json` naming `"source": "qld"`, `markdown/<id>/`
+writes a corpus root: `sources.json` naming `"state_register": "qld"`, `markdown/<id>/`
 with one row per section (a schedule's text is one row under its heading) and
 `raw/<id>.xml`, the exact bytes each title returned. It reads robots.txt
 first and refuses a disallowed path, sends one request at a time with a

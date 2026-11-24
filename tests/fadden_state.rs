@@ -244,7 +244,7 @@ fn the_stage_writes_a_corpus_that_search_build_reads() {
     );
     let sources: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(root.join("sources.json")).unwrap()).unwrap();
-    assert_eq!(sources["source"], "qld");
+    assert_eq!(sources["state_register"], "qld");
     assert_eq!(sources["user_agent"], "au-legislation-corpus/1.0");
     assert_eq!(
         sources["attribution"],
@@ -270,6 +270,27 @@ fn the_stage_writes_a_corpus_that_search_build_reads() {
     );
     assert_eq!(rows[1]["authorised"], false);
     assert_eq!(rows[1]["licence"], "CC BY 4.0");
+    // Every row keeps the copyright notice, attribution and the register's disclaimer.
+    for row in &rows {
+        assert!(
+            row["copyright"]
+                .as_str()
+                .unwrap()
+                .contains("State of Queensland")
+        );
+        assert!(
+            row["attribution"]
+                .as_str()
+                .unwrap()
+                .starts_with("Based on content from")
+        );
+        assert!(
+            row["disclaimer"]
+                .as_str()
+                .unwrap()
+                .ends_with("This notice must not be erased.")
+        );
+    }
     let markdown = std::fs::read_to_string(root.join(format!("markdown/{REG}/{REG}.md"))).unwrap();
     assert!(markdown.contains("This notice must not be erased."));
     assert!(markdown.contains("attribution: \"Based on content from the Queensland Legislation"));
@@ -282,6 +303,30 @@ fn the_stage_writes_a_corpus_that_search_build_reads() {
         search::index_source(&connection).unwrap().map(|s| s.code),
         Some("qld")
     );
+}
+
+/// A Commonwealth `sources.json` names its register in `source`, as finalize and
+/// dist write it; that is not a state register and the build reads it as before.
+#[test]
+fn a_commonwealth_source_field_is_not_a_state_register() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("corpus");
+    let demo = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/search-demo");
+    let rid = "C2099A00001";
+    std::fs::create_dir_all(root.join(format!("markdown/{rid}"))).unwrap();
+    for name in ["sections.jsonl", &format!("{rid}.md")] {
+        let from = demo.join(format!("markdown/{rid}/{name}"));
+        std::fs::copy(from, root.join(format!("markdown/{rid}/{name}"))).unwrap();
+    }
+    let mut sources: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(demo.join("sources.json")).unwrap()).unwrap();
+    sources["source"] = "Federal Register of Legislation".into();
+    std::fs::write(root.join("sources.json"), sources.to_string()).unwrap();
+    let index = dir.path().join("cth.sqlite").display().to_string();
+    let counts = search::build(&root.display().to_string(), &index).unwrap();
+    assert_eq!(counts[..2], [1, 3]);
+    let connection = search::open_index(&index).unwrap();
+    assert!(search::index_source(&connection).unwrap().is_none());
 }
 
 #[test]
@@ -440,7 +485,7 @@ fn a_sources_file_naming_an_unknown_source_is_refused() {
     assert!(
         error
             .to_string()
-            .contains("sources.json names an unknown source: 'vic'"),
+            .contains("sources.json names an unknown state register: 'vic'"),
         "{error}"
     );
 }

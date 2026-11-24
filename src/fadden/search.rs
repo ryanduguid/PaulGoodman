@@ -581,6 +581,59 @@ fn title_id(source: Option<&Source>, value: &Json) -> Result<String, Exc> {
     }
 }
 
+/// One `sections.jsonl` line as a row object with a text.
+fn load_row(line: &str, place: &str) -> Result<Json, Exc> {
+    let row = match pyjson::loads_standard(line) {
+        Ok(row) => row,
+        Err(pyjson::DecodeError::Invalid(message)) if message.starts_with("Exceeds the limit") => {
+            return Err(Exc::value(message));
+        }
+        Err(error @ pyjson::DecodeError::Recursion(_)) => return Err(super::json_error(error)),
+        Err(_) => return Err(refused(format!("{place} is not JSON"))),
+    };
+    if !matches!(row.get("text"), Some(Json::Str(_))) {
+        return Err(refused(format!("{place} is not a sections.jsonl row")));
+    }
+    Ok(row)
+}
+
+/// Refuses a row whose ids, compilation or `authorised` flag disagree with
+/// its title in `sources.json`.
+fn check_row(row: &Json, place: &str, rid: &str, ordinal: usize, title: &Json) -> Result<(), Exc> {
+    let section = get(row, "section");
+    let mut expected: Vec<u32> = format!("{rid}:{ordinal:04}:")
+        .chars()
+        .map(u32::from)
+        .collect();
+    if section.truthy() {
+        expected.extend(pyvalue::str_points(section));
+    } else {
+        expected.push(u32::from('-'));
+    }
+    let expected = Json::Str(PyStr::from_code_points(expected));
+    if !py_eq(get(row, "register_id"), &Json::str(rid)) {
+        return Err(refused(format!("{place} names another title")));
+    }
+    if !py_eq(get(row, "row_id"), &expected) {
+        return Err(refused(format!(
+            "{place} has row_id {}, expected {}",
+            repr(get(row, "row_id")),
+            repr(&expected)
+        )));
+    }
+    for field in ["compilation_number", "compilation_date"] {
+        if !py_eq(get(row, field), get(title, field)) {
+            return Err(refused(format!(
+                "{place} {field} differs from sources.json"
+            )));
+        }
+    }
+    if !matches!(row.get("authorised"), Some(Json::Bool(false))) {
+        return Err(refused(format!("{place} is not marked authorised: false")));
+    }
+    Ok(())
+}
+
 /// `"%s" % value`: `str()`, with a lone surrogate kept for binding to refuse.
 fn read_title(root: &str, title: &Json, source: Option<&Source>) -> Result<Title, Exc> {
     let rid = title_id(source, get(title, "register_id"))?;
@@ -604,51 +657,8 @@ fn read_title(root: &str, title: &Json, source: Option<&Source>) -> Result<Title
             continue;
         }
         let place = format!("{rid}/sections.jsonl:{number}");
-        let row = match pyjson::loads_standard(line) {
-            Ok(row) => row,
-            Err(pyjson::DecodeError::Invalid(message))
-                if message.starts_with("Exceeds the limit") =>
-            {
-                return Err(Exc::value(message));
-            }
-            Err(error @ pyjson::DecodeError::Recursion(_)) => return Err(super::json_error(error)),
-            Err(_) => return Err(refused(format!("{place} is not JSON"))),
-        };
-        if !matches!(row.get("text"), Some(Json::Str(_))) {
-            return Err(refused(format!("{place} is not a sections.jsonl row")));
-        }
-        let ordinal = rows.len() + 1;
-        let section = get(&row, "section");
-        let mut expected: Vec<u32> = format!("{rid}:{ordinal:04}:")
-            .chars()
-            .map(u32::from)
-            .collect();
-        if section.truthy() {
-            expected.extend(pyvalue::str_points(section));
-        } else {
-            expected.push(u32::from('-'));
-        }
-        let expected = Json::Str(PyStr::from_code_points(expected));
-        if !py_eq(get(&row, "register_id"), &Json::str(&rid)) {
-            return Err(refused(format!("{place} names another title")));
-        }
-        if !py_eq(get(&row, "row_id"), &expected) {
-            return Err(refused(format!(
-                "{place} has row_id {}, expected {}",
-                repr(get(&row, "row_id")),
-                repr(&expected)
-            )));
-        }
-        for field in ["compilation_number", "compilation_date"] {
-            if !py_eq(get(&row, field), get(title, field)) {
-                return Err(refused(format!(
-                    "{place} {field} differs from sources.json"
-                )));
-            }
-        }
-        if !matches!(row.get("authorised"), Some(Json::Bool(false))) {
-            return Err(refused(format!("{place} is not marked authorised: false")));
-        }
+        let row = load_row(line, &place)?;
+        check_row(&row, &place, &rid, rows.len() + 1, title)?;
         rows.push(row);
     }
     if !py_eq(&Json::Int(rows.len().into()), get(title, "jsonl_rows")) {
@@ -670,8 +680,9 @@ fn read_title(root: &str, title: &Json, source: Option<&Source>) -> Result<Title
 
 type Corpus = (Vec<u8>, Json, Vec<Title>, Option<&'static Source>);
 
-/// The corpus at `root`. A `sources.json` without `source` is a Commonwealth
-/// corpus; one with `source` must name a state register `state` knows.
+/// The corpus at `root`. A `sources.json` without `state_register` is a
+/// Commonwealth corpus (whose `source` names the Federal Register); one with it
+/// must name a state register `state` knows.
 fn read_corpus(root: &str) -> Result<Corpus, Exc> {
     let path = child(root, &["sources.json"])?;
     let sources_bytes = crate::pyio::open(&path)
@@ -686,11 +697,11 @@ fn read_corpus(root: &str) -> Result<Corpus, Exc> {
         Err(_) => return Err(not_finished()),
     };
     let source = sources
-        .get("source")
+        .get("state_register")
         .map(|value| {
             value.as_str().and_then(state::source).ok_or_else(|| {
                 refused(format!(
-                    "sources.json names an unknown source: {}",
+                    "sources.json names an unknown state register: {}",
                     repr(value)
                 ))
             })
