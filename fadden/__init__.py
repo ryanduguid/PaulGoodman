@@ -27,6 +27,7 @@ STAGES = (
     "export_live_evidence_bundles",
     "rulings",
     "rulings_targets",
+    "state",
     "as_at",
     "compare_builds",
     "search",

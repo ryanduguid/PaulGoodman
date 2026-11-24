@@ -160,11 +160,16 @@ pub trait Http {
 
 /// The network, or the harness's script when the build allows one.
 pub fn connect() -> Box<dyn Http> {
+    connect_as(UA)
+}
+
+/// `connect()`, sending `agent` as the User-Agent.
+pub fn connect_as(agent: &'static str) -> Box<dyn Http> {
     #[cfg(feature = "fake-http")]
     if let Ok(path) = std::env::var("FADDEN_FAKE_HTTP") {
         return Box::new(fake::Script::load(&path));
     }
-    Box::new(Net::new())
+    Box::new(Net::new(agent))
 }
 
 /// `http_fetch.attempts()`: attempt numbers 1..=tries, waiting `delay` before
@@ -214,6 +219,7 @@ struct Net {
     proxies: HashMap<String, String>,
     tls: Option<Arc<rustls::ClientConfig>>,
     started: Instant,
+    agent: &'static str,
 }
 
 /// A `urllib.request.Request` as the opener's handlers read and change it.
@@ -338,11 +344,12 @@ impl Req {
 }
 
 impl Net {
-    fn new() -> Net {
+    fn new(agent: &'static str) -> Net {
         Net {
             proxies: environment_proxies(),
             tls: None,
             started: Instant::now(),
+            agent,
         }
     }
 
@@ -356,7 +363,7 @@ impl Net {
     ) -> Result<Opened, Raised> {
         let mut req = match request.sent.take() {
             Some(req) => req,
-            None => Req::new(url, vec![("User-Agent".into(), UA.into())])?,
+            None => Req::new(url, vec![("User-Agent".into(), self.agent.into())])?,
         };
         let opened = self.open(&mut req, &mut request.redirects, follow);
         request.sent = Some(req);
