@@ -15,8 +15,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tax_radar_au::fadden::{Exc, Run, finalize};
 
-/// The staleness checker finalize copies to the corpus root.
-const SUPPORT: [&str; 3] = ["check_current.py", "corpus_paths.py", "http_fetch.py"];
+/// `check_current` is now in the `fadden` binary, so finalize no longer copies
+/// standalone Python scripts to the corpus root.
+const SUPPORT: [&str; 0] = [];
 /// The builder stages the Python finalize also copied into build/.
 const BUILDER: [&str; 5] = [
     "discover.py",
@@ -40,7 +41,7 @@ const OUTPUT_HASHES: [(&str, &str); 4] = [
     ),
     (
         "README.md",
-        "803837d72702f4d1448aef238c2ebfa429fbab5540544762136ac08821abb233",
+        "c10cceda77b415e997d5a995c250f1a996ec8659b97b0ed16279e74ed99000d0",
     ),
     (
         "sources.json",
@@ -214,12 +215,8 @@ fn the_phase_fixture_publishes_pythons_bytes() {
         );
     }
     assert_eq!(stdout, STDOUT);
-    for name in SUPPORT {
-        assert_eq!(
-            std::fs::read(tree.root.join(name)).unwrap(),
-            std::fs::read(tree.scratch.join(name)).unwrap(),
-            "{name}"
-        );
+    for name in ["check_current.py", "corpus_paths.py", "http_fetch.py"] {
+        assert!(!tree.root.join(name).exists(), "{name}");
     }
     let built: Vec<_> = std::fs::read_dir(tree.root.join("build"))
         .unwrap()
@@ -298,22 +295,9 @@ fn the_build_record_describes_the_finalisation() {
         ])
     );
     assert_eq!(record["lineage"]["known"], json!([]));
-    let tools: Vec<Value> = SUPPORT
-        .iter()
-        .map(|name| {
-            let mut entry = json!({"name": name});
-            entry.as_object_mut().unwrap().extend(
-                digest_of(&tree.root.join(name))
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            );
-            entry
-        })
-        .collect();
     assert_eq!(
         record["shipped_tools"],
-        json!({"requires": "Python 3.14 or later, standard library only", "files": tools})
+        json!({"requires": "Python 3.14 or later, standard library only", "files": []})
     );
     assert_eq!(
         record["environment"]["platform"],
@@ -397,19 +381,16 @@ fn an_unreadable_build_stops_the_stage_first() {
     assert_eq!(read(&build.join("finalize.py")), "old\n");
 }
 
-/// With a directory where a checker goes, `shutil.copy` puts the checker
-/// inside it; the record names that file and the bytes installed there.
+/// With `check_current` in the binary, finalize records no shipped Python
+/// checker files and leaves no `.py` file at the corpus root.
 #[test]
-fn the_record_names_a_checker_copied_into_a_directory() {
+fn the_record_lists_no_shipped_python_checkers() {
     let tree = phase_fixture();
-    std::fs::create_dir(tree.root.join("check_current.py")).unwrap();
     tree.run(DATE).0.unwrap();
     let record: Value =
         serde_json::from_str(&read(&tree.root.join("build/build-record.json"))).unwrap();
-    let first = &record["shipped_tools"]["files"][0];
-    assert_eq!(first["name"], "check_current.py/check_current.py");
-    let installed = tree.root.join("check_current.py/check_current.py");
-    assert_eq!(first["sha256"], digest_of(&installed)["sha256"]);
+    assert_eq!(record["shipped_tools"]["files"], json!([]));
+    assert!(!tree.root.join("check_current.py").exists());
 }
 
 /// Totals that cannot be printed (an EPUB byte count past a float) fail the

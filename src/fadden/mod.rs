@@ -11,6 +11,7 @@
 pub mod as_at;
 pub mod authorities;
 pub mod capture_register;
+pub mod check_current;
 pub mod cli;
 pub mod compare_builds;
 pub mod compilations;
@@ -18,6 +19,7 @@ pub mod corpus_paths;
 pub mod discover;
 pub mod dist;
 pub mod dist_verify;
+pub mod download;
 pub mod epub;
 pub mod extract;
 pub mod extract_doc;
@@ -30,8 +32,10 @@ pub mod pii;
 pub mod pii_scan;
 pub mod probe13;
 pub mod publication_bundles;
+pub mod quick;
 pub mod quotes;
 pub mod rates;
+pub mod retry13;
 pub mod rulings;
 pub mod rulings_dist;
 pub mod rulings_targets;
@@ -327,6 +331,26 @@ pub fn getitem<'a>(value: &'a Json, key: &str) -> Result<&'a Json, Exc> {
             type_name(other)
         ))),
     }
+}
+
+/// First `n` Unicode scalars of `text`, matching Python `text[:n]`.
+pub(crate) fn head_str(text: &str, n: usize) -> String {
+    text.chars().take(n).collect()
+}
+
+/// Python `round(x)` (banker's rounding to nearest integer, half to even) for non-negative values.
+pub(crate) fn round_half_even(value: f64) -> i64 {
+    let floor = value.floor();
+    let frac = value - floor;
+    let rounded = if frac < 0.5 {
+        floor
+    } else if frac > 0.5 {
+        floor + 1.0
+    } else {
+        let i = floor as i64;
+        if i % 2 == 0 { floor } else { floor + 1.0 }
+    };
+    rounded as i64
 }
 
 /// `value[:n]`, or the exception slicing raises.

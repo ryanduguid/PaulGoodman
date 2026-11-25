@@ -34,7 +34,9 @@
 //! one a keyword already matches.
 //!
 //! The finalize fixtures refresh the shipped http_fetch.py digest for the
-//! PaulGoodman contact URL.
+//! PaulGoodman contact URL, and drop the retired corpus-root checker copies
+//! (`check_current.py`, `corpus_paths.py`, `http_fetch.py`) after `check_current`
+//! moved into the `fadden` binary.
 //!
 //! Outputs are normalised as the harness normalised them: the case directory
 //! reads `ROOT`, the module directory `MODULE`, generated stage, backup and
@@ -123,17 +125,13 @@ fn module_source() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fadden")
 }
 
-/// The module's JSON data and the tools finalize ships at the corpus root.
+/// The module's JSON data (`check_current` is in the `fadden` binary, so
+/// finalize no longer copies Python checker files to the corpus root).
 fn module_data() -> Vec<(String, Vec<u8>)> {
-    const SHIPPED: [&str; 3] = ["check_current.py", "corpus_paths.py", "http_fetch.py"];
     std::fs::read_dir(module_source())
         .unwrap()
         .map(|e| e.unwrap().path())
-        .filter(|p| {
-            p.extension().is_some_and(|x| x == "json")
-                || p.file_name()
-                    .is_some_and(|n| SHIPPED.iter().any(|s| n == *s))
-        })
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .map(|p| {
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
             (name, std::fs::read(&p).unwrap())
@@ -278,6 +276,18 @@ fn departed(family: &str, rel: &str, text: &str) -> String {
                 text = text.replace(
                     &"in its name is absent, unless\nthe builder's short reviewed list names it by register id (`keywords_in_name`\nis empty for those): the Customs Act 1901 and Charities Act 2013 are absent.".replace('\n', eol),
                     &"in its name is absent: the\nCustoms Act 1901 and Charities Act 2013 among them.".replace('\n', eol),
+                );
+                text = text.replace(
+                    "`check_current` reports these under \"no longer in force\"",
+                    "`check_current.py` reports these under \"no longer in force\"",
+                );
+                text = text.replace(
+                    &"## Checking staleness\n\n    python -m fadden check_current\n    python -m fadden check_current Act             # one collection only\n".replace('\n', eol),
+                    &"## Checking staleness\n\n    python check_current.py\n    python check_current.py Act                    # one collection only\n".replace('\n', eol),
+                );
+                text = text.replace(
+                    &"program that ran it (its version and SHA-256), and the size and SHA-256 of every\nfile it read. What the program cannot know, such as the source revision it was\nbuilt from, is null with a reason rather than guessed. The record covers\nfinalisation and its inputs, not the whole build. Earlier corpora shipped the\nbuilder's Python scripts in `build/` and `check_current.py` beside this\nREADME; both are now in the `fadden` program in the source repository.".replace('\n', eol),
+                    &"program that ran it (its version and SHA-256), the size and SHA-256 of every\nfile it read, and the checker files copied beside this README. What the program\ncannot know, such as the source revision it was built from, is null with a\nreason rather than guessed. The record covers finalisation and its inputs, not\nthe whole build. Earlier corpora shipped the builder's Python scripts in\n`build/`; the builder is now the `fadden` program in the source repository.".replace('\n', eol),
                 );
             }
             text
@@ -528,24 +538,9 @@ fn check_build_record(path: &Path, module: &Path, binary: &Path) -> Result<(), S
     let shipped = &record["shipped_tools"];
     let files = shipped["files"].as_array().ok_or("shipped tools")?;
     expect(
-        keys(shipped) == ["files", "requires"] && text(&shipped["requires"]) && files.len() == 3,
+        keys(shipped) == ["files", "requires"] && text(&shipped["requires"]) && files.is_empty(),
         "shipped tools",
     )?;
-    for (tool, name) in files
-        .iter()
-        .zip(["check_current.py", "corpus_paths.py", "http_fetch.py"])
-    {
-        let nested = format!("{name}/{name}");
-        let at = tool["name"]
-            .as_str()
-            .filter(|n| *n == name || *n == nested)
-            .ok_or_else(|| format!("shipped tool {tool}"))?;
-        expect(
-            keys(tool) == ["bytes", "name", "sha256"],
-            "shipped tool fields",
-        )?;
-        digest_matches(tool, &corpus.join(at))?;
-    }
     expect(
         record["environment"]
             == serde_json::json!({
@@ -754,9 +749,6 @@ fn the_build_record_check_fails_closed() {
             r#"{"titles": [{"register_id": "C1"}]}"#,
         ),
         (&corpus, "markdown/C1/sections.jsonl", "{}\n"),
-        (&corpus, "check_current.py", "a\n"),
-        (&corpus, "corpus_paths.py", "b\n"),
-        (&corpus, "http_fetch.py", "c\n"),
         (&module, "manifest_md.json", "[]"),
         (&module, "manifest_raw.json", "[1]"),
         (&module, "pii_flagged.json", "[2]"),
@@ -774,10 +766,6 @@ fn the_build_record_check_fails_closed() {
         let (bytes, sha256) = digest(base.join(path));
         json!({"root": root, "path": path, "bytes": bytes, "sha256": sha256})
     };
-    let tool = |name: &str| {
-        let (bytes, sha256) = digest(corpus.join(name));
-        json!({"name": name, "bytes": bytes, "sha256": sha256})
-    };
     let good = json!({
         "schema": "au-tax-corpus-build-record.v1",
         "scope": "finalize",
@@ -793,8 +781,7 @@ fn the_build_record_check_fails_closed() {
                    input("module", "manifest_md.json"), input("module", "manifest_raw.json"),
                    input("module", "pii_flagged.json")],
         "lineage": {"known": [], "unknown": "u"},
-        "shipped_tools": {"requires": "q", "files": [tool("check_current.py"),
-                          tool("corpus_paths.py"), tool("http_fetch.py")]},
+        "shipped_tools": {"requires": "q", "files": []},
         "environment": {"platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)},
     });
     let path = corpus.join("build").join("build-record.json");
@@ -805,7 +792,7 @@ fn the_build_record_check_fails_closed() {
     };
     assert_eq!(check(&good), Ok(()));
     type Mutation = (&'static str, fn(&mut Value));
-    let mutations: [Mutation; 14] = [
+    let mutations: [Mutation; 13] = [
         ("inputs null", |r| r["inputs"] = Value::Null),
         ("inputs empty", |r| r["inputs"] = json!([])),
         ("input dropped", |r| {
@@ -826,14 +813,8 @@ fn the_build_record_check_fails_closed() {
             r["implementation"]["cargo_lock_sha256"] = json!("0".repeat(64))
         }),
         ("dirty", |r| r["source"]["dirty"] = json!(false)),
-        ("tool malformed", |r| {
-            r["shipped_tools"]["files"][0]
-                .as_object_mut()
-                .unwrap()
-                .remove("sha256");
-        }),
-        ("tool bytes", |r| {
-            r["shipped_tools"]["files"][2]["bytes"] = json!(0)
+        ("shipped tools non-empty", |r| {
+            r["shipped_tools"]["files"] = json!([{"name": "x", "bytes": 1, "sha256": "0"}]);
         }),
         ("timestamp", |r| r["finalized_at"] = json!("yesterday")),
         ("extra field", |r| r["extra"] = json!(1)),

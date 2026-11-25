@@ -346,13 +346,26 @@ impl Epub {
                     py::repr_str(name)
                 )))
             })?;
+        self.read_inner(info, true)
+    }
+
+    /// `read_epub_member(archive, member, retain=retain)`.
+    pub fn read_member(&self, info: &Member, retain: bool) -> Result<Vec<u8>, Exc> {
+        self.read_inner(info, retain)
+    }
+
+    fn read_inner(&self, info: &Member, retain: bool) -> Result<Vec<u8>, Exc> {
         let (mut position, method) = self.position(info)?;
         let mut inflater = (method == DEFLATED).then(Decompress::default);
         let mut remaining = info.compress_size;
         let (mut total, mut crc) = (0u64, 0u32);
         // `position` has held the declared size to the member budget; deflate
         // expands at most 1032 times, so a corrupt member reserves no more.
-        let reserve = info.file_size.min(info.compress_size.saturating_mul(1032));
+        let reserve = if retain {
+            info.file_size.min(info.compress_size.saturating_mul(1032))
+        } else {
+            0
+        };
         let mut content = Vec::with_capacity(reserve as usize);
         let invalid = || download("EPUB member has invalid deflate data");
         while remaining > 0 {
@@ -375,7 +388,9 @@ impl Epub {
                     ));
                 }
                 crc = crc32(&piece, crc);
-                content.extend_from_slice(&piece);
+                if retain {
+                    content.extend_from_slice(&piece);
+                }
                 let Some(d) = inflater.as_ref() else { break };
                 if !d.unused_data.is_empty() {
                     return Err(download("EPUB member has trailing compressed data"));
@@ -434,6 +449,28 @@ impl Epub {
         }
         Ok((position, method))
     }
+}
+
+/// `download.valid_zip(path)`: every member admitted and verified without retaining bytes.
+pub fn valid_zip(path: &str) -> bool {
+    let Ok(archive) = open(path) else {
+        return false;
+    };
+    archive
+        .members
+        .iter()
+        .all(|member| archive.read_inner(member, false).is_ok())
+}
+
+/// `valid_zip` over in-memory archive bytes.
+pub fn valid_zip_bytes(data: Vec<u8>) -> bool {
+    let Ok(archive) = from_bytes(data) else {
+        return false;
+    };
+    archive
+        .members
+        .iter()
+        .all(|member| archive.read_inner(member, false).is_ok())
 }
 
 /// Fuzz invariant: an archive from arbitrary bytes is admitted or refused

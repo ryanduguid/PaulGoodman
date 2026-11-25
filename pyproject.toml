@@ -73,8 +73,10 @@ source = ["fadden", "*/fadden", "*\\fadden"]
 # lines (181 before the UTF-16 name-length fix) predate the Rust port; moving
 # stages to the Rust fadden binary removed about 2,500 covered Python
 # statements, which lowered the total from 97% to 94%. Removing discover,
-# versions, extract and finalize took out 926 more, leaving 92.07%.
-fail_under = 92
+# versions, extract and finalize took out 926 more, leaving 92.07%. Retiring
+# download, retry13, quick and check_current removed 4 more covered modules,
+# leaving 89.06% over the 6 surviving Python modules.
+fail_under = 89
 exclude_also = ['if __name__ == "__main__":']
 
 [tool.mypy]

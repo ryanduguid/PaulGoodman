@@ -55,7 +55,7 @@ pair or retire the synthetic output and regenerate it in a new directory. Remove
 `.monitor-contract.publish.lock` only after that recovery. Missing `.bak` files
 alone do not prove consistency. If rollback itself fails, the exporter retains
 the lock and unrecovered backups. Lock cleanup failures are reported. It never queries the Register:
-`check_current.py` remains the read-only Register lookup stage, and the adapter
+`check_current` remains the read-only Register lookup stage, and the adapter
 only validates and projects facts a caller has already collected.
 
 The 2 names are replaced individually after staging and backup. An ordinary
@@ -223,7 +223,7 @@ kept; admitting it changes the markdown for one title.
 
 ## Timing
 
-`download.py` sleeps 10 seconds between titles, honouring the Crawl-delay in
+`download` sleeps 10 seconds between titles, honouring the Crawl-delay in
 https://www.legislation.gov.au/robots.txt. All 946 titles take about 2 hours
 40 minutes. It skips any EPUB already present whose sidecar `.meta.json`
 records the same version, so re-runs cost only the new titles.
@@ -267,7 +267,7 @@ measured full-build times; network latency and retries add time.
 The `extract`, `finalize` and `rates` stages are local: about 3 minutes for all 3
 over 946 titles.
 
-`check_current.py` is 946 API calls at 1.5 seconds, so allow half an hour. It
+`check_current` is 946 API calls at 1.5 seconds, so allow half an hour. It
 prints a progress line every 25 titles.
 
 ## Traps this code exists to avoid
@@ -283,7 +283,7 @@ use the same writer. Each replacement is atomic; this does not make the whole
 set crash atomic. Extraction's document and section files still use ordinary
 writes, so rerun extraction after an interrupted write before finalising.
 
-Downloads require curl 8.4.0 or newer and permit only HTTPS, including redirects.
+Downloads permit only HTTPS, including redirects.
 The transfer cap is 192 MiB; the decoded EPUB cap is 128 MiB. Archives admit at
 most 4,096 members, 64 MiB per member and 256 MiB total declared uncompressed
 content before CRC checks or extraction. Directory records and their actual
@@ -326,7 +326,7 @@ and rate metadata are escaped as literal Markdown.
   non-EPUB bodies instead of recording them as `no_epub`. Responses are staged
   in `.part`; only a validated archive replaces the `.epub`. The failure log
   records bounded status and content-type metadata, never the response body.
-  Both `download.py` and `retry13.py` restore every changed EPUB and sidecar to
+  Both `download` and `retry13` restore every changed EPUB and sidecar to
   the graph referenced by the prior manifest; retry audit, sidecar and manifest
   writes are staged and atomically replaced. A process or power loss while that
   run-level journal is open can still leave changed files and `.rollback`
@@ -339,13 +339,13 @@ and rate metadata are escaped as literal Markdown.
   an amendment commenced but has not published the compilation. Every document
   path built from that date answers 404, which reads as a broken download rather
   than a missing document. Titles can enter or leave this state as compilations
-  are published. `retry13.py` falls back to the
+  are published. `retry13` falls back to the
   most recent version that does have a `registerId` and does not start after the
   current one (a later version is not in force yet), and marks the result
   `version_is_current: false`, in the front matter, on every JSONL row, and in
   `sources.json`. Each row also carries `superseded_from` (the start of the
   version without a compilation) and `retrieved`. Substituting an older compilation silently would misreport the
-  corpus as current. `check_current.py` reports these in their own bucket: it
+  corpus as current. `check_current` reports these in their own bucket: it
   used to file them under 'SUPERSEDED, re-download these', which sends you at a
   URL that answers 404. An explicit null `registerId` from this API response is
   the only condition the download stage records as `no_epub`.
@@ -1084,8 +1084,8 @@ From an empty checkout, run the stages in order. Stage names are unchanged;
 the dispatcher lives at `python -m fadden <stage>`. Intermediate JSON files
 are written beside the stage modules under `fadden/`.
 
-Every stage except `download`, `retry13`, `check_current`, `capture_register`,
-`export_live_evidence_bundles` and `quick` is the Rust `fadden` binary, built
+Every stage except `capture_register` and `export_live_evidence_bundles`
+is the Rust `fadden` binary, built
 with `cargo build --locked --release`; the dispatcher runs it with the same
 arguments and the binary keeps their command lines, messages and exit
 statuses. `FADDEN_BIN` names another build of it. An exception those Python
@@ -1138,7 +1138,7 @@ record holds:
 | `implementation` | `rust`, the program's file name, the crate version and the SHA-256 of the running executable (`FADDEN_BIN` can name any build); `cargo_lock_sha256` is `null` with a reason |
 | `inputs` | `root` (`module` for the stage's directory, `corpus` for the corpus root), `path`, `bytes` and `sha256` of each file read: `manifest_md.json`, `manifest_raw.json`, `pii_flagged.json` and each published title's `sections.jsonl`, hashed as they were read |
 | `lineage` | `known` is empty and `unknown` says why: the inputs carry no record of the stage or revision that produced them |
-| `shipped_tools` | The Python requirement and the `name`, `bytes` and `sha256` of `check_current.py`, `corpus_paths.py` and `http_fetch.py` as installed, hashed from the installed file: at the corpus root, or `<name>/<name>` where a directory of that name already stood there and the copy went inside it, as `shutil.copy` does |
+| `shipped_tools` | The Python requirement and the `files` array (`[]` now `check_current` runs inside `fadden` rather than copying scripts into the corpus root; older Python-built corpora listed `check_current.py`, `corpus_paths.py` and `http_fetch.py`) |
 | `environment` | The operating system and architecture |
 
 A corpus finalised by the Python stage carries the builder's scripts

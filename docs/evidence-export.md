@@ -104,9 +104,10 @@ python -m fadden dist_verify   # check the built subset against its own claims, 
 ```
 
 `fadden/corpus_paths.py` and `fadden/http_fetch.py` are shared modules the
-stages import; they are not run directly. `finalize` copies `check_current.py`
-and the shared modules to a completed corpus's root and writes
-`build/build-record.json`; every stage runs from the source checkout.
+retained Python stages import; they are not run directly. `finalize` writes
+`build/build-record.json` without copying Python checker scripts to the corpus
+root (`check_current` runs inside `fadden`); every stage runs from the source
+checkout.
 
 The intermediate JSON files (`titles_all.json`, `acts_resolved.json`,
 `manifest_raw.json`, `probe13.json`, `retry13_patch.json`) are build outputs
@@ -115,7 +116,7 @@ its file beside the stage modules, so any single stage re-runs without repeating
 earlier ones. `manifest_md.json` from the 4 August run stays committed because
 the regression suite pins its pre-fix figures against BUILD.md.
 
-`download.py` sleeps 10 seconds between titles, honouring the `Crawl-delay` in
+`download` sleeps 10 seconds between titles, honouring the `Crawl-delay` in
 https://www.legislation.gov.au/robots.txt, so a full download is about 2 hours
 40 minutes. It skips any EPUB already present whose sidecar records the same
 version. Discovery is about 40 minutes; the 3 local stages take about 3

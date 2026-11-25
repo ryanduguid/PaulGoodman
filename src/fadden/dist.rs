@@ -1197,11 +1197,10 @@ pub(super) const README_SECTIONS: [(&str, &str); 3] = [
     (
         "## Checking staleness",
         "## Checking staleness\n\n\
-         This distribution does not include the staleness checker. To run it, copy\n\
-         `check_current.py`, `corpus_paths.py` and `http_fetch.py` from the `fadden/`\n\
-         folder of the builder repository beside this `sources.json` and run\n\
-         `python check_current.py`. It asks the Register API for each title's current\n\
-         compilation and changes nothing.\n\n",
+         This distribution does not include the staleness checker. To run it, use\n\
+         `python -m fadden check_current` from the builder repository beside this\n\
+         `sources.json`. It asks the Register API for each title's current compilation\n\
+         and changes nothing.\n\n",
     ),
     ("## Build record", ""),
     (

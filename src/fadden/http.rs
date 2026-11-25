@@ -90,6 +90,15 @@ pub struct Exchange {
     pub body: Option<Vec<u8>>,
 }
 
+/// Outcome of streaming one GET directly into a `.part` file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transfer {
+    pub status: u16,
+    pub content_type: String,
+    pub exceeds_budget: bool,
+    pub transport_error: Option<String>,
+}
+
 /// What one `urllib.request.Request` carries from one attempt to the next.
 /// The callers reuse one request for every attempt, so its redirect record
 /// (`redirect_dict`, shared with the requests its redirects create) and the
@@ -144,6 +153,20 @@ pub trait Http {
         let _ = (url, limit, request);
         Err(Failure::Transport("URLError".into()))
     }
+    /// Stream one GET to `part`, enforcing `https_only` and a `max_bytes`
+    /// response budget; `range_start` resumes a partial file on HTTP 206.
+    fn download(
+        &mut self,
+        url: &str,
+        part: &str,
+        max_bytes: u64,
+        range_start: Option<u64>,
+        https_only: bool,
+        request: &mut Request,
+    ) -> Result<Transfer, Failure> {
+        let _ = (url, part, max_bytes, range_start, https_only, request);
+        Err(Failure::Transport("URLError".into()))
+    }
     /// `time.monotonic()`; a fake's clock stands still.
     fn monotonic(&mut self) -> f64 {
         0.0
@@ -170,6 +193,20 @@ pub fn connect_as(agent: &'static str) -> Box<dyn Http> {
         return Box::new(fake::Script::load(&path));
     }
     Box::new(Net::new(agent))
+}
+
+/// Direct access to `Net::download` for loopback integration tests.
+#[doc(hidden)]
+pub fn net_download(
+    url: &str,
+    part: &str,
+    max_bytes: u64,
+    range_start: Option<u64>,
+    https_only: bool,
+) -> Result<Transfer, Failure> {
+    let mut net = Net::new(UA);
+    let mut request = Request::default();
+    net.download(url, part, max_bytes, range_start, https_only, &mut request)
 }
 
 /// `http_fetch.attempts()`: attempt numbers 1..=tries, waiting `delay` before
@@ -379,7 +416,20 @@ impl Net {
         redirects: &mut Option<HashMap<String, u32>>,
         follow: bool,
     ) -> Result<Opened, Raised> {
+        self.open_policy(req, redirects, follow, false)
+    }
+
+    fn open_policy(
+        &mut self,
+        req: &mut Req,
+        redirects: &mut Option<HashMap<String, u32>>,
+        follow: bool,
+        https_only: bool,
+    ) -> Result<Opened, Raised> {
         let protocol = req.kind.clone();
+        if https_only && protocol != "https" {
+            return Err(Raised::Failure(transport("HTTPSRequired")));
+        }
         let web = matches!(protocol.as_str(), "http" | "https");
         if web {
             req.prepare()?;
@@ -402,7 +452,7 @@ impl Net {
             return Ok(response);
         }
         if matches!(response.status, 301 | 302 | 303 | 307 | 308)
-            && let Some(next) = self.redirect(req, &mut response, redirects, follow)?
+            && let Some(next) = self.redirect(req, &mut response, redirects, follow, https_only)?
         {
             return Ok(next);
         }
@@ -481,6 +531,7 @@ impl Net {
         response: &mut Opened,
         redirects: &mut Option<HashMap<String, u32>>,
         follow: bool,
+        https_only: bool,
     ) -> Result<Option<Opened>, Raised> {
         let Some(location) =
             header(&response.headers, "location").or_else(|| header(&response.headers, "uri"))
@@ -506,12 +557,16 @@ impl Net {
             .cloned()
             .collect();
         let mut new = Req::new(&newurl.replace(' ', "%20"), headers)?;
+        if https_only && new.kind != "https" {
+            return Err(Raised::Failure(transport("HTTPSRequired")));
+        }
         if !visit(redirects, &newurl) {
             return Ok(None);
         }
         // The redirect's body is read before the next request.
         response.body.read(None)?;
-        self.open(&mut new, redirects, follow).map(Some)
+        self.open_policy(&mut new, redirects, follow, https_only)
+            .map(Some)
     }
 
     /// `AbstractHTTPHandler.do_open` with `HTTPConnection`, or for `tls`
@@ -1129,6 +1184,126 @@ impl Body {
             }
         }
     }
+
+    /// Stream the body directly to `out`, stopping once more than `max_bytes`
+    /// have been written; keeps partial bytes received before a transport drop.
+    fn stream_to<W: Write>(
+        &mut self,
+        out: &mut W,
+        max_bytes: u64,
+    ) -> io::Result<(bool, Option<String>)> {
+        let mut written = 0u64;
+        let mut buf = [0u8; 65_536];
+        let fail_name = |f: Failure| match f {
+            Failure::Transport(name) => name,
+            Failure::Uncaught { class, .. } => class.to_string(),
+            Failure::Status(code) => format!("HTTP{code}"),
+        };
+        if self.chunked {
+            let mut first = true;
+            loop {
+                if !first && let Err(e) = safe_read(&mut self.wire, 2) {
+                    let _ = out.flush();
+                    return Ok((false, Some(fail_name(e))));
+                }
+                first = false;
+                let line = match read_line(&mut self.wire) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        let _ = out.flush();
+                        return Ok((false, Some(fail_name(e))));
+                    }
+                };
+                if line.len() > MAXLINE {
+                    let _ = out.flush();
+                    return Ok((false, Some("LineTooLong".into())));
+                }
+                let Some(size) = chunk_size(&line) else {
+                    let _ = out.flush();
+                    return Ok((false, Some("IncompleteRead".into())));
+                };
+                if size == 0 {
+                    if let Err(e) = self.discard_trailer() {
+                        let _ = out.flush();
+                        return Ok((false, Some(fail_name(e))));
+                    }
+                    out.flush()?;
+                    return Ok((false, None));
+                }
+                let mut left = u128::try_from(size).unwrap_or(u128::MAX);
+                while left > 0 {
+                    let room = (max_bytes + 1).saturating_sub(written);
+                    if room == 0 {
+                        out.flush()?;
+                        return Ok((true, None));
+                    }
+                    let want = usize::try_from(left.min(u128::from(room)).min(65_536)).unwrap();
+                    match self.wire.read(&mut buf[..want]) {
+                        Ok(0) => {
+                            let _ = out.flush();
+                            return Ok((false, Some("IncompleteRead".into())));
+                        }
+                        Ok(n) => {
+                            out.write_all(&buf[..n])?;
+                            written += n as u64;
+                            left -= n as u128;
+                            if written > max_bytes {
+                                out.flush()?;
+                                return Ok((true, None));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = out.flush();
+                            return Ok((false, Some(fail_name(os_error(&e)))));
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut wire_read = 0u64;
+            loop {
+                let room = (max_bytes + 1).saturating_sub(written);
+                if room == 0 {
+                    out.flush()?;
+                    return Ok((true, None));
+                }
+                let want = match self.length {
+                    Some(len) => {
+                        let rem = len.saturating_sub(wire_read);
+                        if rem == 0 {
+                            break;
+                        }
+                        rem.min(room).min(65_536) as usize
+                    }
+                    None => room.min(65_536) as usize,
+                };
+                match self.wire.read(&mut buf[..want]) {
+                    Ok(0) => {
+                        if self.length.is_some_and(|len| wire_read < len) {
+                            let _ = out.flush();
+                            return Ok((false, Some("IncompleteRead".into())));
+                        }
+                        break;
+                    }
+                    Ok(n) => {
+                        out.write_all(&buf[..n])?;
+                        written += n as u64;
+                        wire_read += n as u64;
+                        if written > max_bytes {
+                            out.flush()?;
+                            return Ok((true, None));
+                        }
+                    }
+                    Err(e) => {
+                        let _ = out.flush();
+                        return Ok((false, Some(fail_name(os_error(&e)))));
+                    }
+                }
+            }
+            out.flush()?;
+            Ok((false, None))
+        }
+    }
 }
 
 /// `int(line, 16)` of a chunk-size line without its extensions: `int()` of
@@ -1519,6 +1694,51 @@ impl Http for Net {
         }
     }
 
+    fn download(
+        &mut self,
+        url: &str,
+        part: &str,
+        max_bytes: u64,
+        range_start: Option<u64>,
+        https_only: bool,
+        request: &mut Request,
+    ) -> Result<Transfer, Failure> {
+        let mut headers = vec![("User-Agent".into(), self.agent.into())];
+        if let Some(offset) = range_start {
+            headers.push(("Range".into(), format!("bytes={offset}-")));
+        }
+        let mut req = Req::new(url, headers)?;
+        let opened = match self.open_policy(&mut req, &mut request.redirects, true, https_only) {
+            Ok(opened) => opened,
+            Err(Raised::Status(opened)) => *opened,
+            Err(Raised::Failure(failure)) => return Err(failure),
+        };
+        request.sent = Some(req);
+        let content_type = header(&opened.headers, "content-type")
+            .unwrap_or_default()
+            .to_owned();
+        let append = range_start.is_some() && opened.status == 206;
+        let mut file = if append {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(part)
+        } else {
+            std::fs::File::create(part)
+        }
+        .map_err(|e| os_error(&e))?;
+        let mut body = opened.body;
+        let (exceeds_budget, transport_error) = body
+            .stream_to(&mut file, max_bytes)
+            .map_err(|e| os_error(&e))?;
+        Ok(Transfer {
+            status: opened.status,
+            content_type,
+            exceeds_budget,
+            transport_error,
+        })
+    }
+
     fn sleep(&mut self, seconds: f64) {
         std::thread::sleep(Duration::from_secs_f64(seconds));
     }
@@ -1693,7 +1913,7 @@ mod tests {
 mod fake {
     use std::io::Write;
 
-    use super::{Exchange, Failure, Http, Request, Response};
+    use super::{Exchange, Failure, Http, Request, Response, Transfer};
     use crate::pyjson::{self, Json};
 
     /// A scripted run: `{"today": "...", "now": "...", "responses": [...]}`,
@@ -1846,6 +2066,66 @@ mod fake {
                 status,
                 headers,
                 body,
+            })
+        }
+
+        fn download(
+            &mut self,
+            url: &str,
+            part: &str,
+            max_bytes: u64,
+            range_start: Option<u64>,
+            https_only: bool,
+            _request: &mut Request,
+        ) -> Result<Transfer, Failure> {
+            self.log(&format!("GET {url}"));
+            if https_only && !url.to_ascii_lowercase().starts_with("https://") {
+                return Err(Failure::Transport("HTTPSRequired".into()));
+            }
+            let Some(next) = self.responses.next() else {
+                return Err(Failure::Transport("URLError".into()));
+            };
+            if let Some(name) = next.get("error").and_then(Json::as_str) {
+                return Err(Failure::Transport(name.to_string()));
+            }
+            let status = match next.get("status") {
+                Some(Json::Int(i)) => u16::try_from(i).unwrap_or(200),
+                _ => 200,
+            };
+            let content_type = next
+                .get("type")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_string();
+            let missing_body = next.get("missing_body").is_some_and(Json::truthy)
+                || matches!(next.get("body"), Some(Json::Null));
+            let body = bytes(next.get("body"));
+            let exceeds_budget = body.len() as u64 > max_bytes;
+            if !missing_body {
+                let cap = usize::try_from(max_bytes + 1).unwrap_or(usize::MAX);
+                let slice = &body[..body.len().min(cap)];
+                let append = range_start.is_some() && status == 206;
+                let mut file = if append {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(part)
+                } else {
+                    std::fs::File::create(part)
+                }
+                .map_err(|e| super::os_error(&e))?;
+                file.write_all(slice).map_err(|e| super::os_error(&e))?;
+                file.flush().map_err(|e| super::os_error(&e))?;
+            }
+            let transport_error = next
+                .get("read_error")
+                .is_some_and(Json::truthy)
+                .then(|| "IncompleteRead".into());
+            Ok(Transfer {
+                status,
+                content_type,
+                exceeds_budget,
+                transport_error,
             })
         }
 

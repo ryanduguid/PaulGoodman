@@ -1950,7 +1950,7 @@ fn the_distribution_describes_only_what_it_ships() {
     for claim in [
         "build/build-record.json",
         "## Build record",
-        "    python check_current.py",
+        "    python -m fadden check_current",
         "The EPUBs are unchanged",
         "embedded in the",
     ] {

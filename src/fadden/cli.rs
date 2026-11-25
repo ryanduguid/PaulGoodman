@@ -5,9 +5,10 @@
 use std::io::Write;
 
 use super::{
-    Run, as_at, authorities, capture_register, compare_builds, discover, dist, dist_verify,
-    extract, finalize, live_evidence, monitor_contract, pii_scan, probe13, publication_bundles,
-    rates, rulings, rulings_targets, search, state, versions, witness,
+    Run, as_at, authorities, capture_register, check_current, compare_builds, discover, dist,
+    dist_verify, download, extract, finalize, live_evidence, monitor_contract, pii_scan, probe13,
+    publication_bundles, quick, rates, retry13, rulings, rulings_targets, search, state, versions,
+    witness,
 };
 use crate::argparse::Exit;
 
@@ -15,14 +16,16 @@ use crate::argparse::Exit;
 /// `capture_register` and `export_live_evidence_bundles` are here for
 /// verification only: `python -m fadden` still runs their Python stages,
 /// which the publication workflow uses.
-pub const STAGES: [&str; 22] = [
+pub const STAGES: [&str; 26] = [
     "as_at",
     "authorities",
     "capture_register",
+    "check_current",
     "compare_builds",
     "discover",
     "dist",
     "dist_verify",
+    "download",
     "export_live_evidence_bundles",
     "export_monitor_contract",
     "export_publication_bundles",
@@ -31,7 +34,9 @@ pub const STAGES: [&str; 22] = [
     "pii_scan",
     "pii_scan2",
     "probe13",
+    "quick",
     "rates",
+    "retry13",
     "rulings",
     "rulings_targets",
     "search",
@@ -40,7 +45,7 @@ pub const STAGES: [&str; 22] = [
     "witness",
 ];
 
-const USAGE: &str = "usage: fadden {as_at,authorities,capture_register,compare_builds,discover,dist,dist_verify,export_live_evidence_bundles,export_monitor_contract,export_publication_bundles,extract,finalize,pii_scan,pii_scan2,probe13,rates,rulings,rulings_targets,search,state,versions,witness} [arguments ...]\n";
+const USAGE: &str = "usage: fadden {as_at,authorities,capture_register,check_current,compare_builds,discover,dist,dist_verify,download,export_live_evidence_bundles,export_monitor_contract,export_publication_bundles,extract,finalize,pii_scan,pii_scan2,probe13,quick,rates,retry13,rulings,rulings_targets,search,state,versions,witness} [arguments ...]\n";
 
 /// Text-mode output: newlines become the platform's line separator.
 fn text_mode(bytes: &[u8]) -> Vec<u8> {
@@ -67,8 +72,12 @@ pub fn main(argv: &[String]) -> i32 {
         Some((stage, rest)) if stage == "capture_register" => {
             capture_register::main(rest, &mut run)
         }
+        Some((stage, rest)) if stage == "check_current" => check_current::main(rest, &mut run),
         Some((stage, rest)) if stage == "compare_builds" => compare_builds::main(rest, &mut run),
+        Some((stage, rest)) if stage == "download" => download::main(rest, &mut run),
+        Some((stage, rest)) if stage == "quick" => quick::main(rest, &mut run),
         Some((stage, rest)) if stage == "rates" => rates::main(rest, &mut run),
+        Some((stage, rest)) if stage == "retry13" => retry13::main(rest, &mut run),
         Some((stage, rest)) if stage == "rulings" => rulings::main(rest, &mut run),
         Some((stage, rest)) if stage == "rulings_targets" => rulings_targets::main(rest, &mut run),
         Some((stage, rest)) if stage == "search" => search::main(rest, &mut run),
