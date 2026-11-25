@@ -1218,7 +1218,7 @@ impl Body {
                     let _ = out.flush();
                     return Ok((false, Some("LineTooLong".into())));
                 }
-                let Some(size) = chunk_size(&line) else {
+                let Some(size) = chunk_size(&line).filter(|&s| s >= 0) else {
                     let _ = out.flush();
                     return Ok((false, Some("IncompleteRead".into())));
                 };
@@ -1232,7 +1232,7 @@ impl Body {
                 }
                 let mut left = u128::try_from(size).unwrap_or(u128::MAX);
                 while left > 0 {
-                    let room = (max_bytes + 1).saturating_sub(written);
+                    let room = max_bytes.saturating_add(1).saturating_sub(written);
                     if room == 0 {
                         out.flush()?;
                         return Ok((true, None));
@@ -1262,7 +1262,7 @@ impl Body {
         } else {
             let mut wire_read = 0u64;
             loop {
-                let room = (max_bytes + 1).saturating_sub(written);
+                let room = max_bytes.saturating_add(1).saturating_sub(written);
                 if room == 0 {
                     out.flush()?;
                     return Ok((true, None));
@@ -2102,7 +2102,7 @@ mod fake {
             let body = bytes(next.get("body"));
             let exceeds_budget = body.len() as u64 > max_bytes;
             if !missing_body {
-                let cap = usize::try_from(max_bytes + 1).unwrap_or(usize::MAX);
+                let cap = usize::try_from(max_bytes.saturating_add(1)).unwrap_or(usize::MAX);
                 let slice = &body[..body.len().min(cap)];
                 let append = range_start.is_some() && status == 206;
                 let mut file = if append {
@@ -2143,6 +2143,38 @@ mod fake {
 
         fn utc_now(&mut self) -> String {
             self.now.clone()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn fake_download_handles_u64_max_budget_without_overflow() {
+            let dir = tempfile::tempdir().unwrap();
+            let part = dir.path().join("fake.epub.part");
+            let response = pyjson::loads_standard(r#"{"status": 200, "body": "hello"}"#).unwrap();
+            let mut script = Script {
+                today: "2099-01-01".into(),
+                now: "2099-01-01T00:00:00Z".into(),
+                responses: vec![response].into_iter(),
+                log: None,
+            };
+            let mut req = Request::default();
+            let transfer = script
+                .download(
+                    "https://example.invalid/x.epub",
+                    &part.to_string_lossy(),
+                    u64::MAX,
+                    None,
+                    true,
+                    &mut req,
+                )
+                .unwrap();
+            assert_eq!(transfer.status, 200);
+            assert!(!transfer.exceeds_budget);
+            assert_eq!(std::fs::read(&part).unwrap(), b"hello");
         }
     }
 }

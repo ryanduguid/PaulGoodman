@@ -12,9 +12,9 @@ Reading the response off the socket removes the file, and the whole class of
 failure with it. There is nothing on disk for one attempt to inherit from
 another, so there is no path to thread through the callers either.
 
-Downloads still use curl: see download.py, where --retry earns its keep on a
-600-second EPUB stream, -C - resumes a truncated raw transfer, and the failure
-diagnostic reports curl's own exit status.
+EPUB downloads run in the Rust ``fadden`` binary (``src/fadden/download.rs``
+and ``src/fadden/http.rs``), streaming directly to a per-title ``.part`` file
+with HTTP 206 resume.
 
 capture_register.py keeps its own loop body. It is an evidence recorder, not a
 JSON reader: it refuses redirects, bounds the read, retains 4 response

@@ -45,7 +45,7 @@ class ProseAndSourceTests(unittest.TestCase):
 
 class GeneratedReadmeTests(unittest.TestCase):
     def test_the_corpus_readme_states_no_staleness_counts_it_never_observed(self):
-        """check_current.py is a separate command run after this README is
+        """check_current is a separate command run after this README is
         written, so any run's counts baked into the template go stale on the
         next rebuild while the interpolated figures beside them stay correct."""
         source = (REPO / "src" / "fadden" / "finalize.rs").read_text(encoding="utf-8")
@@ -54,7 +54,7 @@ class GeneratedReadmeTests(unittest.TestCase):
         self.assertIn("{notcurrent} titles are not the current text", source)
 
     def test_the_corpus_readme_does_not_file_those_titles_as_superseded(self):
-        """They are their own bucket.  check_current.py separates them, and
+        """They are their own bucket.  check_current separates them, and
         sources.json gives their reason as the in-force version having no
         published compilation on the Register.  Calling them superseded tells
         the reader to re-download a document that does not exist, at a URL that
@@ -80,7 +80,7 @@ class GeneratedReadmeTests(unittest.TestCase):
     def test_this_repositorys_readme_does_not_file_those_titles_as_superseded(self):
         """The same claim, in the README a reader meets first.  The generated
         text was corrected and this one was not, and the test above reads only
-        finalize's template, so nothing held the sibling.  BUILD.md and check_current.py
+        finalize's template, so nothing held the sibling.  BUILD.md and check_current
         keep these titles out of the superseded bucket precisely because that
         bucket says re-download, at a URL that answers 404."""
         readme = (REPO / "docs" / "scope.md").read_text(encoding="utf-8")

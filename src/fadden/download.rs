@@ -273,7 +273,7 @@ pub fn fetch(
     max_download_bytes: u64,
 ) -> Result<Fetched, Exc> {
     let part = format!("{dst}.part");
-    if Path::new(&part).exists() {
+    if std::fs::symlink_metadata(&part).is_ok() {
         std::fs::remove_file(&part).map_err(|e| OsError::new(&e, Some(&part), Style::Errno))?;
     }
     let mut ctype = String::new();
@@ -359,7 +359,7 @@ pub fn fetch(
         }
     }
     let size = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    if Path::new(&part).exists() {
+    if std::fs::symlink_metadata(&part).is_ok() {
         std::fs::remove_file(&part).map_err(|e| OsError::new(&e, Some(&part), Style::Errno))?;
     }
     Err(download_error(format!(
@@ -369,11 +369,16 @@ pub fn fetch(
 }
 
 fn append_log_line(log: &mut File, line: &str) -> Result<(), Exc> {
-    let eol = if cfg!(windows) { "\r\n" } else { "\n" };
-    log.write_all(line.as_bytes())
-        .and_then(|()| log.write_all(eol.as_bytes()))
-        .and_then(|()| log.flush())
-        .map_err(|e| OsError::new(&e, None, Style::Errno).into())
+    if cfg!(windows) {
+        let normalised = line.replace("\r\n", "\n").replace('\n', "\r\n");
+        log.write_all(normalised.as_bytes())
+            .and_then(|()| log.write_all(b"\r\n"))
+    } else {
+        log.write_all(line.as_bytes())
+            .and_then(|()| log.write_all(b"\n"))
+    }
+    .and_then(|()| log.flush())
+    .map_err(|e| OsError::new(&e, None, Style::Errno).into())
 }
 
 fn str_field(obj: &Json, key: &str) -> Result<String, Exc> {
@@ -628,4 +633,25 @@ pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
         Ok(()) => 0,
         Err(error) => run.uncaught(&error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_log_line;
+
+    #[test]
+    fn append_log_line_normalises_embedded_newlines_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.txt");
+        let mut file = std::fs::File::create(&path).unwrap();
+        append_log_line(&mut file, "\nDONE ok=1").unwrap();
+        append_log_line(&mut file, "a\r\nb\nc").unwrap();
+        drop(file);
+        let bytes = std::fs::read(&path).unwrap();
+        if cfg!(windows) {
+            assert_eq!(bytes, b"\r\nDONE ok=1\r\na\r\nb\r\nc\r\n");
+        } else {
+            assert_eq!(bytes, b"\nDONE ok=1\na\r\nb\nc\n");
+        }
+    }
 }

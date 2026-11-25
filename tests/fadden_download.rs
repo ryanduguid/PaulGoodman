@@ -993,3 +993,150 @@ fn cli_binary_downloads_and_logs_over_fake_http() {
     );
     assert!(http_log.contains("sleep 10"), "{http_log}");
 }
+
+#[test]
+fn loopback_net_download_rejects_negative_chunk_size_and_handles_u64_max_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("chunk.epub.part");
+    let pstr = part.to_string_lossy().into_owned();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_srv = stop.clone();
+    let handle = std::thread::spawn(move || {
+        while !stop_srv.load(Ordering::Relaxed) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let mut req_buf = [0u8; 2048];
+            let n = stream.read(&mut req_buf).unwrap_or(0);
+            let req_text = String::from_utf8_lossy(&req_buf[..n]);
+            if req_text.starts_with("GET /neg-chunk ") {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n-3\r\nhello\r\n0\r\n\r\n",
+                );
+            } else if req_text.starts_with("GET /max-chunked ") {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                );
+            } else if req_text.starts_with("GET /max-len ") {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+                );
+            }
+        }
+    });
+
+    let neg = net_download(
+        &format!("http://{addr}/neg-chunk"),
+        &pstr,
+        1024,
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(neg.transport_error.as_deref(), Some("IncompleteRead"));
+    assert!(!neg.exceeds_budget);
+    assert!(std::fs::read(&part).unwrap().is_empty());
+
+    let max_chunked = net_download(
+        &format!("http://{addr}/max-chunked"),
+        &pstr,
+        u64::MAX,
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(max_chunked.transport_error, None);
+    assert!(!max_chunked.exceeds_budget);
+    assert_eq!(std::fs::read(&part).unwrap(), b"hello");
+
+    let max_len = net_download(
+        &format!("http://{addr}/max-len"),
+        &pstr,
+        u64::MAX,
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(max_len.transport_error, None);
+    assert!(!max_len.exceeds_budget);
+    assert_eq!(std::fs::read(&part).unwrap(), b"hello");
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = std::net::TcpStream::connect(addr);
+    handle.join().unwrap();
+}
+
+fn symlink_file(target: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link);
+    match made {
+        Ok(()) => true,
+        Err(error) if cfg!(windows) && error.raw_os_error() == Some(1314) => {
+            eprintln!("skipped: symbolic links are unavailable to this account ({error})");
+            false
+        }
+        Err(error) => panic!("{error}"),
+    }
+}
+
+#[test]
+fn fetch_removes_dangling_part_symlink_before_and_after_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let dst = dir.path().join("dangling.epub");
+    let part = dir.path().join("dangling.epub.part");
+    let missing = dir.path().join("missing-target");
+    if !symlink_file(&missing, &part) {
+        return;
+    }
+    assert!(std::fs::symlink_metadata(&part).is_ok());
+    assert!(!part.exists());
+
+    let payload = epub_bytes(&["<p>Symlink safe</p>"]);
+    let expected = payload.clone();
+    let mut http = DownloadScript::default();
+    http.actions.push(Box::new(move |_, part_path, _, _, _| {
+        assert!(std::fs::symlink_metadata(part_path).is_err());
+        std::fs::write(part_path, &payload).unwrap();
+        Ok(Transfer {
+            status: 200,
+            content_type: "application/epub+zip".into(),
+            exceeds_budget: false,
+            transport_error: None,
+        })
+    }));
+    let got = fetch(
+        &mut http,
+        "https://example.test/epub",
+        &dst.to_string_lossy(),
+        1,
+        MAX_DOWNLOAD_BYTES,
+    )
+    .unwrap();
+    assert_eq!(got.size as usize, expected.len());
+    assert_eq!(std::fs::read(&dst).unwrap(), expected);
+    assert!(!missing.exists());
+    assert!(std::fs::symlink_metadata(&part).is_err());
+
+    let mut failing = DownloadScript::default();
+    let missing_after = missing.clone();
+    failing.actions.push(Box::new(move |_, part_path, _, _, _| {
+        assert!(symlink_file(&missing_after, Path::new(part_path)));
+        Err(Failure::Transport("IncompleteRead".into()))
+    }));
+    let err = fetch(
+        &mut failing,
+        "https://example.test/epub",
+        &dst.to_string_lossy(),
+        1,
+        MAX_DOWNLOAD_BYTES,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("IncompleteRead"), "{err}");
+    assert!(std::fs::symlink_metadata(&part).is_err());
+}
