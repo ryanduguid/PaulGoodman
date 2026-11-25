@@ -3762,6 +3762,41 @@ fn every_tool_gives_the_provision_text_and_its_register_links() {
     texted(&quoted, "text", "quote");
 }
 
+fn sweep_text_budgets(dir: &Path, base: &[&str]) -> Vec<String> {
+    (1000..=8000)
+        .step_by(250)
+        .map(|budget| {
+            let max = budget.to_string();
+            let mut args = base.to_vec();
+            args.extend(["--max-chars", &max]);
+            let (code, out, err) = cli(&args, dir);
+            assert_eq!(code, 0, "{args:?}: {err}");
+            out
+        })
+        .collect()
+}
+
+fn assert_crosses_truncation_boundary(label: &str, outputs: &[String], marker: &str) {
+    let first = outputs.first().expect("non-empty budget sweep");
+    let last = outputs.last().expect("non-empty budget sweep");
+    assert!(
+        first.contains("[truncated]") && first.contains(marker),
+        "{label}: expected smallest budget to truncate with {marker:?}:\n{first}"
+    );
+    assert!(
+        !last.contains("[truncated]"),
+        "{label}: expected largest budget not to truncate:\n{last}"
+    );
+}
+
+fn is_json_truncated(dir: &Path, base: &[&str], max_chars: &str) -> bool {
+    let mut args = base.to_vec();
+    args.extend(["--json", "--max-chars", max_chars]);
+    json_lines(&args, dir)
+        .iter()
+        .any(|v| v.get("truncated").is_some())
+}
+
 /// Text output prints no provision text, so lengthening every row's text in the
 /// index changes no line `refs` or `define --follow` prints, whatever `--max-chars`.
 #[test]
@@ -3770,36 +3805,31 @@ fn text_output_is_capped_without_the_provision_text() {
     drop(connection);
     let dir = c.out.parent().unwrap();
     let row = format!("{ACT}:0002:2{NBH}1");
-    let texts = || -> Vec<String> {
-        let mut texts = Vec::new();
-        for budget in (1000..=8000).step_by(250) {
-            let max = budget.to_string();
-            for args in [
-                vec!["refs", "index.sqlite", row.as_str(), "--max-chars", &max],
-                vec![
-                    "define",
-                    "index.sqlite",
-                    "widget",
-                    "--follow",
-                    "--max-chars",
-                    &max,
-                ],
-            ] {
-                let (code, out, err) = cli(&args, dir);
-                assert_eq!(code, 0, "{args:?}: {err}");
-                texts.push(out);
-            }
-        }
-        texts
-    };
-    let before = texts();
-    assert!(before.iter().any(|t| t.contains("[truncated]")));
-    assert!(before.iter().any(|t| !t.contains("[truncated]")));
+    let refs_args = ["refs", "index.sqlite", row.as_str()];
+    let define_args = ["define", "index.sqlite", "widget", "--follow"];
+
+    let refs_before = sweep_text_budgets(dir, &refs_args);
+    let define_before = sweep_text_budgets(dir, &define_args);
+    assert_crosses_truncation_boundary("refs", &refs_before, "  [truncated] withheld ");
+    assert_crosses_truncation_boundary(
+        "define --follow",
+        &define_before,
+        " withheld: past --limit ",
+    );
+    assert!(!is_json_truncated(dir, &refs_args, "8000"));
+    assert!(!is_json_truncated(dir, &define_args, "4000"));
+
     let index = rusqlite::Connection::open(&c.out).unwrap();
     let pad = " x".repeat(1500);
     index
         .execute("UPDATE rows SET text = text || ?1", [&pad])
         .unwrap();
     drop(index);
-    assert_eq!(texts(), before);
+
+    // Padded provision text overflows the matching JSON budget for both commands,
+    // proving text mode stripped the padded fields across every budget.
+    assert!(is_json_truncated(dir, &refs_args, "8000"));
+    assert!(is_json_truncated(dir, &define_args, "4000"));
+    assert_eq!(sweep_text_budgets(dir, &refs_args), refs_before);
+    assert_eq!(sweep_text_budgets(dir, &define_args), define_before);
 }
