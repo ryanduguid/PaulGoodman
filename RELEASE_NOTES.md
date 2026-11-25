@@ -1,6 +1,10 @@
-# Unreleased
+# v0.9.0
 
-- `state --source tas --out NEW_DIR` writes a corpus root of section rows from the Tasmanian Legislation website's whole-title XML for 6 reviewed revenue Acts: the Duties Act 2001, Land Tax Act 2000, Land Tax Rating Act 2000, Payroll Tax Act 2008, Taxation Administration Act 1997 and First Home Owner Grant Act 2000. It reads the website's own XML vocabulary, leaves out the amendment history between provisions, and carries the website's copyright notice and changed-material attribution on every row. `search build`, `query`, `define` and `refs` read such an index with `--source tas`. Commonwealth and Queensland output is unchanged.
+This candidate contains the corpus builder source. It excludes generated legislation and live evidence.
+
+- `state --source tas --out NEW_DIR` writes a corpus root of section rows from the Tasmanian Legislation website's whole-title XML for 6 reviewed revenue Acts: the Duties Act 2001, Land Tax Act 2000, Land Tax Rating Act 2000, Payroll Tax Act 2008, Taxation Administration Act 1997 and First Home Owner Grant Act 2000. It reads the website's own XML vocabulary, leaves out the amendment history between provisions and carries the website's copyright notice and changed-material attribution on every row. `search build` indexes such a root, and `search query`, `define` and `refs` read the index only with `--source tas`. Commonwealth and Queensland output is unchanged (#352).
+- `docs/scope.md` records the live-checked machine-readable formats for Western Australia (Word 11 XSLT HTML `mrdoc_<id>.htm`, DOCX and PDF; no whole-title XML) and South Australia (Authorised PDF `.auth.pdf` and unauthorised RTF `.un.rtf` only; no XML or HTML full text), and `tests/fadden_search.rs` splits the `refs` and `define --follow` text-mode truncation boundary assertions (#355).
+- Workflows and dependencies: `release-policy` pins advance to `v0.5.0` (`d7039efe`) in the attribution and VirusTotal workflows, and `ci.yml` bumps `taiki-e/install-action` to `v2.90.8` with `cargo-deny` `0.22.0` (#354).
 
 # v0.8.0
 
