@@ -1,0 +1,37 @@
+[
+  {
+    "id": "C2004A00001",
+    "name": "Fictional Example Act",
+    "collection": "Act",
+    "isPrincipal": true,
+    "isInForce": true,
+    "status": "cached",
+    "versionStart": "2026-01-01",
+    "compilationRegisterId": null,
+    "sourceUrl": "https://www.legislation.gov.au/C2004A00001/2026-01-01/2026-01-01/text/original/epub",
+    "retrieved": "2026-08-04",
+    "markdown": "C2004A00001/C2004A00001.md",
+    "sections": 2,
+    "words": 113,
+    "granularity": "section"
+  },
+  {
+    "id": "F2026L00001",
+    "name": "Fictional Example Instrument",
+    "collection": "LegislativeInstrument",
+    "isPrincipal": true,
+    "isInForce": true,
+    "status": "ok_superseded_version",
+    "versionStart": "2026-01-01",
+    "compilationRegisterId": "F2026C00001",
+    "sourceUrl": "https://www.legislation.gov.au/F2026L00001/2026-01-01/2026-01-01/text/original/epub",
+    "retrieved": "2026-08-04",
+    "markdown": "F2026L00001/F2026L00001.md",
+    "sections": 2,
+    "words": 113,
+    "granularity": "section",
+    "version_is_current": false,
+    "current_version_start": "2026-07-01",
+    "current_version_has_document": false
+  }
+]

@@ -198,6 +198,13 @@ corrected on 30 August. These files do not establish the Register's current
 status. In the manifest, 156 of the 175 rows marked `cached` have a null
 `compilationRegisterId`.
 
+The [extracted manifest schema](docs/manifest-md.schema.json) describes title
+and compilation IDs, source URLs and retrieval dates, section and word counts,
+and the fields that identify a superseded source. Rows may carry extra fields.
+The counts describe what the extractor emitted. A conforming row can still
+omit part of a title. CI checks [synthetic examples](tests/corpus/fixtures/manifest-md.json)
+without fetching Register documents or rebuilding the corpus.
+
 **`manifest_md.json` and the published corpus predate the volume-gate fix
 below.** They were produced by the extractor as it stood before it, so
 F2025L00281 is still recorded as `sections=20, words=18583` - the lossy parse,
