@@ -66,18 +66,12 @@ core = "ctrace"
 source = ["fadden", "*/fadden", "*\\fadden"]
 
 [tool.coverage.report]
-# The ubuntu coverage leg cannot run the Windows-only live-evidence publication
-# transaction (ctypes.WinDLL, msvcrt), so this floor, for that leg alone, sits
-# below 100. The coverage-merged job in ci.yml holds the data combined with the
-# Windows leg to 99. Those 182
-# lines (181 before the UTF-16 name-length fix) predate the Rust port; moving
-# stages to the Rust fadden binary removed about 2,500 covered Python
-# statements, which lowered the total from 97% to 94%. Removing discover,
-# versions, extract and finalize took out 926 more, leaving 92.07%. Porting
-# download, retry13 and quick removed 3 more fully covered modules, so the same
-# 182 Windows-only lines weigh more: the ubuntu leg measured 90% (1,883
-# statements, 182 missed), with the merged total still 100%.
-fail_under = 90
+# The ubuntu coverage leg runs the Windows-only live-evidence publication
+# transaction (ctypes.WinDLL, msvcrt) through tests/corpus/windows_fake.py, so
+# it holds the whole package to 100 on its own. The coverage-merged job in
+# ci.yml holds the data combined with the Windows leg, which makes the real
+# calls, to 99.
+fail_under = 100
 exclude_also = ['if __name__ == "__main__":']
 
 [tool.mypy]
