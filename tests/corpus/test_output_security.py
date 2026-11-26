@@ -56,6 +56,13 @@ class PathAndWriteTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 corpus_paths.version_date(value)
         self.assertEqual(corpus_paths.version_date("2099-01-01T00:00:00.1234567Z"), "2099-01-01")
+        for value in ("2099-1-01", "2099-01-01T00:00:00Z", None):
+            with self.subTest(day=value), self.assertRaises(ValueError):
+                corpus_paths.iso_date(value)
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "out.json"
+            corpus_paths.write_json_atomic(target, {"a": [1]}, indent=1)
+            self.assertEqual(target.read_text(encoding="utf-8"), '{\n "a": [\n  1\n ]\n}')
         # A missing registerId is an API failure; only an explicit null means no document.
         with self.assertRaises(ValueError):
             corpus_paths.compilation_id({})
