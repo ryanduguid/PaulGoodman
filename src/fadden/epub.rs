@@ -55,7 +55,7 @@ pub struct Epub {
 
 fn download(message: &str) -> Exc {
     Exc::Other {
-        class: "DownloadError",
+        class: "fadden.download.DownloadError",
         message: message.to_string(),
     }
 }
@@ -346,53 +346,53 @@ impl Epub {
                     py::repr_str(name)
                 )))
             })?;
+        self.read_inner(info, true)
+    }
+
+    /// `read_epub_member(archive, member, retain=retain)`.
+    pub fn read_member(&self, info: &Member, retain: bool) -> Result<Vec<u8>, Exc> {
+        self.read_inner(info, retain)
+    }
+
+    fn read_inner(&self, info: &Member, retain: bool) -> Result<Vec<u8>, Exc> {
         let (mut position, method) = self.position(info)?;
-        let mut inflater = (method == DEFLATED).then(Decompress::default);
-        let mut remaining = info.compress_size;
-        let (mut total, mut crc) = (0u64, 0u32);
         // `position` has held the declared size to the member budget; deflate
         // expands at most 1032 times, so a corrupt member reserves no more.
-        let reserve = info.file_size.min(info.compress_size.saturating_mul(1032));
-        let mut content = Vec::with_capacity(reserve as usize);
-        let invalid = || download("EPUB member has invalid deflate data");
+        let reserve = if retain {
+            info.file_size.min(info.compress_size.saturating_mul(1032))
+        } else {
+            0
+        };
+        let mut reading = Reading {
+            info,
+            inflater: (method == DEFLATED).then(Decompress::default),
+            total: 0,
+            crc: 0,
+            content: retain.then(|| Vec::with_capacity(reserve as usize)),
+        };
+        let mut remaining = info.compress_size;
         while remaining > 0 {
-            let mut block = slice(&self.data, position, remaining.min(65_536)).to_vec();
+            let block = slice(&self.data, position, remaining.min(65_536)).to_vec();
             if block.is_empty() {
                 return Err(download("EPUB member data is truncated"));
             }
             remaining -= block.len() as u64;
             position += block.len() as u64;
-            loop {
-                let limit = 65_536.min(info.file_size + 1 - total) as usize;
-                let piece = match inflater.as_mut() {
-                    Some(d) => d.decompress(&block, limit).map_err(|_| invalid())?,
-                    None => std::mem::take(&mut block),
-                };
-                total += piece.len() as u64;
-                if total > info.file_size {
-                    return Err(download(
-                        "EPUB member exceeds its declared uncompressed length",
-                    ));
-                }
-                crc = crc32(&piece, crc);
-                content.extend_from_slice(&piece);
-                let Some(d) = inflater.as_ref() else { break };
-                if !d.unused_data.is_empty() {
-                    return Err(download("EPUB member has trailing compressed data"));
-                }
-                block = d.unconsumed_tail.clone();
-                // A full output buffer can leave a match pending after input ends.
-                if block.is_empty() && (piece.len() < limit || d.eof) {
-                    break;
-                }
-            }
+            reading.feed(block)?;
         }
+        let Reading {
+            total,
+            crc,
+            inflater,
+            content,
+            ..
+        } = reading;
         if total != info.file_size || crc != info.crc || inflater.is_some_and(|d| !d.eof) {
             return Err(download(
                 "EPUB member length, checksum or deflate endpoint is invalid",
             ));
         }
-        Ok(content)
+        Ok(content.unwrap_or_default())
     }
 
     /// `_position_epub_member`: the offset of the member's data and its method.
@@ -434,6 +434,75 @@ impl Epub {
         }
         Ok((position, method))
     }
+}
+
+/// One member read in progress: its inflater, length, CRC and, when the
+/// caller keeps them, the bytes read so far.
+struct Reading<'a> {
+    info: &'a Member,
+    inflater: Option<Decompress>,
+    total: u64,
+    crc: u32,
+    content: Option<Vec<u8>>,
+}
+
+impl Reading<'_> {
+    /// Inflate (or copy) one block of the member's stored data.
+    fn feed(&mut self, mut block: Vec<u8>) -> Result<(), Exc> {
+        let file_size = self.info.file_size;
+        loop {
+            let limit = 65_536.min(file_size + 1 - self.total) as usize;
+            let piece = match self.inflater.as_mut() {
+                Some(d) => d
+                    .decompress(&block, limit)
+                    .map_err(|_| download("EPUB member has invalid deflate data"))?,
+                None => std::mem::take(&mut block),
+            };
+            self.total += piece.len() as u64;
+            if self.total > file_size {
+                return Err(download(
+                    "EPUB member exceeds its declared uncompressed length",
+                ));
+            }
+            self.crc = crc32(&piece, self.crc);
+            if let Some(content) = self.content.as_mut() {
+                content.extend_from_slice(&piece);
+            }
+            let Some(d) = self.inflater.as_ref() else {
+                return Ok(());
+            };
+            if !d.unused_data.is_empty() {
+                return Err(download("EPUB member has trailing compressed data"));
+            }
+            block = d.unconsumed_tail.clone();
+            // A full output buffer can leave a match pending after input ends.
+            if block.is_empty() && (piece.len() < limit || d.eof) {
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// `download.valid_zip(path)`: every member admitted and verified without retaining bytes.
+pub fn valid_zip(path: &str) -> bool {
+    let Ok(archive) = open(path) else {
+        return false;
+    };
+    archive
+        .members
+        .iter()
+        .all(|member| archive.read_inner(member, false).is_ok())
+}
+
+/// `valid_zip` over in-memory archive bytes.
+pub fn valid_zip_bytes(data: Vec<u8>) -> bool {
+    let Ok(archive) = from_bytes(data) else {
+        return false;
+    };
+    archive
+        .members
+        .iter()
+        .all(|member| archive.read_inner(member, false).is_ok())
 }
 
 /// Fuzz invariant: an archive from arbitrary bytes is admitted or refused

@@ -49,8 +49,15 @@
 //! `search-indexes.json`, including original and new FTS postings; malformed
 //! files keep their frozen hashes. Query usage adds only the `--exact` and `--stem` flags
 //! and the `--max-chars` and `--source` options.
-//! `capture_register`, `rulings`, `probe13`, `discover` and `versions` fetch
-//! over HTTP, so their cases need the scripted responses of the `fake-http`
+//! The `retry13`, `download` and `quick` cases were recorded from 1913ba9,
+//! the last revision with those Python stages, with the harness's Python side
+//! answering each curl call from the script. The Python stages downloaded
+//! through curl and the binary downloads in process, so a transport failure
+//! names the error (`URLError`) where Python named curl's exit status
+//! (`curl exit 7`); that one wording is recorded as the binary prints it.
+//!
+//! `capture_register`, `rulings`, `probe13`, `discover`, `versions`,
+//! `retry13` and `download` fetch over HTTP, so their cases need the scripted responses of the `fake-http`
 //! feature: `cargo test --features fake-http --test fadden_golden`. That build
 //! leaves out the other cases, which the default run covers and which never
 //! reach the script. How hard can it be? (Top Gear)
@@ -245,7 +252,9 @@ fn snapshot(
         let value = (!path.is_dir()).then(|| {
             let text = normalise(&std::fs::read(&path).unwrap(), work, module, dates);
             // Stage 5 fixtures were recorded after the harness began this rewrite.
-            if rel == "http.log" && matches!(family, "discover" | "versions") {
+            if rel == "http.log"
+                && matches!(family, "discover" | "versions" | "retry13" | "download")
+            {
                 sha256(&WHOLE_SLEEP.replace_all(&text, "sleep $1"))
             } else {
                 sha256(&departed(family, &rel, &text))
@@ -929,6 +938,12 @@ fn pii_scan2_matches_python() {
     family("pii_scan2");
 }
 
+#[cfg(not(feature = "fake-http"))]
+#[test]
+fn quick_matches_python() {
+    family("quick");
+}
+
 #[cfg(feature = "fake-http")]
 #[test]
 fn rulings_matches_python() {
@@ -951,6 +966,18 @@ fn discover_matches_python() {
 #[test]
 fn versions_matches_python() {
     family("versions");
+}
+
+#[cfg(feature = "fake-http")]
+#[test]
+fn retry13_matches_python() {
+    family("retry13");
+}
+
+#[cfg(feature = "fake-http")]
+#[test]
+fn download_matches_python() {
+    family("download");
 }
 
 #[cfg(feature = "fake-http")]

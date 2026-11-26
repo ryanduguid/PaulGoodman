@@ -223,7 +223,7 @@ kept; admitting it changes the markdown for one title.
 
 ## Timing
 
-`download.py` sleeps 10 seconds between titles, honouring the Crawl-delay in
+`download` sleeps 10 seconds between titles, honouring the Crawl-delay in
 https://www.legislation.gov.au/robots.txt. All 946 titles take about 2 hours
 40 minutes. It skips any EPUB already present whose sidecar `.meta.json`
 records the same version, so re-runs cost only the new titles.
@@ -283,7 +283,7 @@ use the same writer. Each replacement is atomic; this does not make the whole
 set crash atomic. Extraction's document and section files still use ordinary
 writes, so rerun extraction after an interrupted write before finalising.
 
-Downloads require curl 8.4.0 or newer and permit only HTTPS, including redirects.
+Downloads permit only HTTPS, including redirects.
 The transfer cap is 192 MiB; the decoded EPUB cap is 128 MiB. Archives admit at
 most 4,096 members, 64 MiB per member and 256 MiB total declared uncompressed
 content before CRC checks or extraction. Directory records and their actual
@@ -326,7 +326,7 @@ and rate metadata are escaped as literal Markdown.
   non-EPUB bodies instead of recording them as `no_epub`. Responses are staged
   in `.part`; only a validated archive replaces the `.epub`. The failure log
   records bounded status and content-type metadata, never the response body.
-  Both `download.py` and `retry13.py` restore every changed EPUB and sidecar to
+  Both `download` and `retry13` restore every changed EPUB and sidecar to
   the graph referenced by the prior manifest; retry audit, sidecar and manifest
   writes are staged and atomically replaced. A process or power loss while that
   run-level journal is open can still leave changed files and `.rollback`
@@ -339,7 +339,7 @@ and rate metadata are escaped as literal Markdown.
   an amendment commenced but has not published the compilation. Every document
   path built from that date answers 404, which reads as a broken download rather
   than a missing document. Titles can enter or leave this state as compilations
-  are published. `retry13.py` falls back to the
+  are published. `retry13` falls back to the
   most recent version that does have a `registerId` and does not start after the
   current one (a later version is not in force yet), and marks the result
   `version_is_current: false`, in the front matter, on every JSONL row, and in
@@ -1084,8 +1084,8 @@ From an empty checkout, run the stages in order. Stage names are unchanged;
 the dispatcher lives at `python -m fadden <stage>`. Intermediate JSON files
 are written beside the stage modules under `fadden/`.
 
-Every stage except `download`, `retry13`, `check_current`, `capture_register`,
-`export_live_evidence_bundles` and `quick` is the Rust `fadden` binary, built
+Every stage except `check_current`, `capture_register` and
+`export_live_evidence_bundles` is the Rust `fadden` binary, built
 with `cargo build --locked --release`; the dispatcher runs it with the same
 arguments and the binary keeps their command lines, messages and exit
 statuses. `FADDEN_BIN` names another build of it. An exception those Python
