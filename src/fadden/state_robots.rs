@@ -22,10 +22,12 @@ struct Group {
 }
 
 impl Group {
+    /// Whether a non-empty agent other than `*` is part of `AGENT_TOKEN`. An
+    /// empty `User-agent:` value names no robot, though every string contains "".
     fn named(&self) -> bool {
         self.agents
             .iter()
-            .any(|a| a != "*" && AGENT_TOKEN.contains(a.as_str()))
+            .any(|a| !a.is_empty() && a != "*" && AGENT_TOKEN.contains(a.as_str()))
     }
 }
 

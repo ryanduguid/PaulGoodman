@@ -48,7 +48,7 @@ Before tagging:
     ```
 
     Do not push the tag unless the output is exactly `true`. The Actions `GITHUB_TOKEN` cannot be granted repository Administration read access, so the tag workflow cannot perform this preflight itself.
-4. Confirm `VERSION` and the first line of `RELEASE_NOTES.md` match the intended tag.
+4. Confirm `VERSION`, the `version` in `pyproject.toml` and `Cargo.toml` (with both `Cargo.lock` files) and the first line of `RELEASE_NOTES.md` match the intended tag.
 5. Create an annotated tag on current remote `main`, for example `git tag -a v0.1.2 -m "v0.1.2"` (or `-s` when signing is configured), then push only that tag.
 
 The workflow compiles and tests the builder, then creates deterministic source archives directly from Git. The archive helper fixes the timezone to UTC and Git text conversion to LF so the same tagged tree produces the same archive bytes on Linux and Windows. It adds an SPDX 2.3 SBOM, `SHA256SUMS`, GitHub provenance and an SBOM attestation before publishing the completed draft. Existing releases are refused rather than overwritten.
