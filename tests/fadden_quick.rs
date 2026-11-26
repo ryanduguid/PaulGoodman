@@ -14,6 +14,7 @@ use tax_radar_au::fadden::quick::{
     main as quick_main, prepare, run_cli, validate_in_force_date,
 };
 use tax_radar_au::fadden::{Exc, Run};
+use tax_radar_au::pypath::realpath;
 #[cfg(feature = "fake-http")]
 use tax_radar_au::pyzlib::crc32;
 
@@ -224,13 +225,21 @@ struct ModuleDir {
 
 fn setup() -> ModuleDir {
     let dir = tempfile::tempdir().unwrap();
+    // `quick` prints the real path of `--out`; Windows runners hand out 8.3 temp names.
+    let root = PathBuf::from(realpath(&dir.path().to_string_lossy()).unwrap());
     let repo_fadden = Path::new(env!("CARGO_MANIFEST_DIR")).join("fadden");
-    let module = dir.path().join("module");
+    let module = root.join("module");
     std::fs::create_dir(&module).unwrap();
-    for name in ["titles_principal.json", "pii_contact_allowlist.json"] {
+    for name in [
+        "titles_principal.json",
+        "pii_contact_allowlist.json",
+        "check_current.py",
+        "corpus_paths.py",
+        "http_fetch.py",
+    ] {
         std::fs::copy(repo_fadden.join(name), module.join(name)).unwrap();
     }
-    let base = dir.path().join("work");
+    let base = root.join("work");
     std::fs::create_dir(&base).unwrap();
     let out = base.join("law");
     ModuleDir {
@@ -613,16 +622,10 @@ fn cli_binary_builds_and_indexes_9_act_preset_with_probe13_and_dated_compilation
     std::fs::create_dir_all(&module).unwrap();
     std::fs::write(project.join("pyproject.toml"), "x\n").unwrap();
     std::fs::write(project.join("VERSION"), "x\n").unwrap();
-    std::fs::copy(
-        s.module.join("titles_principal.json"),
-        module.join("titles_principal.json"),
-    )
-    .unwrap();
-    std::fs::copy(
-        s.module.join("pii_contact_allowlist.json"),
-        module.join("pii_contact_allowlist.json"),
-    )
-    .unwrap();
+    for entry in std::fs::read_dir(&s.module).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, module.join(path.file_name().unwrap())).unwrap();
+    }
 
     // Order in which `versions` processes principal titles: sorted by `name`.
     let mut rows: Vec<Value> = serde_json::from_str(

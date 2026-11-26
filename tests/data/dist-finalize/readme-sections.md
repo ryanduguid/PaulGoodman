@@ -1,7 +1,7 @@
 ## Checking staleness
 
-    python -m fadden check_current
-    python -m fadden check_current Act             # one collection only
+    python check_current.py
+    python check_current.py Act                    # one collection only
 
 It asks the Register API for each title's current compilation and reports four
 things separately: superseded compilations, titles whose in-force version has no
@@ -18,12 +18,12 @@ re-download and the path built from that date answers 404.
 ## Build record
 
 `build/build-record.json` records this finalisation: when it ran, the `fadden`
-program that ran it (its version and SHA-256), and the size and SHA-256 of every
-file it read. What the program cannot know, such as the source revision it was
-built from, is null with a reason rather than guessed. The record covers
-finalisation and its inputs, not the whole build. Earlier corpora shipped the
-builder's Python scripts in `build/` and `check_current.py` beside this
-README; both are now in the `fadden` program in the source repository.
+program that ran it (its version and SHA-256), the size and SHA-256 of every
+file it read, and the checker files copied beside this README. What the program
+cannot know, such as the source revision it was built from, is null with a
+reason rather than guessed. The record covers finalisation and its inputs, not
+the whole build. Earlier corpora shipped the builder's Python scripts in
+`build/`; the builder is now the `fadden` program in the source repository.
 
 ## Licence and attribution
 

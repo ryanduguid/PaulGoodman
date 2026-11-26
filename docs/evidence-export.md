@@ -104,10 +104,9 @@ python -m fadden dist_verify   # check the built subset against its own claims, 
 ```
 
 `fadden/corpus_paths.py` and `fadden/http_fetch.py` are shared modules the
-retained Python stages import; they are not run directly. `finalize` writes
-`build/build-record.json` without copying Python checker scripts to the corpus
-root (`check_current` runs inside `fadden`); every stage runs from the source
-checkout.
+retained Python stages import; they are not run directly. `finalize` copies
+`check_current.py` and the shared modules to a completed corpus's root and writes
+`build/build-record.json`; every stage runs from the source checkout.
 
 The intermediate JSON files (`titles_all.json`, `acts_resolved.json`,
 `manifest_raw.json`, `probe13.json`, `retry13_patch.json`) are build outputs

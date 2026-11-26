@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import subprocess  # nosec B404 - isolated Python import regression
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fadden import corpus_paths
+
+from tests.corpus import test_regressions as regressions
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 STAGE = REPOSITORY / "fadden"
@@ -26,6 +32,20 @@ class PathAndWriteTests(unittest.TestCase):
             flat.mkdir()
             (flat / "sources.json").write_text("{}", encoding="utf-8")
             corpus_paths.require_builder_layout(flat / "check_current.py")
+
+    def test_network_stages_reject_filter_injection_before_requesting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            module = regressions.load_module("injection_check_current", STAGE / "check_current.py")
+            injected = "C2099A00001' or isCurrent eq true"
+            module.ROOT = str(root)
+            (root / "sources.json").write_text(json.dumps({
+                "retrieved": "2099-01-01", "titles": [{"register_id": injected}]
+            }), encoding="utf-8")
+            with mock.patch.object(module, "fetch_json") as fetch,                     mock.patch.object(sys, "argv", ["check_current"]), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(ValueError):
+                    module.main()
+            fetch.assert_not_called()
 
     def test_identifiers_and_complete_dates_are_checked(self):
         for value in ("C2099A00001' or true", "C２０９９A00001", "../C2099A00001", None):
@@ -57,6 +77,13 @@ class PathAndWriteTests(unittest.TestCase):
             with corpus_paths.atomic_text_writer(path) as target:
                 target.write("complete replacement\n")
             self.assertEqual(path.read_text(encoding="utf-8"), "complete replacement\n")
+
+    def test_installed_locations_refuse_legacy_stages_before_side_effects(self):
+        module = regressions.load_module("installed_guard_check_current", STAGE / "check_current.py")
+        with tempfile.TemporaryDirectory() as temporary,                 mock.patch.object(module, "__file__", str(Path(temporary) / "fadden" / "check_current.py")):
+            with self.assertRaisesRegex(RuntimeError, "source checkout"):
+                module.main()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
 
     def test_clean_package_imports_ignore_bare_helper_modules(self):
         with tempfile.TemporaryDirectory() as temporary:

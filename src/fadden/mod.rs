@@ -11,7 +11,6 @@
 pub mod as_at;
 pub mod authorities;
 pub mod capture_register;
-pub mod check_current;
 pub mod cli;
 pub mod compare_builds;
 pub mod compilations;

@@ -3,21 +3,18 @@
 
 //! `fadden/quick.py`: build and index a preset of principal Acts in an empty
 //! folder, optionally holding earlier compilations under `compilations/<date>/`.
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
 use rusqlite::{Connection, OpenFlags};
 
-use super::compilations::overlaps;
-use super::corpus_paths::{module_dir, write_json_atomic, write_text};
+use super::corpus_paths::{module_dir, write_text};
 use super::http::{self, Http};
-use super::{
-    Exc, Run, download, getitem, iterate, json_error, probe13, retry13, round_half_even, versions,
-};
+use super::{Exc, Run, download, iterate, json_error, probe13, retry13, round_half_even, versions};
 use crate::argparse::{Action, Exit, Get, Parser, Value as ArgValue};
 use crate::py;
-use crate::pyjson::{self, Json, set_field};
+use crate::pyjson::{self, Json};
 use crate::pyos::{OsError, Style};
 use crate::pypath::{self, PyPath};
 use crate::pyre;
@@ -36,8 +33,14 @@ pub const PRESET: [&str; 9] = [
     "C2004A04633",
 ];
 
-/// Data file copied alongside stage outputs in `<staging>/build/`.
-pub const SUPPORT: [&str; 1] = ["pii_contact_allowlist.json"];
+/// Files copied into `<staging>/build/`: the contact allowlist, and the
+/// staleness checker finalize ships at the corpus root with the 2 modules it imports.
+pub const SUPPORT: [&str; 4] = [
+    "pii_contact_allowlist.json",
+    "check_current.py",
+    "corpus_paths.py",
+    "http_fetch.py",
+];
 pub const SMOKE_QUERY: [&str; 2] = ["general", "deductions"];
 
 pub const OMISSION_REASONS: [&str; 3] = [
@@ -47,6 +50,11 @@ pub const OMISSION_REASONS: [&str; 3] = [
 ];
 
 const OUTPUT_DEPTH: usize = 990;
+
+mod dated;
+
+use dated::add_compilations;
+pub use dated::check_windows;
 
 pub fn quick_error(message: impl Into<String>) -> Exc {
     Exc::Other {
@@ -332,235 +340,6 @@ fn assemble(runner: &mut dyn Runner, staging: &str) -> Result<String, Exc> {
     Ok(hit)
 }
 
-fn extracted(scratch: &str) -> Result<Vec<Json>, Exc> {
-    let text = crate::pyio::read_text(&pypath::join(scratch, "manifest_md.json"))?;
-    let val = pyjson::loads_standard(&text).map_err(json_error)?;
-    iterate(&val)
-}
-
-/// Refuse a build in which 2 compilations of one title cover the same date.
-pub fn check_windows(rows: &[Json]) -> Result<(), Exc> {
-    let mut windows: BTreeMap<String, Vec<(String, Option<String>)>> = BTreeMap::new();
-    for row in rows {
-        let rid = getitem(row, "id")?
-            .as_str()
-            .ok_or_else(|| Exc::Type("expected string id".into()))?
-            .to_string();
-        let start = getitem(row, "versionStart")?
-            .as_str()
-            .ok_or_else(|| Exc::Type("expected string versionStart".into()))?
-            .to_string();
-        let end = match row.get("current_version_start") {
-            Some(Json::Str(s)) => s.as_str().map(str::to_string),
-            Some(Json::Null) | None => None,
-            _ => return Err(Exc::Type("expected string current_version_start".into())),
-        };
-        windows.entry(rid).or_default().push((start, end));
-    }
-    for (rid, held) in windows {
-        let msgs = overlaps(&rid, held);
-        if let Some(first) = msgs.into_iter().next() {
-            return Err(quick_error(first));
-        }
-    }
-    Ok(())
-}
-
-fn add_compilations(
-    runner: &mut dyn Runner,
-    module: &str,
-    staging: &str,
-    dates: &[String],
-) -> Result<(), Exc> {
-    let root_scratch = pypath::join(staging, "build");
-    let titles_text = crate::pyio::read_text(&pypath::join(&root_scratch, "titles_all.json"))?;
-    let titles_json = pyjson::loads_standard(&titles_text).map_err(json_error)?;
-    let titles = iterate(&titles_json)?;
-    let expected: BTreeSet<String> = titles
-        .iter()
-        .filter_map(|t| t.get("id").and_then(Json::as_str).map(str::to_string))
-        .collect();
-    let mut rows = extracted(&root_scratch)?;
-    let mut root_current = HashSet::new();
-    for row in &rows {
-        let is_current = matches!(row.get("current_version_start"), None | Some(Json::Null));
-        if is_current {
-            let id = row
-                .get("id")
-                .and_then(Json::as_str)
-                .unwrap_or("")
-                .to_string();
-            let start = row
-                .get("versionStart")
-                .and_then(Json::as_str)
-                .unwrap_or("")
-                .to_string();
-            let comp = row
-                .get("compilationRegisterId")
-                .and_then(Json::as_str)
-                .map(str::to_string);
-            root_current.insert((id, start, comp));
-        }
-    }
-    let mut unique_dates: Vec<String> = dates.to_vec();
-    unique_dates.sort();
-    unique_dates.dedup();
-    let mut omissions = Vec::new();
-    let folder = pypath::join(staging, "compilations");
-
-    for on in &unique_dates {
-        let build_dir = pypath::join(&folder, on);
-        let scratch = pypath::join(&build_dir, "build");
-        lay_out(module, &scratch, &titles_json)?;
-        runner.stage(
-            &scratch,
-            &["versions", "--in-force-on", on, "--report-omissions"],
-            false,
-        )?;
-        let report_text = crate::pyio::read_text(&pypath::join(&scratch, "dated_resolution.json"))?;
-        let report = pyjson::loads_standard(&report_text).map_err(json_error)?;
-        let (Some(Json::Array(resolved)), Some(Json::Array(current)), Some(Json::Array(skipped))) = (
-            report.get("resolved"),
-            report.get("current"),
-            report.get("omissions"),
-        ) else {
-            return Err(quick_error(format!(
-                "compilations/{on} has an invalid title resolution report"
-            )));
-        };
-        let mut ids = Vec::new();
-        for row in resolved.iter().chain(current.iter()) {
-            let id = getitem(row, "id")?
-                .as_str()
-                .ok_or_else(|| Exc::Type("id must be str".into()))?;
-            ids.push(id.to_string());
-        }
-        for row in skipped {
-            let id = getitem(row, "register_id")?
-                .as_str()
-                .ok_or_else(|| Exc::Type("register_id must be str".into()))?;
-            ids.push(id.to_string());
-        }
-        let id_set: BTreeSet<String> = ids.iter().cloned().collect();
-        if report.get("in_force_on").and_then(Json::as_str) != Some(on.as_str())
-            || ids.len() != expected.len()
-            || id_set != expected
-        {
-            return Err(quick_error(format!(
-                "compilations/{on} has an incomplete title resolution report"
-            )));
-        }
-        for row in skipped {
-            let ok = row
-                .get("reason")
-                .and_then(Json::as_str)
-                .is_some_and(|r| OMISSION_REASONS.contains(&r));
-            if !ok {
-                return Err(quick_error(format!(
-                    "compilations/{on} has an invalid omission reason"
-                )));
-            }
-        }
-        for row in current {
-            let id = getitem(row, "id")?
-                .as_str()
-                .ok_or_else(|| Exc::Type("id must be str".into()))?
-                .to_string();
-            let start = getitem(row, "versionStart")?
-                .as_str()
-                .ok_or_else(|| Exc::Type("versionStart must be str".into()))?
-                .to_string();
-            let comp = getitem(row, "compilationRegisterId")?
-                .as_str()
-                .map(str::to_string);
-            if start.as_str() > on.as_str() || !root_current.contains(&(id, start, comp)) {
-                return Err(quick_error(format!(
-                    "compilations/{on} needs a current compilation missing from the root"
-                )));
-            }
-        }
-        omissions.push(Json::obj([
-            ("in_force_on", Json::str(on)),
-            ("omissions", Json::Array(skipped.clone())),
-        ]));
-
-        let kept: HashSet<(String, String)> = rows
-            .iter()
-            .filter_map(|r| {
-                Some((
-                    r.get("id")?.as_str()?.to_string(),
-                    r.get("versionStart")?.as_str()?.to_string(),
-                ))
-            })
-            .collect();
-        let mut wanted = Vec::new();
-        for row in resolved {
-            let id = getitem(row, "id")?.as_str().unwrap_or("").to_string();
-            let start = getitem(row, "versionStart")?
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            if !kept.contains(&(id, start)) {
-                wanted.push(row.clone());
-            }
-        }
-        let held_count = current.len() + resolved.len() - wanted.len();
-        runner.print(&format!(
-            "compilations/{on}: {} to fetch, {held_count} already held, {} with none to fetch, listed above",
-            wanted.len(),
-            skipped.len(),
-        ));
-        if wanted.is_empty() {
-            std::fs::remove_dir_all(&build_dir)
-                .map_err(|e| OsError::new(&e, Some(&build_dir), Style::Errno))?;
-            continue;
-        }
-        let target = pypath::join(&scratch, "acts_resolved.json");
-        write_json_atomic(&target, &Json::Array(wanted.clone()), Some(1), OUTPUT_DEPTH)?;
-        let epub_dir = pypath::join(&build_dir, "epub");
-        runner.download(&scratch, &epub_dir)?;
-        for name in ["extract", "pii_scan", "pii_scan2"] {
-            runner.stage(&scratch, &[name], false)?;
-        }
-        let got = extracted(&scratch)?;
-        let got_ids: BTreeSet<String> = got
-            .iter()
-            .filter_map(|r| r.get("id").and_then(Json::as_str).map(str::to_string))
-            .collect();
-        let missing: Vec<String> = wanted
-            .iter()
-            .filter_map(|r| r.get("id").and_then(Json::as_str).map(str::to_string))
-            .collect::<BTreeSet<_>>()
-            .difference(&got_ids)
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            return Err(quick_error(format!(
-                "compilations/{on} holds no rows for {}",
-                missing.join(", ")
-            )));
-        }
-        rows.extend(got);
-    }
-
-    check_windows(&rows)?;
-    let folder_path = Path::new(&folder);
-    if folder_path.is_dir()
-        && std::fs::read_dir(folder_path)
-            .map_err(|e| OsError::new(&e, Some(&folder), Style::Errno))?
-            .next()
-            .is_none()
-    {
-        std::fs::remove_dir(folder_path)
-            .map_err(|e| OsError::new(&e, Some(&folder), Style::Errno))?;
-    }
-    let sources_path = pypath::join(staging, "sources.json");
-    let sources_text = crate::pyio::read_text(&sources_path)?;
-    let mut source = pyjson::loads_standard(&sources_text).map_err(json_error)?;
-    set_field(&mut source, "historical_omissions", Json::Array(omissions));
-    write_json_atomic(&sources_path, &source, Some(1), OUTPUT_DEPTH)
-}
-
 /// Validate a date string as `YYYY-MM-DD`, returning Python's exact argparse
 /// type-error wording without prefixing `'argument ...'`.
 pub fn validate_in_force_date(value: &str) -> Result<(), String> {
@@ -593,7 +372,7 @@ fn is_wrapped_failure(err: &Exc) -> bool {
             | Exc::Runtime(_)
             | Exc::Sqlite(_)
             | Exc::Other {
-                class: "DownloadError" | "QuickError",
+                class: "fadden.download.DownloadError" | "QuickError",
                 ..
             }
     )
@@ -679,9 +458,16 @@ pub fn run_cli(
 /// CLI entrypoint (`python -m fadden quick`).
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     let module = module_dir();
-    let binary = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "fadden".to_string());
+    // Local stages run in a child process of this binary, or of the build
+    // FADDEN_BIN names, as `python -m fadden quick` ran them. The path only
+    // chooses which build runs them; nothing is trusted because of it.
+    // nosemgrep: rust.lang.security.current-exe.current-exe
+    let own = std::env::current_exe();
+    let binary = std::env::var("FADDEN_BIN")
+        .ok()
+        .filter(|named| !named.is_empty())
+        .or_else(|| own.ok().map(|p| p.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "fadden".to_string());
     let mut http = http::connect();
     let mut runner_run = Run::default();
     let code = {

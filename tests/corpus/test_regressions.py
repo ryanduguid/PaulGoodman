@@ -3,9 +3,12 @@
 These tests use only the standard library and temporary directories.  They do
 not call the Register API or require a built corpus.
 """
+import contextlib
 import importlib.util
+import io
 import json
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -407,6 +410,200 @@ class PathBoundaryTests(unittest.TestCase):
             deployed_pkg.parent.mkdir(parents=True)
             deployed_pkg.write_text("# placeholder\n", encoding="utf-8")
             self.assertEqual(Path(paths.corpus_root(deployed_pkg)), deployed_pkg.parent.parent.parent)
+
+    def test_check_current_uses_checkout_output_or_deployed_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            checkout = base / "checkout"
+            checkout.mkdir()
+            for name in ("check_current.py", "corpus_paths.py", "http_fetch.py"):
+                shutil.copy2(stage_file(name), checkout / name)
+            checkout_module = load_module("check_current_checkout", checkout / "check_current.py")
+            self.assertEqual(Path(checkout_module.ROOT), checkout / "corpus")
+
+            deployed = base / "deployed"
+            deployed.mkdir()
+            (deployed / "sources.json").write_text("{}", encoding="utf-8")
+            for name in ("check_current.py", "corpus_paths.py", "http_fetch.py"):
+                shutil.copy2(stage_file(name), deployed / name)
+            deployed_module = load_module("check_current_deployed", deployed / "check_current.py")
+            self.assertEqual(Path(deployed_module.ROOT), deployed)
+
+
+class StalenessBucketTests(unittest.TestCase):
+    def _run(self, base, response):
+        module = load_module("check_current_buckets", base / "check_current.py")
+        module.fetch_json = response if callable(response) else lambda _url: response
+        buffer = io.StringIO()
+        with mock.patch.object(module.sys, "argv", ["check_current.py"]), \
+                mock.patch.object(module.time, "sleep"):
+            with contextlib.redirect_stdout(buffer):
+                module.main()
+        return buffer.getvalue()
+
+    def _corpus(self, base):
+        (base / "sources.json").write_text(json.dumps({
+            "retrieved": "2026-08-03",
+            "titles": [{"register_id": "F2020L01498", "name": "Demo Instrument",
+                        "collection": "LegislativeInstrument",
+                        "compilation_number": "4", "compilation_date": "2025-06-30"}],
+        }), encoding="utf-8")
+        for name in ("check_current.py", "corpus_paths.py", "http_fetch.py"):
+            shutil.copy2(stage_file(name), base / name)
+
+    def test_a_current_version_with_no_document_is_its_own_bucket(self):
+        """Filing these under "re-download these" sends the reader at a URL
+        that answers 404: the compilation does not exist yet."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._corpus(base)
+            out = self._run(base, {"value": [{
+                "titleId": "F2020L01498", "start": "2026-07-01T00:00:00Z",
+                "compilationNumber": "5", "registerId": None}]})
+            self.assertIn("no compilation published: 1", out)
+            self.assertIn("NO COMPILATION PUBLISHED", out)
+            self.assertNotIn("SUPERSEDED, re-download these", out)
+            self.assertIn("superseded: 0", out)
+
+    def test_a_published_later_compilation_is_reported_as_superseded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._corpus(base)
+            out = self._run(base, {"value": [{
+                "titleId": "F2020L01498", "start": "2026-07-01T00:00:00Z",
+                "compilationNumber": "5", "registerId": "F2026C00099"}]})
+            self.assertIn("superseded: 1", out)
+            self.assertIn("SUPERSEDED, re-download these", out)
+            self.assertIn("no compilation published: 0", out)
+
+    def test_a_failed_current_lookup_is_not_inferred_from_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._corpus(base)
+            module = load_module("check_current_transport_failure", base / "check_current.py")
+            responses = [None, {"value": [{"titleId": "F2020L01498"}]}]
+            calls = []
+
+            def response(_url):
+                calls.append(_url)
+                return responses.pop(0)
+
+            module.fetch_json = response
+            buffer = io.StringIO()
+            with mock.patch.object(module.sys, "argv", ["check_current.py"]), \
+                    mock.patch.object(module.time, "sleep"):
+                with contextlib.redirect_stdout(buffer):
+                    module.main()
+
+            out = buffer.getvalue()
+            self.assertEqual(len(calls), 1)
+            self.assertIn("no longer in force: 0", out)
+            self.assertIn("lookup failed: 1", out)
+
+    def test_a_wrong_title_response_is_a_lookup_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._corpus(base)
+            out = self._run(base, {"value": [{
+                "titleId": "F9999L99999", "start": "2026-07-01T00:00:00Z",
+                "compilationNumber": "5", "registerId": "F2026C00099"}]})
+            self.assertIn("no longer in force: 0", out)
+            self.assertIn("lookup failed: 1", out)
+
+    def test_a_title_with_history_but_no_current_version_is_no_longer_in_force(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._corpus(base)
+            responses = iter([
+                {"value": []},
+                {"value": [{"titleId": "F2020L01498"}]},
+            ])
+            out = self._run(base, lambda _url: next(responses))
+            self.assertIn("no longer in force: 1", out)
+            self.assertIn("NO LONGER IN FORCE", out)
+            self.assertIn("lookup failed: 0", out)
+
+    def test_an_unchanged_current_version_stays_out_of_action_buckets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._corpus(base)
+            out = self._run(base, {"value": [{
+                "titleId": "F2020L01498", "start": "2025-06-30T00:00:00Z",
+                "compilationNumber": "4", "registerId": "F2025C00042",
+            }]})
+            self.assertIn("unchanged: 1", out)
+            self.assertIn("superseded: 0", out)
+            self.assertIn("no compilation published: 0", out)
+            self.assertIn("no longer in force: 0", out)
+            self.assertIn("lookup failed: 0", out)
+
+
+class CheckCurrentStatusTests(unittest.TestCase):
+    """The staleness checker must read the Register's status before compilations."""
+
+    TITLE = {"register_id": "F2016L01256", "name": "Fabricated repealed instrument",
+             "collection": "LegislativeInstrument", "compilation_number": "1",
+             "compilation_date": "2016-08-02"}
+
+    def run_check(self, responses):
+        current = load_module("check_current_status_regression", STAGE / "check_current.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "sources.json").write_text(json.dumps(
+                {"retrieved": "2016-08-02", "titles": [self.TITLE]}), encoding="utf-8")
+            stdout = io.StringIO()
+            with mock.patch.object(current, "ROOT", str(root)), \
+                    mock.patch.object(current, "fetch_json", side_effect=responses), \
+                    mock.patch.object(current.time, "sleep"), \
+                    mock.patch.object(sys, "argv", ["check_current.py"]), \
+                    contextlib.redirect_stdout(stdout):
+                current.main()
+        return stdout.getvalue()
+
+    def test_a_repealed_current_row_is_reported_as_no_longer_in_force(self):
+        # The shape of the public API record for F2016L01256: isCurrent true,
+        # status Repealed and no document id. Read compilation-first it looked
+        # like a compilation the Register had yet to publish.
+        output = self.run_check([{"value": [{
+            "titleId": "F2016L01256", "start": "2026-08-12T00:00:00Z",
+            "compilationNumber": None, "registerId": None,
+            "isCurrent": True, "status": "Repealed"}]}])
+        self.assertIn("no longer in force: 1", output)
+        self.assertIn("no compilation published: 0", output)
+        self.assertIn("NO LONGER IN FORCE", output)
+        self.assertNotIn("NO COMPILATION PUBLISHED", output)
+
+    def test_an_in_force_row_without_a_document_is_still_an_unpublished_compilation(self):
+        output = self.run_check([{"value": [{
+            "titleId": "F2016L01256", "start": "2026-08-12T00:00:00Z",
+            "compilationNumber": None, "registerId": None,
+            "isCurrent": True, "status": "InForce"}]}])
+        self.assertIn("no compilation published: 1", output)
+        self.assertIn("no longer in force: 0", output)
+        self.assertIn("NO COMPILATION PUBLISHED", output)
+
+    def test_the_query_asks_the_register_for_the_status_field(self):
+        current = load_module("check_current_select_regression", STAGE / "check_current.py")
+        seen = []
+
+        def record(url):
+            seen.append(url)
+            return {"value": [{"titleId": "F2016L01256", "start": "2016-08-02T00:00:00Z",
+                               "compilationNumber": "1", "registerId": "F2016C00001",
+                               "isCurrent": True, "status": "InForce"}]}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "sources.json").write_text(json.dumps(
+                {"retrieved": "2016-08-02", "titles": [self.TITLE]}), encoding="utf-8")
+            with mock.patch.object(current, "ROOT", str(root)), \
+                    mock.patch.object(current, "fetch_json", side_effect=record), \
+                    mock.patch.object(current.time, "sleep"), \
+                    mock.patch.object(sys, "argv", ["check_current.py"]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                current.main()
+        self.assertTrue(seen)
+        self.assertIn("compilationNumber,registerId,status", seen[0])
 
 
 if __name__ == "__main__":

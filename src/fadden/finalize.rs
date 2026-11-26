@@ -139,8 +139,8 @@ disallowed or sunset while its enabling Act stands.
 
 ## Checking staleness
 
-    python -m fadden check_current
-    python -m fadden check_current Act             # one collection only
+    python check_current.py
+    python check_current.py Act                    # one collection only
 
 It asks the Register API for each title's current compilation and reports four
 things separately: superseded compilations, titles whose in-force version has no
@@ -157,12 +157,12 @@ re-download and the path built from that date answers 404.
 ## Build record
 
 `build/build-record.json` records this finalisation: when it ran, the `fadden`
-program that ran it (its version and SHA-256), and the size and SHA-256 of every
-file it read. What the program cannot know, such as the source revision it was
-built from, is null with a reason rather than guessed. The record covers
-finalisation and its inputs, not the whole build. Earlier corpora shipped the
-builder's Python scripts in `build/` and `check_current.py` beside this
-README; both are now in the `fadden` program in the source repository.
+program that ran it (its version and SHA-256), the size and SHA-256 of every
+file it read, and the checker files copied beside this README. What the program
+cannot know, such as the source revision it was built from, is null with a
+reason rather than guessed. The record covers finalisation and its inputs, not
+the whole build. Earlier corpora shipped the builder's Python scripts in
+`build/`; the builder is now the `fadden` program in the source repository.
 
 ## Licence and attribution
 
@@ -210,7 +210,7 @@ is empty for those): the Customs Act 1901 and Charities Act 2013 are absent.
 
 **Sunsetting.** Legislative instruments expire under Part 4 of the Legislation
 Act 2003 unless remade. An instrument in force on the build date may have sunset
-since. `check_current` reports these under "no longer in force": it reads the
+since. `check_current.py` reports these under "no longer in force": it reads the
 Register's `status` before the compilation fields, so a repealed or ceased title
 is not reported as a compilation still to be published.
 
@@ -1284,11 +1284,44 @@ fn write_document(path: &str, text: Result<P, Exc>) -> Result<(), Exc> {
     }
 }
 
+/// `shutil.copy(src, dst)`: the contents, then the permission bits. Returns
+/// the file written, which is inside `dst` when `dst` is a directory.
+fn copy(src: &str, dst: &str) -> Result<String, Exc> {
+    let dst = if pyos::isdir(dst) {
+        pypath::join(dst, &pypath::split(src).1)
+    } else {
+        dst.to_string()
+    };
+    super::dist::copyfile(src, &dst, &py::repr_str(src))?;
+    let meta = std::fs::metadata(src).map_err(|e| OsError::new(&e, Some(src), Style::Native))?;
+    #[cfg(unix)]
+    let mode = std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o7777;
+    // Only the owner-write bit reaches Windows, as the read-only attribute.
+    #[cfg(windows)]
+    let mode = if meta.permissions().readonly() {
+        0o444
+    } else {
+        0o666
+    };
+    pyos::chmod(&dst, mode).map_err(|e| OsError::new(&e, Some(&dst), Style::Native))?;
+    Ok(dst)
+}
+
+/// `copy_if_different(src, dst)`: a re-run from build/ would copy a file onto
+/// itself. Returns the file that holds the copy.
+fn copy_if_different(src: &str, dst: &str) -> Result<String, Exc> {
+    if pypath::abspath(src) != pypath::abspath(dst) {
+        return copy(src, dst);
+    }
+    Ok(dst.to_string())
+}
+
 /// `finish_corpus_publication(inventory, retrieved, pii_counts)`, given the
 /// README built from the last 2.
 fn finish(
     inv: &Inventory,
     root: &str,
+    scratch: &str,
     readme: Result<P, Exc>,
     inputs: Vec<Input>,
     run: &mut Run,
@@ -1298,6 +1331,21 @@ fn finish(
 
     let build = child(root, &["build"])?;
     pyos::makedirs(&PyPath::new(&build))?;
+    let mut tools = Vec::new();
+    for name in ROOT_TOOLS {
+        let source = pypath::join(scratch, name);
+        let installed = copy_if_different(&source, &child(root, &[name])?)?;
+        // The installed bytes, at the path the operator finds them: inside a
+        // directory of that name when one is there, as `shutil.copy` puts it.
+        let bytes = std::fs::read(&installed)
+            .map_err(|e| OsError::new(&e, Some(&installed), Style::Native))?;
+        let path = if installed == child(root, &[name])? {
+            name.to_string()
+        } else {
+            format!("{name}/{name}")
+        };
+        tools.push((path, Digest::of(&bytes)));
+    }
     // The totals can fail (a float overflow); they fail before the record.
     let epub_mb = match &inv.epub_bytes {
         Num::Int(i) => int_to_float(i)?,
@@ -1305,7 +1353,7 @@ fn finish(
     } / 1e6;
     let words = percent_d(&inv.total_words)?;
     // Installed last: a run that stops before here leaves no record.
-    let record = build_record(inputs);
+    let record = build_record(inputs, &tools);
     let mut text = pyvalue::dumps_with(&record, Some(1), false, false);
     text.push(u32::from('\n'));
     write_text_atomic(&child(&build, &[RECORD])?, &[text])?;
@@ -1385,10 +1433,13 @@ fn run_selected(scratch: &str, retrieved: &str, preset: bool, run: &mut Run) -> 
     write_document(&path, Ok(points(&notice)))?;
 
     let readme = readme_document(&inv, retrieved, &pii, preset);
-    finish(&inv, &root, readme, inputs, run)
+    finish(&inv, &root, scratch, readme, inputs, run)
 }
 
-/// The builder stages the Python finalize copied into build/.
+/// The checker shipped at the corpus root, with the 2 modules it imports.
+const ROOT_TOOLS: [&str; 3] = ["check_current.py", "corpus_paths.py", "http_fetch.py"];
+/// The builder stages the Python finalize copied into build/, beside copies of
+/// `ROOT_TOOLS`.
 const LEGACY_BUILDER: [&str; 5] = [
     "discover.py",
     "versions.py",
@@ -1477,7 +1528,7 @@ fn digest_json(digest: &Digest) -> [(&'static str, Json); 2] {
 /// bytes it read and the checker it shipped. What the binary cannot know (the
 /// source revision it was built from, its lockfile) is null with a reason.
 // "Write the vision, and make it plain upon tables" (Habakkuk 2:2, KJV).
-fn build_record(mut inputs: Vec<Input>) -> Json {
+fn build_record(mut inputs: Vec<Input>, tools: &[(String, Digest)]) -> Json {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -1519,7 +1570,14 @@ fn build_record(mut inputs: Vec<Input>) -> Json {
             obj(pairs)
         })
         .collect();
-    let files = Vec::new();
+    let files = tools
+        .iter()
+        .map(|(name, digest)| {
+            let mut pairs = vec![("name", Json::str(name))];
+            pairs.extend(digest_json(digest));
+            obj(pairs)
+        })
+        .collect();
     obj(vec![
         ("schema", Json::str(RECORD_SCHEMA)),
         ("scope", Json::str("finalize")),

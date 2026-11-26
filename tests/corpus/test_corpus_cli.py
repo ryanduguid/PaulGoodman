@@ -101,6 +101,9 @@ class FaddenCliTests(unittest.TestCase):
             self.assertEqual(main(list(argv)), 0)
         return module.main
 
+    def test_a_stage_without_parameters_is_called_bare(self) -> None:
+        self._dispatch("check_current").assert_called_once_with()
+
     def test_a_separator_left_by_argparse_is_stripped(self) -> None:
         # Whether argparse keeps "--" in a REMAINDER list depends on the
         # interpreter version, so the parsed result is fixed here.
