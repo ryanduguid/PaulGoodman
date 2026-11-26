@@ -863,10 +863,14 @@ citation stays unresolved and `refs` prints `not in this index`. Section 995-1
 of the *Income Tax Assessment Act 1997* defines `GST Act`, and section 195-1 of
 the GST Act defines `ITAA 1936` and `ITAA 1997`, as the table reads them.
 
-Measured on the 4 August 2026 build on 15 October 2026: 946 titles and 21,916
-rows indexed in about 5 seconds into a 77 MB file, with 8,426 definition
-paragraphs and 62,224 section, Division and Subdivision references. Keep the index with the corpus it
-came from and out of git; rebuild it after any corpus rebuild.
+Measured on a full build of 27 November 2026 on a Linux laptop (AMD Ryzen 7
+4800H): 944 titles and 22,113 rows indexed in 31 to 35 seconds into a 92.7 MB
+file, with 8,868 definition paragraphs and 62,065 section, Division and
+Subdivision references. The Porter copy of the text that `--stem` reads takes
+15.4 MB of the file; from the same corpus, the commit before word-form matching
+wrote 77.3 MB in about 26 seconds ([build evidence](docs/build-evidence.md#full-staged-build)).
+Keep the index with the corpus it came from and out of git; rebuild it after any
+corpus rebuild.
 
 ## Exporting an authorities list
 
