@@ -46,7 +46,7 @@ _STATUS_INVALID_HANDLE = -0x3FFFFFF8  # 0xC0000008
 _ERROR_INVALID_HANDLE = 6
 # O_PATH opens a final symbolic link itself, as FILE_FLAG_OPEN_REPARSE_POINT
 # opens a reparse point; hosts without it open the target for reading.
-_HOLD = getattr(os, "O_PATH", os.O_RDONLY) | os.O_NOFOLLOW
+_HOLD = getattr(os, "O_PATH", os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
 
 _T = TypeVar("_T")
 _REAL_WINDLL = getattr(ctypes, "WinDLL", None)
