@@ -19,9 +19,13 @@ from fadden.export_live_evidence_bundles import (
     export_live_evidence_bundles,
 )
 
-WINDOWS_ONLY_EXPORT = unittest.skipUnless(
-    os.name == "nt",
-    "identity-bound live evidence publication is supported only on Windows",
+from . import windows_fake
+
+# Publication is Windows-only; elsewhere these tests run it through the fake.
+WINDOWS_ONLY_EXPORT = windows_fake.windows
+# These need a held handle to refuse another rename, which the fake cannot do.
+WINDOWS_SHARE_MODES = unittest.skipUnless(
+    os.name == "nt", "relies on Windows share modes refusing a rename of a held object"
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "live-evidence"
@@ -787,9 +791,11 @@ class LiveEvidenceGraphTests(unittest.TestCase):
     def test_a_capture_path_outside_the_basic_multilingual_plane_is_pinned(self) -> None:
         """Native name lengths count UTF-16 units, so such a path names itself.
 
-        A lone surrogate, which a Windows name can hold, is one unit.
+        A lone surrogate, which a Windows name can hold, is one unit; a POSIX
+        file system cannot encode one, so only Windows tries it.
         """
-        for component in ("x\U0001f600y", "x\ud800y"):
+        lone_surrogate = ("x\ud800y",) if os.name == "nt" else ()
+        for component in ("x\U0001f600y", *lone_surrogate):
             with self.subTest(component=ascii(component)), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary) / component
                 root.mkdir()
@@ -1053,7 +1059,7 @@ class LiveEvidenceFilesystemTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertFalse((output / "attacker.json").exists())
 
-    @WINDOWS_ONLY_EXPORT
+    @WINDOWS_SHARE_MODES
     def test_replacement_attempt_at_cleanup_delete_boundary_cannot_remove_another_directory(self) -> None:
         """The held staging object must prevent a path replacement before recursive cleanup."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -1088,7 +1094,7 @@ class LiveEvidenceFilesystemTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertFalse(retained.exists())
 
-    @WINDOWS_ONLY_EXPORT
+    @WINDOWS_SHARE_MODES
     def test_cleanup_child_replacement_after_handle_validation_is_blocked(self) -> None:
         """A child replacement at the former lstat-to-unlink boundary must not be deleted."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -1174,7 +1180,7 @@ class LiveEvidenceFilesystemTests(unittest.TestCase):
 
             self.assertFalse(output.exists())
 
-    @WINDOWS_ONLY_EXPORT
+    @WINDOWS_SHARE_MODES
     def test_cleanup_never_removes_a_replaced_same_prefix_staging_directory(self) -> None:
         """The prefix proves scope, while the recorded directory identity proves ownership."""
         with tempfile.TemporaryDirectory() as temporary:
