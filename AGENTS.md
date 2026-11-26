@@ -99,7 +99,7 @@ cargo test --locked
 cargo test --locked --features fake-http --test fadden_golden --test fadden_download --test fadden_retry13 --test fadden_quick
 cargo build --locked --release
 cargo build --locked
-cargo audit && cargo audit --file fuzz/Cargo.lock
+cargo audit --deny unsound --deny yanked && cargo audit --deny unsound --deny yanked --file fuzz/Cargo.lock
 cargo deny --locked check licenses sources
 uv run --locked --extra dev ruff check .
 uv run --locked --extra dev mypy
