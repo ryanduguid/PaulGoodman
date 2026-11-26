@@ -596,6 +596,17 @@ fn write_dated_resolution(
 /// `python -m fadden versions [--in-force-on YYYY-MM-DD]`: the current
 /// versions, or with a date the earlier versions in force on it.
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
+    let mut http = http::connect();
+    run_cli(http.as_mut(), &module_dir(), argv, run)
+}
+
+/// Run `versions` CLI arguments with an explicit `Http` client and `scratch` directory.
+pub fn run_cli(
+    http: &mut dyn Http,
+    scratch: &str,
+    argv: &[String],
+    run: &mut Run,
+) -> Result<i32, Exit> {
     let parser = Parser::new("python -m fadden versions")
         .description(
             "Resolve each principal title's current version, or the version in force on a date.",
@@ -621,10 +632,9 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
             crate::py::repr_str(on)
         )));
     }
-    let mut http = http::connect();
     let outcome = match on {
-        Some(on) => resolve_in_force_on(http.as_mut(), &module_dir(), &on, report, run),
-        None => self::run(http.as_mut(), &module_dir(), run),
+        Some(on) => resolve_in_force_on(http, scratch, &on, report, run),
+        None => self::run(http, scratch, run),
     };
     Ok(match outcome {
         Ok(()) => 0,

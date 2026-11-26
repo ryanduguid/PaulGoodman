@@ -90,6 +90,15 @@ pub struct Exchange {
     pub body: Option<Vec<u8>>,
 }
 
+/// Outcome of streaming one GET directly into a `.part` file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transfer {
+    pub status: u16,
+    pub content_type: String,
+    pub exceeds_budget: bool,
+    pub transport_error: Option<String>,
+}
+
 /// What one `urllib.request.Request` carries from one attempt to the next.
 /// The callers reuse one request for every attempt, so its redirect record
 /// (`redirect_dict`, shared with the requests its redirects create) and the
@@ -144,6 +153,20 @@ pub trait Http {
         let _ = (url, limit, request);
         Err(Failure::Transport("URLError".into()))
     }
+    /// Stream one GET to `part`, enforcing `https_only` and a `max_bytes`
+    /// response budget; `range_start` resumes a partial file on HTTP 206.
+    fn download(
+        &mut self,
+        url: &str,
+        part: &str,
+        max_bytes: u64,
+        range_start: Option<u64>,
+        https_only: bool,
+        request: &mut Request,
+    ) -> Result<Transfer, Failure> {
+        let _ = (url, part, max_bytes, range_start, https_only, request);
+        Err(Failure::Transport("URLError".into()))
+    }
     /// `time.monotonic()`; a fake's clock stands still.
     fn monotonic(&mut self) -> f64 {
         0.0
@@ -170,6 +193,20 @@ pub fn connect_as(agent: &'static str) -> Box<dyn Http> {
         return Box::new(fake::Script::load(&path));
     }
     Box::new(Net::new(agent))
+}
+
+/// Direct access to `Net::download` for loopback integration tests.
+#[doc(hidden)]
+pub fn net_download(
+    url: &str,
+    part: &str,
+    max_bytes: u64,
+    range_start: Option<u64>,
+    https_only: bool,
+) -> Result<Transfer, Failure> {
+    let mut net = Net::new(UA);
+    let mut request = Request::default();
+    net.download(url, part, max_bytes, range_start, https_only, &mut request)
 }
 
 /// `http_fetch.attempts()`: attempt numbers 1..=tries, waiting `delay` before
@@ -379,7 +416,20 @@ impl Net {
         redirects: &mut Option<HashMap<String, u32>>,
         follow: bool,
     ) -> Result<Opened, Raised> {
+        self.open_policy(req, redirects, follow, false)
+    }
+
+    fn open_policy(
+        &mut self,
+        req: &mut Req,
+        redirects: &mut Option<HashMap<String, u32>>,
+        follow: bool,
+        https_only: bool,
+    ) -> Result<Opened, Raised> {
         let protocol = req.kind.clone();
+        if https_only && protocol != "https" {
+            return Err(Raised::Failure(transport("HTTPSRequired")));
+        }
         let web = matches!(protocol.as_str(), "http" | "https");
         if web {
             req.prepare()?;
@@ -402,7 +452,7 @@ impl Net {
             return Ok(response);
         }
         if matches!(response.status, 301 | 302 | 303 | 307 | 308)
-            && let Some(next) = self.redirect(req, &mut response, redirects, follow)?
+            && let Some(next) = self.redirect(req, &mut response, redirects, follow, https_only)?
         {
             return Ok(next);
         }
@@ -481,6 +531,7 @@ impl Net {
         response: &mut Opened,
         redirects: &mut Option<HashMap<String, u32>>,
         follow: bool,
+        https_only: bool,
     ) -> Result<Option<Opened>, Raised> {
         let Some(location) =
             header(&response.headers, "location").or_else(|| header(&response.headers, "uri"))
@@ -506,12 +557,16 @@ impl Net {
             .cloned()
             .collect();
         let mut new = Req::new(&newurl.replace(' ', "%20"), headers)?;
+        if https_only && new.kind != "https" {
+            return Err(Raised::Failure(transport("HTTPSRequired")));
+        }
         if !visit(redirects, &newurl) {
             return Ok(None);
         }
         // The redirect's body is read before the next request.
         response.body.read(None)?;
-        self.open(&mut new, redirects, follow).map(Some)
+        self.open_policy(&mut new, redirects, follow, https_only)
+            .map(Some)
     }
 
     /// `AbstractHTTPHandler.do_open` with `HTTPConnection`, or for `tls`
@@ -1053,6 +1108,15 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
+/// Whether a 206's `Content-Range` (`bytes <first>-<last>/<total>`) starts at `offset`.
+fn resumes_at(headers: &[(String, String)], offset: u64) -> bool {
+    header(headers, "content-range")
+        .and_then(|value| value.trim().strip_prefix("bytes "))
+        .and_then(|range| range.split_once('-'))
+        .and_then(|(first, _)| first.trim().parse::<u64>().ok())
+        == Some(offset)
+}
+
 /// An `HTTPResponse`'s unread body and its framing.
 struct Body {
     wire: BufReader<Stream>,
@@ -1128,6 +1192,171 @@ impl Body {
                 return Err(transport("HTTPException"));
             }
         }
+    }
+
+    /// Stream the body directly to `out`, stopping once more than `max_bytes`
+    /// have been written; keeps partial bytes received before a transport drop.
+    fn stream_to<W: Write>(
+        &mut self,
+        out: &mut W,
+        max_bytes: u64,
+    ) -> io::Result<(bool, Option<String>)> {
+        let mut sink = Sink {
+            out,
+            written: 0,
+            max_bytes,
+        };
+        if self.chunked {
+            self.stream_chunked(&mut sink)
+        } else {
+            self.stream_plain(&mut sink)
+        }
+    }
+
+    /// A chunked body: each chunk in turn, then the trailer.
+    fn stream_chunked<W: Write>(&mut self, sink: &mut Sink<'_, W>) -> io::Result<Streamed> {
+        let mut first = true;
+        loop {
+            if !first && let Err(e) = safe_read(&mut self.wire, 2) {
+                return Ok(sink.failed(fail_name(e)));
+            }
+            first = false;
+            let line = match read_line(&mut self.wire) {
+                Ok(l) => l,
+                Err(e) => return Ok(sink.failed(fail_name(e))),
+            };
+            if line.len() > MAXLINE {
+                return Ok(sink.failed("LineTooLong".into()));
+            }
+            let Some(size) = chunk_size(&line).filter(|&s| s >= 0) else {
+                return Ok(sink.failed("IncompleteRead".into()));
+            };
+            if size == 0 {
+                if let Err(e) = self.discard_trailer() {
+                    return Ok(sink.failed(fail_name(e)));
+                }
+                sink.out.flush()?;
+                return Ok((false, None));
+            }
+            let left = u128::try_from(size).unwrap_or(u128::MAX);
+            if let Some(done) = self.copy_chunk(sink, left)? {
+                return Ok(done);
+            }
+        }
+    }
+
+    /// Copy one chunk of `left` bytes; `Some` when the stream ends here.
+    fn copy_chunk<W: Write>(
+        &mut self,
+        sink: &mut Sink<'_, W>,
+        mut left: u128,
+    ) -> io::Result<Option<Streamed>> {
+        let mut buf = [0u8; 65_536];
+        while left > 0 {
+            let room = sink.room();
+            if room == 0 {
+                sink.out.flush()?;
+                return Ok(Some((true, None)));
+            }
+            let want = usize::try_from(left.min(u128::from(room)).min(65_536)).unwrap();
+            match self.wire.read(&mut buf[..want]) {
+                Ok(0) => return Ok(Some(sink.failed("IncompleteRead".into()))),
+                Ok(n) => {
+                    left -= n as u128;
+                    if sink.write(&buf[..n])? {
+                        return Ok(Some((true, None)));
+                    }
+                }
+                Err(e) => return Ok(Some(sink.failed(fail_name(os_error(&e))))),
+            }
+        }
+        Ok(None)
+    }
+
+    /// A body of known length, or one that runs to the end of the connection.
+    fn stream_plain<W: Write>(&mut self, sink: &mut Sink<'_, W>) -> io::Result<Streamed> {
+        let mut buf = [0u8; 65_536];
+        let mut wire_read = 0u64;
+        loop {
+            let room = sink.room();
+            if room == 0 {
+                sink.out.flush()?;
+                return Ok((true, None));
+            }
+            let want = match self.length {
+                Some(len) => {
+                    let rem = len.saturating_sub(wire_read);
+                    if rem == 0 {
+                        break;
+                    }
+                    rem.min(room).min(65_536) as usize
+                }
+                None => room.min(65_536) as usize,
+            };
+            match self.wire.read(&mut buf[..want]) {
+                Ok(0) => {
+                    if self.length.is_some_and(|len| wire_read < len) {
+                        return Ok(sink.failed("IncompleteRead".into()));
+                    }
+                    break;
+                }
+                Ok(n) => {
+                    wire_read += n as u64;
+                    if sink.write(&buf[..n])? {
+                        return Ok((true, None));
+                    }
+                }
+                Err(e) => return Ok(sink.failed(fail_name(os_error(&e)))),
+            }
+        }
+        sink.out.flush()?;
+        Ok((false, None))
+    }
+}
+
+/// What `stream_to` reports: whether the body ran past the budget, and the
+/// transport error that cut it short, if any.
+type Streamed = (bool, Option<String>);
+
+/// Where a streamed body goes, with the count written against its budget.
+struct Sink<'a, W: Write> {
+    out: &'a mut W,
+    written: u64,
+    max_bytes: u64,
+}
+
+impl<W: Write> Sink<'_, W> {
+    /// Bytes still accepted before the budget is exceeded by one.
+    fn room(&self) -> u64 {
+        self.max_bytes
+            .saturating_add(1)
+            .saturating_sub(self.written)
+    }
+
+    /// Write `bytes`; true once more than the budget has been written (flushed).
+    fn write(&mut self, bytes: &[u8]) -> io::Result<bool> {
+        self.out.write_all(bytes)?;
+        self.written += bytes.len() as u64;
+        if self.written > self.max_bytes {
+            self.out.flush()?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Keep what arrived and report the transport error `name`.
+    fn failed(&mut self, name: String) -> Streamed {
+        let _ = self.out.flush();
+        (false, Some(name))
+    }
+}
+
+/// The name a streaming failure reports.
+fn fail_name(f: Failure) -> String {
+    match f {
+        Failure::Transport(name) => name,
+        Failure::Uncaught { class, .. } => class.to_string(),
+        Failure::Status(code) => format!("HTTP{code}"),
     }
 }
 
@@ -1519,6 +1748,57 @@ impl Http for Net {
         }
     }
 
+    fn download(
+        &mut self,
+        url: &str,
+        part: &str,
+        max_bytes: u64,
+        range_start: Option<u64>,
+        https_only: bool,
+        request: &mut Request,
+    ) -> Result<Transfer, Failure> {
+        let mut headers = vec![("User-Agent".into(), self.agent.into())];
+        if let Some(offset) = range_start {
+            headers.push(("Range".into(), format!("bytes={offset}-")));
+        }
+        let mut req = Req::new(url, headers)?;
+        let opened = match self.open_policy(&mut req, &mut request.redirects, true, https_only) {
+            Ok(opened) => opened,
+            Err(Raised::Status(opened)) => *opened,
+            Err(Raised::Failure(failure)) => return Err(failure),
+        };
+        request.sent = Some(req);
+        let content_type = header(&opened.headers, "content-type")
+            .unwrap_or_default()
+            .to_owned();
+        let append = range_start.is_some() && opened.status == 206;
+        if append && !resumes_at(&opened.headers, range_start.unwrap_or_default()) {
+            // Like curl's range check: a 206 that does not start where the part
+            // ends cannot be appended, so the next attempt starts afresh.
+            std::fs::remove_file(part).map_err(|e| os_error(&e))?;
+            return Err(Failure::Transport("RangeError".into()));
+        }
+        let mut file = if append {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(part)
+        } else {
+            std::fs::File::create(part)
+        }
+        .map_err(|e| os_error(&e))?;
+        let mut body = opened.body;
+        let (exceeds_budget, transport_error) = body
+            .stream_to(&mut file, max_bytes)
+            .map_err(|e| os_error(&e))?;
+        Ok(Transfer {
+            status: opened.status,
+            content_type,
+            exceeds_budget,
+            transport_error,
+        })
+    }
+
     fn sleep(&mut self, seconds: f64) {
         std::thread::sleep(Duration::from_secs_f64(seconds));
     }
@@ -1693,7 +1973,7 @@ mod tests {
 mod fake {
     use std::io::Write;
 
-    use super::{Exchange, Failure, Http, Request, Response};
+    use super::{Exchange, Failure, Http, Request, Response, Transfer};
     use crate::pyjson::{self, Json};
 
     /// A scripted run: `{"today": "...", "now": "...", "responses": [...]}`,
@@ -1745,6 +2025,21 @@ mod fake {
                 let _ = writeln!(file, "{line}");
             }
         }
+    }
+
+    /// Write a scripted body to `part`, appending for a resumed transfer.
+    fn write_part(part: &str, body: &[u8], append: bool) -> Result<(), Failure> {
+        let mut file = if append {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(part)
+        } else {
+            std::fs::File::create(part)
+        }
+        .map_err(|e| super::os_error(&e))?;
+        file.write_all(body).map_err(|e| super::os_error(&e))?;
+        file.flush().map_err(|e| super::os_error(&e))
     }
 
     fn bytes(value: Option<&Json>) -> Vec<u8> {
@@ -1849,6 +2144,55 @@ mod fake {
             })
         }
 
+        fn download(
+            &mut self,
+            url: &str,
+            part: &str,
+            max_bytes: u64,
+            range_start: Option<u64>,
+            https_only: bool,
+            _request: &mut Request,
+        ) -> Result<Transfer, Failure> {
+            self.log(&format!("GET {url}"));
+            if https_only && !url.to_ascii_lowercase().starts_with("https://") {
+                return Err(Failure::Transport("HTTPSRequired".into()));
+            }
+            let Some(next) = self.responses.next() else {
+                return Err(Failure::Transport("URLError".into()));
+            };
+            if let Some(name) = next.get("error").and_then(Json::as_str) {
+                return Err(Failure::Transport(name.to_string()));
+            }
+            let status = match next.get("status") {
+                Some(Json::Int(i)) => u16::try_from(i).unwrap_or(200),
+                _ => 200,
+            };
+            let content_type = next
+                .get("type")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_string();
+            let missing_body = next.get("missing_body").is_some_and(Json::truthy)
+                || matches!(next.get("body"), Some(Json::Null));
+            let body = bytes(next.get("body"));
+            let exceeds_budget = body.len() as u64 > max_bytes;
+            if !missing_body {
+                let cap = usize::try_from(max_bytes.saturating_add(1)).unwrap_or(usize::MAX);
+                let append = range_start.is_some() && status == 206;
+                write_part(part, &body[..body.len().min(cap)], append)?;
+            }
+            let transport_error = next
+                .get("read_error")
+                .is_some_and(Json::truthy)
+                .then(|| "IncompleteRead".into());
+            Ok(Transfer {
+                status,
+                content_type,
+                exceeds_budget,
+                transport_error,
+            })
+        }
+
         fn sleep(&mut self, seconds: f64) {
             self.log(&format!("sleep {}", crate::py::float_repr(seconds)));
         }
@@ -1863,6 +2207,38 @@ mod fake {
 
         fn utc_now(&mut self) -> String {
             self.now.clone()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn fake_download_handles_u64_max_budget_without_overflow() {
+            let dir = tempfile::tempdir().unwrap();
+            let part = dir.path().join("fake.epub.part");
+            let response = pyjson::loads_standard(r#"{"status": 200, "body": "hello"}"#).unwrap();
+            let mut script = Script {
+                today: "2099-01-01".into(),
+                now: "2099-01-01T00:00:00Z".into(),
+                responses: vec![response].into_iter(),
+                log: None,
+            };
+            let mut req = Request::default();
+            let transfer = script
+                .download(
+                    "https://example.invalid/x.epub",
+                    &part.to_string_lossy(),
+                    u64::MAX,
+                    None,
+                    true,
+                    &mut req,
+                )
+                .unwrap();
+            assert_eq!(transfer.status, 200);
+            assert!(!transfer.exceeds_budget);
+            assert_eq!(std::fs::read(&part).unwrap(), b"hello");
         }
     }
 }
