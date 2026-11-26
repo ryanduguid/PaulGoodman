@@ -5,7 +5,7 @@ $fixture = Join-Path $PSScriptRoot '../../tests/corpus/fixtures/manifest-md.json
 function Test-Manifest([string]$Json) {
     if (!(Test-Json -Json $Json -SchemaFile $schema -ErrorAction SilentlyContinue)) { return $false }
     # Test-Json treats the schema's date format as an annotation.
-    foreach ($row in (ConvertFrom-Json -AsHashtable -DateKind String $Json)) {
+    foreach ($row in (ConvertFrom-Json -InputObject $Json -AsHashtable -DateKind String)) {
         foreach ($key in 'versionStart', 'retrieved', 'current_version_start') {
             if (!$row.Contains($key)) { continue }
             $date = [DateOnly]::MinValue
@@ -25,7 +25,7 @@ foreach ($edit in @(
     { param($rows) $rows[1].version_is_current = $true },
     { param($rows) $rows[0].retrieved = '2026-02-29' }
 )) {
-    $rows = ConvertFrom-Json -AsHashtable -DateKind String -NoEnumerate $source
+    $rows = ConvertFrom-Json -InputObject $source -AsHashtable -DateKind String -NoEnumerate
     & $edit $rows
     $invalid = ConvertTo-Json -Depth 5 -InputObject $rows
     if (Test-Manifest $invalid) {
