@@ -651,7 +651,7 @@ fn main_loop_caches_authorised_metadata_handles_no_epub_and_rolls_back_upgrades(
     .unwrap();
     assert_eq!(manifest_raw[0]["status"], "ok");
     assert_eq!(manifest_raw[0]["isAuthorised"], true);
-    assert_eq!(manifest_raw[0]["fetched_at"], "2099-03-01T12:00:00Z");
+    assert_eq!(manifest_raw[0]["fetched_at"], "2099-03-01T12:00:00+00:00");
     assert_eq!(manifest_raw[1]["status"], "no_epub");
     assert_eq!(manifest_raw[1]["reason"], "current_version_has_no_document");
 
@@ -685,7 +685,10 @@ fn main_loop_caches_authorised_metadata_handles_no_epub_and_rolls_back_upgrades(
     .unwrap();
     assert_eq!(manifest_cached[0]["status"], "cached");
     assert_eq!(manifest_cached[0]["isAuthorised"], true);
-    assert_eq!(manifest_cached[0]["fetched_at"], "2099-03-01T12:00:00Z");
+    assert_eq!(
+        manifest_cached[0]["fetched_at"],
+        "2099-03-01T12:00:00+00:00"
+    );
 
     // Failed upgrade restores prior EPUB, sidecar, and manifest, and logs bounded diagnostics only.
     let prior_epub = std::fs::read(co.epub.join("F2020L01498.epub")).unwrap();

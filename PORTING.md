@@ -40,8 +40,9 @@ the transfer limits, HTTPS-only redirects, rollback failures and a full 9-Act
   the error (`URLError`, `IncompleteRead`) where Python gave curl's exit status.
 - **`fetched_at` precision.** Download times are recorded to the second, as
   `2026-11-26T00:00:00+00:00`; Python's `isoformat()` added microseconds.
-- **`quick` and `FADDEN_BIN`.** `quick` runs its local stages with the build
-  `FADDEN_BIN` names, else with itself.
+- **`quick`'s local stages.** They run as child processes of the same build.
+  `python -m fadden quick` still picks that build as before (`FADDEN_BIN`, a
+  checkout build, then `PATH`).
 
 ## What stays in Python
 

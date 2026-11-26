@@ -458,16 +458,15 @@ pub fn run_cli(
 /// CLI entrypoint (`python -m fadden quick`).
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     let module = module_dir();
-    // Local stages run in a child process of this binary, or of the build
-    // FADDEN_BIN names, as `python -m fadden quick` ran them. The path only
-    // chooses which build runs them; nothing is trusted because of it.
+    // Local stages run in child processes of this same build, as Python's
+    // quick ran the build `python -m fadden` chose. The path only re-runs
+    // this program; nothing is trusted because of it.
     // nosemgrep: rust.lang.security.current-exe.current-exe
     let own = std::env::current_exe();
-    let binary = std::env::var("FADDEN_BIN")
-        .ok()
-        .filter(|named| !named.is_empty())
-        .or_else(|| own.ok().map(|p| p.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "fadden".to_string());
+    let binary = own.map_or_else(
+        |_| "fadden".to_string(),
+        |p| p.to_string_lossy().into_owned(),
+    );
     let mut http = http::connect();
     let mut runner_run = Run::default();
     let code = {

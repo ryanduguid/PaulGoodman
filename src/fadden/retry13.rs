@@ -192,42 +192,74 @@ fn merge_patches(manifest: &mut [Json], patches: &[Json]) -> usize {
     merged
 }
 
-/// Recover every title in `todo`, then publish the patch and the manifest.
-fn recover_all(
-    http: &mut dyn Http,
-    paths: (&str, &str, &str),
-    todo: &[Json],
-    probe: &HashMap<String, Json>,
-    manifest: &mut Vec<Json>,
+/// Shared state of one retry13 run: inputs, the patches made and the rollback journal.
+struct Retry<'a> {
+    http: &'a mut dyn Http,
+    scratch: &'a str,
+    epub_dir: &'a str,
+    manifest_path: &'a str,
+    probe: HashMap<String, Json>,
     delay: f64,
-    out: (&mut Vec<Json>, &mut Vec<Snapshot>, &mut Run),
-) -> Result<usize, Exc> {
-    let (scratch, epub_dir, manifest_path) = paths;
-    let (patches, snapshots, run) = out;
-    let total = todo.len();
-    for (idx, a) in todo.iter().enumerate() {
-        let (rec, size) = recover(http, a, probe, epub_dir, snapshots)?;
-        let rid = py_str(getitem(&rec, "id")?);
-        patches.push(rec);
-        let name = py_str(getitem(a, "name")?);
-        run.print(&format!(
-            "{:2}/{total:2} {rid:<12} {:<22} {size:9}  {}",
-            idx + 1,
-            "OK",
-            head_str(&name, 50)
-        ));
-        http.sleep(delay);
+    run: &'a mut Run,
+    patches: Vec<Json>,
+    snapshots: Vec<Snapshot>,
+}
+
+impl Retry<'_> {
+    /// Recover every title in `todo`, then publish the patch and the manifest.
+    fn recover_all(&mut self, todo: &[Json], manifest: &mut Vec<Json>) -> Result<usize, Exc> {
+        let total = todo.len();
+        for (idx, a) in todo.iter().enumerate() {
+            let (rec, size) = recover(
+                self.http,
+                a,
+                &self.probe,
+                self.epub_dir,
+                &mut self.snapshots,
+            )?;
+            let rid = py_str(getitem(&rec, "id")?);
+            self.patches.push(rec);
+            let name = py_str(getitem(a, "name")?);
+            self.run.print(&format!(
+                "{:2}/{total:2} {rid:<12} {:<22} {size:9}  {}",
+                idx + 1,
+                "OK",
+                head_str(&name, 50)
+            ));
+            self.http.sleep(self.delay);
+        }
+        let merged = merge_patches(manifest, &self.patches);
+        let patch_target = pypath::join(self.scratch, "retry13_patch.json");
+        let snapshot = snapshot_paths(&[&patch_target, self.manifest_path])?;
+        self.snapshots.push(snapshot);
+        let patch_doc = Json::Array(self.patches.clone());
+        write_json_atomic(&patch_target, &patch_doc, Some(1), OUTPUT_DEPTH)?;
+        if !self.patches.is_empty() {
+            let doc = Json::Array(std::mem::take(manifest));
+            write_json_atomic(self.manifest_path, &doc, Some(1), OUTPUT_DEPTH)?;
+        }
+        Ok(merged)
     }
-    let merged = merge_patches(manifest, patches);
-    let patch_target = pypath::join(scratch, "retry13_patch.json");
-    snapshots.push(snapshot_paths(&[&patch_target, manifest_path])?);
-    let patch_doc = Json::Array(patches.clone());
-    write_json_atomic(&patch_target, &patch_doc, Some(1), OUTPUT_DEPTH)?;
-    if !patches.is_empty() {
-        let doc = Json::Array(std::mem::take(manifest));
-        write_json_atomic(manifest_path, &doc, Some(1), OUTPUT_DEPTH)?;
+
+    /// Drop the rollback copies and print the run's summary.
+    fn commit(self, total: usize, merged: usize) {
+        let leftovers = discard_snapshots(&self.snapshots);
+        if !leftovers.is_empty() {
+            let count = leftovers.len();
+            self.run.print(&format!(
+                "WARNING retained {count} rollback file(s) after commit"
+            ));
+        }
+        let recovered = self.patches.len();
+        self.run
+            .print(&format!("\nrecovered {recovered} / {total}"));
+        if recovered > 0 {
+            let suffix = if merged == 1 { "y" } else { "ies" };
+            self.run.print(&format!(
+                "patched {merged} entr{suffix} in manifest_raw.json"
+            ));
+        }
     }
-    Ok(merged)
 }
 
 /// Run retry13 with explicit `Http`, `scratch`, `epub_dir` and `delay`.
@@ -245,14 +277,21 @@ pub fn run(
     let mut manifest = iterate(&manifest_val)?;
     let todo = retryable(&manifest, &probe)?;
     run.print(&format!("retrying {} titles", todo.len()));
-    let mut patches = Vec::new();
-    let mut snapshots = Vec::new();
-    let paths = (scratch, epub_dir, manifest_path.as_str());
-    let out = (&mut patches, &mut snapshots, &mut *run);
-    let merged = match recover_all(http, paths, &todo, &probe, &mut manifest, delay, out) {
+    let mut retry = Retry {
+        http,
+        scratch,
+        epub_dir,
+        manifest_path: &manifest_path,
+        probe,
+        delay,
+        run,
+        patches: Vec::new(),
+        snapshots: Vec::new(),
+    };
+    let merged = match retry.recover_all(&todo, &mut manifest) {
         Ok(merged) => merged,
         Err(err) => {
-            if rollback_snapshots(&snapshots).is_err() {
+            if rollback_snapshots(&retry.snapshots).is_err() {
                 return Err(Exc::Runtime(
                     "retry failed and rollback was incomplete".into(),
                 ));
@@ -260,20 +299,7 @@ pub fn run(
             return Err(err);
         }
     };
-    let leftovers = discard_snapshots(&snapshots);
-    if !leftovers.is_empty() {
-        let count = leftovers.len();
-        run.print(&format!(
-            "WARNING retained {count} rollback file(s) after commit"
-        ));
-    }
-    run.print(&format!("\nrecovered {} / {}", patches.len(), todo.len()));
-    if !patches.is_empty() {
-        let suffix = if merged == 1 { "y" } else { "ies" };
-        run.print(&format!(
-            "patched {merged} entr{suffix} in manifest_raw.json"
-        ));
-    }
+    retry.commit(todo.len(), merged);
     Ok(())
 }
 

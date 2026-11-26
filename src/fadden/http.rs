@@ -1192,117 +1192,162 @@ impl Body {
         out: &mut W,
         max_bytes: u64,
     ) -> io::Result<(bool, Option<String>)> {
-        let mut written = 0u64;
-        let mut buf = [0u8; 65_536];
-        let fail_name = |f: Failure| match f {
-            Failure::Transport(name) => name,
-            Failure::Uncaught { class, .. } => class.to_string(),
-            Failure::Status(code) => format!("HTTP{code}"),
+        let mut sink = Sink {
+            out,
+            written: 0,
+            max_bytes,
         };
         if self.chunked {
-            let mut first = true;
-            loop {
-                if !first && let Err(e) = safe_read(&mut self.wire, 2) {
-                    let _ = out.flush();
-                    return Ok((false, Some(fail_name(e))));
-                }
-                first = false;
-                let line = match read_line(&mut self.wire) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        let _ = out.flush();
-                        return Ok((false, Some(fail_name(e))));
-                    }
-                };
-                if line.len() > MAXLINE {
-                    let _ = out.flush();
-                    return Ok((false, Some("LineTooLong".into())));
-                }
-                let Some(size) = chunk_size(&line).filter(|&s| s >= 0) else {
-                    let _ = out.flush();
-                    return Ok((false, Some("IncompleteRead".into())));
-                };
-                if size == 0 {
-                    if let Err(e) = self.discard_trailer() {
-                        let _ = out.flush();
-                        return Ok((false, Some(fail_name(e))));
-                    }
-                    out.flush()?;
-                    return Ok((false, None));
-                }
-                let mut left = u128::try_from(size).unwrap_or(u128::MAX);
-                while left > 0 {
-                    let room = max_bytes.saturating_add(1).saturating_sub(written);
-                    if room == 0 {
-                        out.flush()?;
-                        return Ok((true, None));
-                    }
-                    let want = usize::try_from(left.min(u128::from(room)).min(65_536)).unwrap();
-                    match self.wire.read(&mut buf[..want]) {
-                        Ok(0) => {
-                            let _ = out.flush();
-                            return Ok((false, Some("IncompleteRead".into())));
-                        }
-                        Ok(n) => {
-                            out.write_all(&buf[..n])?;
-                            written += n as u64;
-                            left -= n as u128;
-                            if written > max_bytes {
-                                out.flush()?;
-                                return Ok((true, None));
-                            }
-                        }
-                        Err(e) => {
-                            let _ = out.flush();
-                            return Ok((false, Some(fail_name(os_error(&e)))));
-                        }
-                    }
-                }
-            }
+            self.stream_chunked(&mut sink)
         } else {
-            let mut wire_read = 0u64;
-            loop {
-                let room = max_bytes.saturating_add(1).saturating_sub(written);
-                if room == 0 {
-                    out.flush()?;
-                    return Ok((true, None));
+            self.stream_plain(&mut sink)
+        }
+    }
+
+    /// A chunked body: each chunk in turn, then the trailer.
+    fn stream_chunked<W: Write>(&mut self, sink: &mut Sink<'_, W>) -> io::Result<Streamed> {
+        let mut first = true;
+        loop {
+            if !first && let Err(e) = safe_read(&mut self.wire, 2) {
+                return Ok(sink.failed(fail_name(e)));
+            }
+            first = false;
+            let line = match read_line(&mut self.wire) {
+                Ok(l) => l,
+                Err(e) => return Ok(sink.failed(fail_name(e))),
+            };
+            if line.len() > MAXLINE {
+                return Ok(sink.failed("LineTooLong".into()));
+            }
+            let Some(size) = chunk_size(&line).filter(|&s| s >= 0) else {
+                return Ok(sink.failed("IncompleteRead".into()));
+            };
+            if size == 0 {
+                if let Err(e) = self.discard_trailer() {
+                    return Ok(sink.failed(fail_name(e)));
                 }
-                let want = match self.length {
-                    Some(len) => {
-                        let rem = len.saturating_sub(wire_read);
-                        if rem == 0 {
-                            break;
-                        }
-                        rem.min(room).min(65_536) as usize
+                sink.out.flush()?;
+                return Ok((false, None));
+            }
+            let left = u128::try_from(size).unwrap_or(u128::MAX);
+            if let Some(done) = self.copy_chunk(sink, left)? {
+                return Ok(done);
+            }
+        }
+    }
+
+    /// Copy one chunk of `left` bytes; `Some` when the stream ends here.
+    fn copy_chunk<W: Write>(
+        &mut self,
+        sink: &mut Sink<'_, W>,
+        mut left: u128,
+    ) -> io::Result<Option<Streamed>> {
+        let mut buf = [0u8; 65_536];
+        while left > 0 {
+            let room = sink.room();
+            if room == 0 {
+                sink.out.flush()?;
+                return Ok(Some((true, None)));
+            }
+            let want = usize::try_from(left.min(u128::from(room)).min(65_536)).unwrap();
+            match self.wire.read(&mut buf[..want]) {
+                Ok(0) => return Ok(Some(sink.failed("IncompleteRead".into()))),
+                Ok(n) => {
+                    left -= n as u128;
+                    if sink.write(&buf[..n])? {
+                        return Ok(Some((true, None)));
                     }
-                    None => room.min(65_536) as usize,
-                };
-                match self.wire.read(&mut buf[..want]) {
-                    Ok(0) => {
-                        if self.length.is_some_and(|len| wire_read < len) {
-                            let _ = out.flush();
-                            return Ok((false, Some("IncompleteRead".into())));
-                        }
+                }
+                Err(e) => return Ok(Some(sink.failed(fail_name(os_error(&e))))),
+            }
+        }
+        Ok(None)
+    }
+
+    /// A body of known length, or one that runs to the end of the connection.
+    fn stream_plain<W: Write>(&mut self, sink: &mut Sink<'_, W>) -> io::Result<Streamed> {
+        let mut buf = [0u8; 65_536];
+        let mut wire_read = 0u64;
+        loop {
+            let room = sink.room();
+            if room == 0 {
+                sink.out.flush()?;
+                return Ok((true, None));
+            }
+            let want = match self.length {
+                Some(len) => {
+                    let rem = len.saturating_sub(wire_read);
+                    if rem == 0 {
                         break;
                     }
-                    Ok(n) => {
-                        out.write_all(&buf[..n])?;
-                        written += n as u64;
-                        wire_read += n as u64;
-                        if written > max_bytes {
-                            out.flush()?;
-                            return Ok((true, None));
-                        }
+                    rem.min(room).min(65_536) as usize
+                }
+                None => room.min(65_536) as usize,
+            };
+            match self.wire.read(&mut buf[..want]) {
+                Ok(0) => {
+                    if self.length.is_some_and(|len| wire_read < len) {
+                        return Ok(sink.failed("IncompleteRead".into()));
                     }
-                    Err(e) => {
-                        let _ = out.flush();
-                        return Ok((false, Some(fail_name(os_error(&e)))));
+                    break;
+                }
+                Ok(n) => {
+                    wire_read += n as u64;
+                    if sink.write(&buf[..n])? {
+                        return Ok((true, None));
                     }
                 }
+                Err(e) => return Ok(sink.failed(fail_name(os_error(&e)))),
             }
-            out.flush()?;
-            Ok((false, None))
         }
+        sink.out.flush()?;
+        Ok((false, None))
+    }
+}
+
+/// What `stream_to` reports: whether the body ran past the budget, and the
+/// transport error that cut it short, if any.
+type Streamed = (bool, Option<String>);
+
+/// Where a streamed body goes, with the count written against its budget.
+struct Sink<'a, W: Write> {
+    out: &'a mut W,
+    written: u64,
+    max_bytes: u64,
+}
+
+impl<W: Write> Sink<'_, W> {
+    /// Bytes still accepted before the budget is exceeded by one.
+    fn room(&self) -> u64 {
+        self.max_bytes
+            .saturating_add(1)
+            .saturating_sub(self.written)
+    }
+
+    /// Write `bytes`; true once more than the budget has been written (flushed).
+    fn write(&mut self, bytes: &[u8]) -> io::Result<bool> {
+        self.out.write_all(bytes)?;
+        self.written += bytes.len() as u64;
+        if self.written > self.max_bytes {
+            self.out.flush()?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Keep what arrived and report the transport error `name`.
+    fn failed(&mut self, name: String) -> Streamed {
+        let _ = self.out.flush();
+        (false, Some(name))
+    }
+}
+
+/// The name a streaming failure reports.
+fn fail_name(f: Failure) -> String {
+    match f {
+        Failure::Transport(name) => name,
+        Failure::Uncaught { class, .. } => class.to_string(),
+        Failure::Status(code) => format!("HTTP{code}"),
     }
 }
 
@@ -1967,6 +2012,21 @@ mod fake {
         }
     }
 
+    /// Write a scripted body to `part`, appending for a resumed transfer.
+    fn write_part(part: &str, body: &[u8], append: bool) -> Result<(), Failure> {
+        let mut file = if append {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(part)
+        } else {
+            std::fs::File::create(part)
+        }
+        .map_err(|e| super::os_error(&e))?;
+        file.write_all(body).map_err(|e| super::os_error(&e))?;
+        file.flush().map_err(|e| super::os_error(&e))
+    }
+
     fn bytes(value: Option<&Json>) -> Vec<u8> {
         value
             .and_then(|v| match v {
@@ -2103,19 +2163,8 @@ mod fake {
             let exceeds_budget = body.len() as u64 > max_bytes;
             if !missing_body {
                 let cap = usize::try_from(max_bytes.saturating_add(1)).unwrap_or(usize::MAX);
-                let slice = &body[..body.len().min(cap)];
                 let append = range_start.is_some() && status == 206;
-                let mut file = if append {
-                    std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(part)
-                } else {
-                    std::fs::File::create(part)
-                }
-                .map_err(|e| super::os_error(&e))?;
-                file.write_all(slice).map_err(|e| super::os_error(&e))?;
-                file.flush().map_err(|e| super::os_error(&e))?;
+                write_part(part, &body[..body.len().min(cap)], append)?;
             }
             let transport_error = next
                 .get("read_error")
