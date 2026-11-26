@@ -96,9 +96,9 @@ rustup toolchain install
 cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked
+cargo build --locked
 cargo test --locked --features fake-http --test fadden_golden --test fadden_download --test fadden_retry13 --test fadden_quick
 cargo build --locked --release
-cargo build --locked
 cargo audit && cargo audit --file fuzz/Cargo.lock
 cargo deny --locked check licenses sources
 uv run --locked --extra dev ruff check .

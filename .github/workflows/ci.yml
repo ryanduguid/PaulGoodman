@@ -254,6 +254,20 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked
+      # The demo's debug build reuses the default-feature test artefacts, so it runs
+      # before the fake-http tests rebuild them with that feature. The samples ship in
+      # the repository beside the binary; run the demo from a directory outside
+      # the checkout so nothing resolves relative to it.
+      - run: cargo build --locked
+      - name: run the binary on the samples from outside the checkout
+        shell: bash
+        run: |
+          bin="$PWD/target/debug/tax-radar-au"
+          samples="$PWD/samples"
+          demo="$(mktemp -d)"
+          cd "$demo"
+          "$bin" compare --baseline "$samples/baseline/sample-sources.json" --observation "$samples/observations/sample-register-observation.json" --map "$samples/mappings/sample-source-skill-map.json" --out demo
+          "$bin" validate-review --queue demo/impact-queue.json --decision "$samples/decisions/sample-technical-review.json" --out demo/validation.json
       # The Python-parity fixtures and the download, retry13 and quick tests that
       # fetch need the scripted responses; the default run covers the rest.
       - run: cargo test --locked --features fake-http --test fadden_golden --test fadden_download --test fadden_retry13 --test fadden_quick
@@ -271,19 +285,6 @@ jobs:
             target/release/fadden
           if-no-files-found: error
           retention-days: 1
-      # The demo's debug build reuses the tests' artefacts. The samples ship in
-      # the repository beside the binary; run the demo from a directory outside
-      # the checkout so nothing resolves relative to it.
-      - run: cargo build --locked
-      - name: run the binary on the samples from outside the checkout
-        shell: bash
-        run: |
-          bin="$PWD/target/debug/tax-radar-au"
-          samples="$PWD/samples"
-          demo="$(mktemp -d)"
-          cd "$demo"
-          "$bin" compare --baseline "$samples/baseline/sample-sources.json" --observation "$samples/observations/sample-register-observation.json" --map "$samples/mappings/sample-source-skill-map.json" --out demo
-          "$bin" validate-review --queue demo/impact-queue.json --decision "$samples/decisions/sample-technical-review.json" --out demo/validation.json
       - if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:

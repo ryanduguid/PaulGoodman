@@ -289,6 +289,18 @@ class PostMergeNamingTests(unittest.TestCase):
         llms = (REPO / "llms.txt").read_text(encoding="utf-8")
         self.assertIn("- **Version**: %s, released as the tag `v%s`." % (version, version), llms)
 
+    def test_every_manifest_declares_the_release_version(self):
+        """Cargo.toml said 1.0.0 whilst VERSION, pyproject.toml and the tags
+        said 0.9.0, so the Rust binaries and their build records claimed a
+        release that was never cut."""
+        version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+        for name in ("pyproject.toml", "Cargo.toml"):
+            with self.subTest(manifest=name):
+                manifest = (REPO / name).read_text(encoding="utf-8")
+                declared = re.search(r'^version = "([^"]+)"$', manifest, flags=re.M)
+                self.assertIsNotNone(declared)
+                self.assertEqual(declared.group(1), version)
+
     def test_no_document_sends_a_reader_to_the_archived_repository(self):
         """README.md linked the consumer half to the repository it merged out
         of rather than to RADAR.md beside it."""

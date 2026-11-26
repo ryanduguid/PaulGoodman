@@ -227,6 +227,18 @@ fn robots_rules_follow_the_longest_match_and_the_agents_own_group() {
 }
 
 #[test]
+fn an_empty_user_agent_line_names_no_robot() {
+    // Every string contains "", so an empty agent once claimed this group as
+    // ours and displaced the `*` group.
+    let robots = Robots::parse(
+        "User-agent: *\nDisallow: /secret\n\nUser-agent:\nDisallow: /\nCrawl-delay: 30\n",
+    );
+    assert!(robots.allows("/view/whole/xml/inforce/current/x"));
+    assert!(!robots.allows("/secret/x"));
+    assert_eq!(robots.crawl_delay, None);
+}
+
+#[test]
 fn the_stage_writes_a_corpus_that_search_build_reads() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("qld");
