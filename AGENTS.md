@@ -80,6 +80,7 @@ The fenced list records the unique single-line commands. The multiline binary-sm
 is reproduced exactly in the next section.
 ```bash
 chmod +x target/release/tax-radar-au target/release/fadden
+./.github/ci/check-manifest-md.ps1
 uv run --locked --extra dev pytest tests
 uv run --locked --extra dev pytest tests/corpus/test_live_evidence_bundle_export.py tests/corpus/test_live_evidence_publication_paths.py
 uv run --locked --extra dev coverage run --branch --source=fadden -m pytest tests
