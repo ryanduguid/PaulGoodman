@@ -24,7 +24,7 @@ Issues = "https://github.com/ryanduguid/PaulGoodman/issues"
 
 [project.optional-dependencies]
 dev = [
-    "ruff>=0.11", "mypy>=1.14", "build>=1.2", "pytest>=8", "coverage==7.17.2"]
+    "ruff>=0.11", "mypy>=1.14", "build>=1.2", "pytest>=8", "coverage==7.17.3"]
 
 [tool.setuptools]
 # The distribution name stays tax-radar-au: nothing consumes it on PyPI, and
@@ -73,8 +73,11 @@ source = ["fadden", "*/fadden", "*\\fadden"]
 # lines (181 before the UTF-16 name-length fix) predate the Rust port; moving
 # stages to the Rust fadden binary removed about 2,500 covered Python
 # statements, which lowered the total from 97% to 94%. Removing discover,
-# versions, extract and finalize took out 926 more, leaving 92.07%.
-fail_under = 92
+# versions, extract and finalize took out 926 more, leaving 92.07%. Porting
+# download, retry13 and quick removed 3 more fully covered modules, so the same
+# 182 Windows-only lines weigh more: the ubuntu leg measured 90% (1,883
+# statements, 182 missed), with the merged total still 100%.
+fail_under = 90
 exclude_also = ['if __name__ == "__main__":']
 
 [tool.mypy]

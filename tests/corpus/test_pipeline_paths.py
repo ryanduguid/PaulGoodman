@@ -101,62 +101,6 @@ class AtomicTextWriterTests(TemporaryDirectoryTestCase):
         self.assertIs(error.__cause__, cleanup)
 
 
-class Retry13Tests(TemporaryDirectoryTestCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.retry13 = regressions.load_module("retry13_paths", STAGE / "retry13.py")
-        self.retry13.SCRATCH = str(self.base)
-        self.retry13.EPUB_DIR = str(self.base / "epub")
-        (self.base / "epub").mkdir()
-        self.manifest = [{"id": RID, "name": "Synthetic Tax Act", "epub": None,
-                          "versionStart": "2099-03-01"}]
-        (self.base / "manifest_raw.json").write_text(json.dumps(self.manifest), encoding="utf-8")
-
-    def write_probe(self, entries: list[dict[str, object]]) -> None:
-        (self.base / "probe13.json").write_text(json.dumps(entries), encoding="utf-8")
-
-    def recoverable(self) -> None:
-        self.write_probe([{"id": RID, "latest_doc": {
-            "start": "2099-01-01T00:00:00", "compilationNumber": "2", "registerId": "C2099C00002"}}])
-
-    @staticmethod
-    def fetch(_url: str, destination: str) -> tuple[bool, str, str, int, None]:
-        Path(destination).write_bytes(b"PK-fake-epub")
-        return True, "200", "application/epub+zip", 12, None
-
-    def test_nothing_to_retry_writes_only_the_empty_audit_record(self) -> None:
-        self.write_probe([])
-        stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            self.retry13.main()
-        self.assertEqual(json.loads((self.base / "retry13_patch.json").read_text(encoding="utf-8")), [])
-        self.assertEqual(json.loads((self.base / "manifest_raw.json").read_text(encoding="utf-8")),
-                         self.manifest)
-        self.assertIn("recovered 0 / 0", stdout.getvalue())
-        self.assertNotIn("patched", stdout.getvalue())
-
-    def test_retained_rollback_files_are_reported(self) -> None:
-        self.recoverable()
-        stdout = io.StringIO()
-        with mock.patch.object(self.retry13.dl, "fetch", self.fetch), \
-                mock.patch.object(self.retry13.dl, "CRAWL_DELAY", 0), \
-                mock.patch.object(self.retry13.dl, "discard_snapshots", return_value=["kept"]), \
-                contextlib.redirect_stdout(stdout):
-            self.retry13.main()
-        self.assertIn("WARNING retained 1 rollback file(s) after commit", stdout.getvalue())
-        self.assertIn("patched 1 entry in manifest_raw.json", stdout.getvalue())
-
-    def test_an_incomplete_rollback_is_reported_over_the_original_failure(self) -> None:
-        self.recoverable()
-        rollback_error = OSError(5, "simulated rollback failure")
-        with mock.patch.object(self.retry13.dl, "fetch", side_effect=OSError("network down")), \
-                mock.patch.object(self.retry13.dl, "rollback_snapshots", side_effect=rollback_error), \
-                contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(RuntimeError, "retry failed and rollback was incomplete") as caught:
-                self.retry13.main()
-        self.assertIs(caught.exception.__cause__, rollback_error)
-
-
 class CheckCurrentTests(TemporaryDirectoryTestCase):
     """Every lookup outcome of the staleness check, from the checkout's own source."""
 

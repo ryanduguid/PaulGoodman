@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fadden import corpus_paths, download
+from fadden import corpus_paths
 
 from tests.corpus import test_regressions as regressions
 
@@ -33,24 +33,6 @@ class PathAndWriteTests(unittest.TestCase):
             (flat / "sources.json").write_text("{}", encoding="utf-8")
             corpus_paths.require_builder_layout(flat / "check_current.py")
 
-    def test_unpublished_title_preserves_an_unowned_fixed_temporary_file(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            epub = root / "epub"
-            epub.mkdir()
-            foreign = epub / "C2099A00001.epub.meta.json.tmp"
-            foreign.write_bytes(b"unowned")
-            (root / "acts_resolved.json").write_text(json.dumps([{
-                "id": "C2099A00001", "name": "Synthetic unpublished title", "versionStart": "2099-01-01",
-                "compilationRegisterId": None,
-            }]), encoding="utf-8")
-            with mock.patch.object(download, "SCRATCH", str(root)), \
-                    mock.patch.object(download, "EPUB_DIR", str(epub)), \
-                    mock.patch.object(download, "fetch") as fetch, contextlib.redirect_stdout(io.StringIO()):
-                download.main()
-            self.assertEqual(foreign.read_bytes(), b"unowned")
-            fetch.assert_not_called()
-
     def test_network_stages_reject_filter_injection_before_requesting(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -60,33 +42,10 @@ class PathAndWriteTests(unittest.TestCase):
             (root / "sources.json").write_text(json.dumps({
                 "retrieved": "2099-01-01", "titles": [{"register_id": injected}]
             }), encoding="utf-8")
-            with mock.patch.object(module, "fetch_json") as fetch, \
-                    mock.patch.object(sys, "argv", ["check_current"]), contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(module, "fetch_json") as fetch,                     mock.patch.object(sys, "argv", ["check_current"]), contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(ValueError):
                     module.main()
             fetch.assert_not_called()
-
-    def test_bad_download_dates_never_reach_fetch_or_change_existing_documents(self):
-        for name in ("download", "retry13"):
-            with self.subTest(stage=name), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                module = regressions.load_module("date_url_" + name, STAGE / (name + ".py"))
-                module.SCRATCH = str(root)
-                module.EPUB_DIR = str(root / "epub")
-                item = {"id": "C2099A00001", "name": "Synthetic", "epub": None,
-                        "versionStart": "2099-01-01/../../unexpected", "compilationRegisterId": "C2099C00001"}
-                (root / ("acts_resolved.json" if name == "download" else "manifest_raw.json")).write_text(
-                    json.dumps([item]), encoding="utf-8")
-                if name == "retry13":
-                    (root / "probe13.json").write_text(json.dumps([{
-                        "id": item["id"], "latest_doc": {"start": "2099-01-01/../../unexpected", "registerId": "C2099C00001"}
-                    }]), encoding="utf-8")
-                owner = module if name == "download" else module.dl
-                with mock.patch.object(owner, "fetch") as fetch, contextlib.redirect_stdout(io.StringIO()):
-                    with self.assertRaises(ValueError):
-                        module.main()
-                fetch.assert_not_called()
-                self.assertEqual(list((root / "epub").glob("*")), [])
 
     def test_identifiers_and_complete_dates_are_checked(self):
         for value in ("C2099A00001' or true", "C２０９９A00001", "../C2099A00001", None):
@@ -97,6 +56,13 @@ class PathAndWriteTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 corpus_paths.version_date(value)
         self.assertEqual(corpus_paths.version_date("2099-01-01T00:00:00.1234567Z"), "2099-01-01")
+        for value in ("2099-1-01", "2099-01-01T00:00:00Z", None):
+            with self.subTest(day=value), self.assertRaises(ValueError):
+                corpus_paths.iso_date(value)
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "out.json"
+            corpus_paths.write_json_atomic(target, {"a": [1]}, indent=1)
+            self.assertEqual(target.read_text(encoding="utf-8"), '{\n "a": [\n  1\n ]\n}')
         # A missing registerId is an API failure; only an explicit null means no document.
         with self.assertRaises(ValueError):
             corpus_paths.compilation_id({})
@@ -120,18 +86,16 @@ class PathAndWriteTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "complete replacement\n")
 
     def test_installed_locations_refuse_legacy_stages_before_side_effects(self):
-        for name in ("download", "retry13", "check_current"):
-            module = regressions.load_module("installed_guard_" + name, STAGE / (name + ".py"))
-            with self.subTest(stage=name), tempfile.TemporaryDirectory() as temporary, \
-                    mock.patch.object(module, "__file__", str(Path(temporary) / "fadden" / (name + ".py"))):
-                with self.assertRaisesRegex(RuntimeError, "source checkout"):
-                    module.main()
-                self.assertEqual(list(Path(temporary).iterdir()), [])
+        module = regressions.load_module("installed_guard_check_current", STAGE / "check_current.py")
+        with tempfile.TemporaryDirectory() as temporary,                 mock.patch.object(module, "__file__", str(Path(temporary) / "fadden" / "check_current.py")):
+            with self.assertRaisesRegex(RuntimeError, "source checkout"):
+                module.main()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
 
     def test_clean_package_imports_ignore_bare_helper_modules(self):
         with tempfile.TemporaryDirectory() as temporary:
             hostile = Path(temporary)
-            for name in ("corpus_paths", "download", "http_fetch"):
+            for name in ("corpus_paths", "http_fetch"):
                 (hostile / (name + ".py")).write_text('raise AssertionError("bare helper imported")\n', encoding="utf-8")
             script = ("import sys, importlib; sys.path[:0] = " + repr([str(REPOSITORY), str(hostile)]) +
                       "; before = list(sys.path); from fadden import STAGES; import fadden.__main__; "
