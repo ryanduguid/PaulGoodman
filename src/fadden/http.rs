@@ -1108,6 +1108,15 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
+/// Whether a 206's `Content-Range` (`bytes <first>-<last>/<total>`) starts at `offset`.
+fn resumes_at(headers: &[(String, String)], offset: u64) -> bool {
+    header(headers, "content-range")
+        .and_then(|value| value.trim().strip_prefix("bytes "))
+        .and_then(|range| range.split_once('-'))
+        .and_then(|(first, _)| first.trim().parse::<u64>().ok())
+        == Some(offset)
+}
+
 /// An `HTTPResponse`'s unread body and its framing.
 struct Body {
     wire: BufReader<Stream>,
@@ -1763,6 +1772,12 @@ impl Http for Net {
             .unwrap_or_default()
             .to_owned();
         let append = range_start.is_some() && opened.status == 206;
+        if append && !resumes_at(&opened.headers, range_start.unwrap_or_default()) {
+            // Like curl's range check: a 206 that does not start where the part
+            // ends cannot be appended, so the next attempt starts afresh.
+            std::fs::remove_file(part).map_err(|e| os_error(&e))?;
+            return Err(Failure::Transport("RangeError".into()));
+        }
         let mut file = if append {
             std::fs::OpenOptions::new()
                 .create(true)

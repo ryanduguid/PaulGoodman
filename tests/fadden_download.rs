@@ -877,8 +877,16 @@ fn loopback_net_download_handles_range_resume_budget_and_https_only_policy() {
                 );
             } else if req_text.to_ascii_lowercase().contains("range: bytes=8-") {
                 let tail = &p_clone[split..];
+                let total = p_clone.len();
+                let range = if req_text.starts_with("GET /resume-none ") {
+                    String::new()
+                } else if req_text.starts_with("GET /resume-wrong ") {
+                    format!("Content-Range: bytes 0-{}/{total}\r\n", total - 1)
+                } else {
+                    format!("Content-Range: bytes {split}-{}/{total}\r\n", total - 1)
+                };
                 let head = format!(
-                    "HTTP/1.1 206 Partial Content\r\nContent-Type: application/epub+zip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 206 Partial Content\r\nContent-Type: application/epub+zip\r\n{range}Content-Length: {}\r\nConnection: close\r\n\r\n",
                     tail.len()
                 );
                 let _ = stream.write_all(head.as_bytes());
@@ -912,6 +920,23 @@ fn loopback_net_download_handles_range_resume_budget_and_https_only_policy() {
     assert_eq!(t1.status, 200);
     assert_eq!(t1.transport_error.as_deref(), Some("IncompleteRead"));
     assert_eq!(std::fs::read(&part).unwrap(), &payload[..split]);
+
+    // A 206 with no Content-Range, or one starting elsewhere, is not appended:
+    // the part goes so the next attempt starts afresh.
+    for path in ["resume-none", "resume-wrong"] {
+        std::fs::write(&part, &payload[..split]).unwrap();
+        let err = net_download(
+            &format!("http://{addr}/{path}"),
+            &pstr,
+            1024 - split as u64,
+            Some(split as u64),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(err, Failure::Transport("RangeError".into()), "{path}");
+        assert!(!part.exists(), "{path}");
+    }
+    std::fs::write(&part, &payload[..split]).unwrap();
 
     // Attempt 2: Range: bytes=8- appends the rest via 206 Partial Content.
     let t2 = net_download(
