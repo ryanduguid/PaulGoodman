@@ -74,8 +74,10 @@ source = ["fadden", "*/fadden", "*\\fadden"]
 # stages to the Rust fadden binary removed about 2,500 covered Python
 # statements, which lowered the total from 97% to 94%. Removing discover,
 # versions, extract and finalize took out 926 more, leaving 92.07%. Porting
-# download, retry13 and quick removed 3 more covered modules, leaving about 89%.
-fail_under = 89
+# download, retry13 and quick removed 3 more fully covered modules, so the same
+# 182 Windows-only lines weigh more: the ubuntu leg measured 90% (1,883
+# statements, 182 missed), with the merged total still 100%.
+fail_under = 90
 exclude_also = ['if __name__ == "__main__":']
 
 [tool.mypy]
