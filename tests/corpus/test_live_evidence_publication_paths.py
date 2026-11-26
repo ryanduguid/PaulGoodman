@@ -1,7 +1,8 @@
 """Failure paths of the live-evidence publication transaction.
 
-The Windows classes drive the kernel32, ntdll and msvcrt calls that the Ubuntu
-coverage leg cannot reach. Failures that real files cannot produce are forced by
+The Windows classes drive the kernel32, ntdll and msvcrt calls: for real on
+Windows, and through tests/corpus/windows_fake.py elsewhere, so the Ubuntu
+coverage leg reaches them too. Failures that real files cannot produce are forced by
 replacing one kernel32 function, or one os call, at the point the exporter makes it.
 The platform-neutral classes run everywhere.
 """
@@ -9,7 +10,6 @@ The platform-neutral classes run everywhere.
 from __future__ import annotations
 
 import contextlib
-import ctypes
 import os
 import tempfile
 import unittest
@@ -21,10 +21,9 @@ from unittest import mock
 import fadden.export_live_evidence_bundles as export_module
 from fadden.export_live_evidence_bundles import LiveEvidenceBundleError
 
-WINDOWS = unittest.skipUnless(
-    os.name == "nt", "the publication transaction calls kernel32, ntdll and msvcrt"
-)
-_WINDLL = getattr(ctypes, "WinDLL", None)
+from . import windows_fake
+
+WINDOWS = windows_fake.windows
 _PREFIX = ".output.live-evidence-"
 
 
@@ -32,7 +31,7 @@ class _Library:
     """A loaded Windows library with chosen functions replaced."""
 
     def __init__(self, name: str, overrides: dict[str, Callable[..., int]]) -> None:
-        self._library = _WINDLL(name, use_last_error=True)
+        self._library = windows_fake.library(name)
         self._overrides = overrides
 
     def __getattr__(self, name: str) -> Any:
@@ -47,7 +46,7 @@ def _kernel32(**overrides: Callable[..., int]) -> Any:
 
 
 def _close_handle_then_fail(handle: object) -> int:
-    _WINDLL("kernel32", use_last_error=True).CloseHandle(handle)
+    windows_fake.library("kernel32").CloseHandle(handle)
     return 0
 
 
