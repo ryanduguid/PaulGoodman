@@ -68,6 +68,10 @@ jobs:
       - name: restore executable permissions on the downloaded binaries
         if: matrix.os == 'ubuntu-latest'
         run: chmod +x target/release/tax-radar-au target/release/fadden
+      - name: validate extracted manifest examples
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        shell: pwsh
+        run: ./.github/ci/check-manifest-md.ps1
       # No -q here: pyproject's addopts already sets it, and a second -q makes
       # it -qq, which drops the pass/fail count from the log. Without the count
       # a test file that stops being collected leaves every leg green.
@@ -286,7 +290,7 @@ jobs:
           tool: cargo-audit@0.22.2,cargo-deny@0.22.0
           fallback: none
       - if: matrix.os == 'ubuntu-latest'
-        run: cargo audit && cargo audit --file fuzz/Cargo.lock
+        run: cargo audit --deny unsound --deny yanked && cargo audit --deny unsound --deny yanked --file fuzz/Cargo.lock
       - if: matrix.os == 'ubuntu-latest'
         run: cargo deny --locked check licenses sources
 
