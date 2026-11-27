@@ -1242,37 +1242,6 @@ fn producer_version() -> Result<String, Exc> {
     Ok(version.to_string())
 }
 
-/// `_candidate_identity_pair(identity)`.
-fn candidate_pair(identity: &str) -> Result<(String, String), Exc> {
-    let invalid = || live_error("candidate identity is invalid.");
-    let inner = identity
-        .strip_prefix("bundle-frl-")
-        .and_then(|s| s.strip_suffix("-r1"))
-        .ok_or_else(invalid)?;
-    let lower_id = |s: &str| {
-        let b = s.as_bytes();
-        b.len() == 11
-            && b[0].is_ascii_lowercase()
-            && b[1..5].iter().all(u8::is_ascii_digit)
-            && b[5].is_ascii_lowercase()
-            && b[6..].iter().all(u8::is_ascii_digit)
-    };
-    let (first, second) = inner.split_once('-').ok_or_else(invalid)?;
-    if !lower_id(first) || !lower_id(second) {
-        return Err(invalid());
-    }
-    Ok((
-        register_id(
-            &Json::str(&first.to_uppercase()),
-            "candidate baseline identifier",
-        )?,
-        register_id(
-            &Json::str(&second.to_uppercase()),
-            "candidate document identifier",
-        )?,
-    ))
-}
-
 /// `_rights(checked_at)`.
 fn rights(checked_at: &Json) -> Result<Json, Exc> {
     let text = required_text(checked_at, "observation checked_at")?;
@@ -1347,15 +1316,15 @@ fn read_response(path: &str) -> Result<Vec<u8>, Exc> {
     Ok(response)
 }
 
-/// `_version_timestamp(value, label)`.
-fn version_timestamp(value: &Json, label: &str) -> Result<(), Exc> {
+/// `_version_timestamp(value, label)`: the text, once it is a valid instant.
+fn version_timestamp(value: &Json, label: &str) -> Result<P, Exc> {
     let text = required_text(value, label)?;
     iso::instant(&text, 7, Zone::Any).ok_or_else(|| live_error(format!("{label} is invalid.")))?;
-    Ok(())
+    Ok(text)
 }
 
-/// `_raw_current_row(response, register_id)`.
-fn raw_current_row(response: &[u8], register: &str) -> Result<Json, Exc> {
+/// `_raw_current_row(response, register_id)`: the row and its `start` text.
+fn raw_current_row(response: &[u8], register: &str) -> Result<(Json, P), Exc> {
     let ambiguous = || live_error("retained response is not unambiguous OData JSON.");
     let text = std::str::from_utf8(response).map_err(|_| ambiguous())?;
     let document = pyjson::loads(text).map_err(|error| match error {
@@ -1363,16 +1332,16 @@ fn raw_current_row(response: &[u8], register: &str) -> Result<Json, Exc> {
         DecodeError::Invalid(message) if !message.starts_with("Exceeds the limit") => ambiguous(),
         other => super::json_error(other),
     })?;
-    let one_row = matches!(get(&document, "value"), Json::Array(rows) if rows.len() == 1);
+    let rows = match get(&document, "value") {
+        Json::Array(rows) if rows.len() == 1 => rows.as_slice(),
+        _ => &[],
+    };
     if !document.has_exactly(&["@odata.context", "value"])
         || !is(get(&document, "@odata.context"), &odata_context())
-        || !one_row
+        || rows.is_empty()
     {
         return Err(live_error("retained response OData shape is invalid."));
     }
-    let Json::Array(rows) = get(&document, "value") else {
-        unreachable!("checked above")
-    };
     let row = rows[0].clone();
     if !row.has_exactly(&ROW_FIELDS) {
         return Err(live_error("retained response OData row is invalid."));
@@ -1395,12 +1364,12 @@ fn raw_current_row(response: &[u8], register: &str) -> Result<Json, Exc> {
         get(&row, "compilationNumber"),
         "raw current compilation number",
     )?;
-    version_timestamp(get(&row, "start"), "raw current compilation start")?;
+    let start = version_timestamp(get(&row, "start"), "raw current compilation start")?;
     version_timestamp(
         get(&row, "registeredAt"),
         "raw current registration timestamp",
     )?;
-    Ok(row)
+    Ok((row, start))
 }
 
 /// The run facts every candidate shares.
@@ -1479,11 +1448,7 @@ fn candidate_bundle(
             "candidate primary response media type is invalid.",
         ));
     }
-    let raw_row = raw_current_row(response, &register)?;
-    let start = match get(&raw_row, "start") {
-        Json::Str(s) => s.code_points(),
-        _ => Vec::new(),
-    };
+    let (raw_row, start) = raw_current_row(response, &register)?;
     let start_date = Json::Str(PyStr::from_code_points(
         start[..start.len().min(10)].to_vec(),
     ));
@@ -1512,7 +1477,6 @@ fn candidate_bundle(
         register.to_lowercase(),
         document.to_lowercase()
     );
-    candidate_pair(&bundle_id)?;
     let rights = rights(get(&bundle_observation, "checked_at"))?;
     let object = |pairs: Vec<(&str, Json)>| {
         Json::Object(
@@ -1690,7 +1654,6 @@ fn build_validated_snapshot(capture: &str) -> Result<(String, Vec<(String, Json)
             )?)),
         };
         let candidate = candidate_bundle(title, result, observation, &run, &response)?;
-        candidate_pair(&candidate.0)?;
         if candidates.iter().any(|(k, _)| *k == candidate.0) {
             return Err(live_error("candidate identity is duplicated."));
         }
@@ -2324,3 +2287,6 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
         }
     }
 }
+
+#[cfg(test)]
+mod unit_tests;
