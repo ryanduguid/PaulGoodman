@@ -23,7 +23,7 @@ python -m compileall -q .
 python -m unittest discover -s tests/corpus -t . -v
 ```
 
-Discovery is scoped to `tests/corpus`. CI runs the Python suite as `uv run --locked --extra dev pytest` and the radar's Rust tests as `cargo test --locked` in `.github/workflows/ci.yml`.
+Discovery is scoped to `tests/corpus`. CI runs the Python suite as `uv run --locked --extra dev pytest` and the radar's Rust tests as `cargo test --locked` in `.github/workflows/ci.yml`. Branch protection requires its `tests-gates` job, which passes only when the jobs it needs do; [CI gates](AGENTS.md#ci-gates) in AGENTS.md lists each command those jobs run, in order, so you can run the same set before you push.
 
 The suite carries regression tests tied to specific past defects. Do not relax one to make a change pass. Each assertion records something that went wrong here.
 
@@ -42,7 +42,7 @@ contract tests still run.
 
 ## Pull requests
 
-Add or update tests with every change to behaviour: new functionality needs a test that fails without it, and a fixed defect needs a regression test. CI holds both packages to their coverage floor.
+Add or update tests with every change to behaviour: new functionality needs a test that fails without it, and a fixed defect needs a regression test. CI holds the Python package to its coverage floor, and Codecov fails a pull request that leaves a measured line it adds or changes untested.
 
 State which stage of the pipeline your change touches and what the output looks like before and after. If the change alters counts recorded in a manifest, say which titles moved and why.
 
