@@ -582,10 +582,8 @@ pub fn check_round_trip(data: &[u8]) -> Result<(), String> {
             .collect::<Result<_, _>>()?;
         let again =
             loads_standard(&once).map_err(|e| format!("{once:?} does not decode: {e:?}"))?;
-        same_text(
-            &once,
-            &crate::pyvalue::dumps_with(&again, None, true, false),
-        )?;
+        let twice = crate::pyvalue::dumps_with(&again, None, true, false);
+        same_text(&once, &twice)?;
     }
     Ok(())
 }
