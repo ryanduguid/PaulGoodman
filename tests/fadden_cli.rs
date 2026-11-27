@@ -13,7 +13,9 @@ fn fadden(args: &[&str]) -> Output {
 }
 
 fn text(bytes: &[u8]) -> String {
-    String::from_utf8(bytes.to_vec()).unwrap().replace("\r\n", "\n")
+    String::from_utf8(bytes.to_vec())
+        .unwrap()
+        .replace("\r\n", "\n")
 }
 
 #[test]
@@ -22,7 +24,10 @@ fn help_prints_the_usage_and_exits_0() {
         let out = fadden(&[flag, "ignored"]);
         assert_eq!(out.status.code(), Some(0), "{flag}");
         let stdout = text(&out.stdout);
-        assert!(stdout.starts_with("usage: fadden {as_at,authorities,"), "{stdout}");
+        assert!(
+            stdout.starts_with("usage: fadden {as_at,authorities,"),
+            "{stdout}"
+        );
         assert!(
             stdout.ends_with(
                 "\n\nRun one ported corpus-builder stage; `python -m fadden` forwards these stages here.\n"
@@ -70,7 +75,11 @@ fn an_argument_that_is_not_unicode_is_refused_with_status_2() {
             "tax-radar-au: blocked: every argument must be valid Unicode.\n",
         ),
     ] {
-        let out = Command::new(binary).arg("search").arg(bad).output().unwrap();
+        let out = Command::new(binary)
+            .arg("search")
+            .arg(bad)
+            .output()
+            .unwrap();
         assert_eq!(out.status.code(), Some(2), "{binary}");
         assert_eq!(text(&out.stderr), message);
         assert!(out.stdout.is_empty());

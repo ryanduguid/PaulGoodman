@@ -1,11 +1,19 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: Apache-2.0
+
 //! `Net` against scripted servers on loopback: the request it writes, the
 //! response rules it reads by, its redirects, proxies and tunnels, and the
 //! failures each step reports.
-use std::io::Cursor;
-use std::net::TcpListener;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::thread::JoinHandle;
 
-use super::*;
+use tax_radar_au::fadden::http::{self, Failure, Http, Request, Response, Transfer, UA};
+
+/// `http.client`'s limits: line length, header lines, interim responses.
+const MAXLINE: usize = 65536;
+const MAXHEADERS: usize = 100;
+const MAXINTERIM: usize = 100;
 
 /// What a scripted server does on one connection.
 enum Turn {
@@ -69,24 +77,16 @@ fn reply(text: &str) -> Turn {
     Turn::Reply(text.as_bytes().to_vec())
 }
 
-fn net(proxies: &[(&str, &str)]) -> Net {
-    Net {
-        proxies: proxies
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-            .collect(),
-        tls: None,
-        started: Instant::now(),
-        agent: UA,
-    }
-}
-
-fn get(net: &mut Net, url: &str, limit: Option<usize>) -> Result<Response, Failure> {
-    net.get(url, limit, &mut Request::default())
-}
-
 fn failure(name: &str) -> Failure {
     Failure::Transport(name.into())
+}
+
+fn net(proxies: &[(&str, &str)]) -> Box<dyn Http> {
+    http::connect_via(proxies)
+}
+
+fn get(net: &mut Box<dyn Http>, url: &str, limit: Option<usize>) -> Result<Response, Failure> {
+    net.get(url, limit, &mut Request::default())
 }
 
 #[test]
@@ -103,7 +103,10 @@ fn a_get_writes_http_clients_request_and_reads_the_body() {
     assert_eq!(response.body, b"hello");
     // A limit reads only that much of a longer body; no Content-Type is "".
     let short = get(&mut net, &format!("{base}/b"), Some(3)).unwrap();
-    assert_eq!((short.content_type.as_str(), &short.body[..]), ("", &b"hel"[..]));
+    assert_eq!(
+        (short.content_type.as_str(), &short.body[..]),
+        ("", &b"hel"[..])
+    );
     // Without a length the body runs to the close.
     assert_eq!(get(&mut net, &base, None).unwrap().body, b"to the end");
     let host = base.trim_start_matches("http://");
@@ -135,7 +138,9 @@ fn statuses_framing_and_interim_responses_read_as_http_client_does() {
         reply(chunked),
         reply(chunked),
         reply("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"),
-        reply("HTTP/1.1 100 Continue\r\nX: 1\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"),
+        reply(
+            "HTTP/1.1 100 Continue\r\nX: 1\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+        ),
         reply("HTTP/1.1 204 No Content\r\nContent-Length: 9\r\n\r\nignored"),
         reply("HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nshort"),
         reply("HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\nall"),
@@ -146,7 +151,10 @@ fn statuses_framing_and_interim_responses_read_as_http_client_does() {
     assert_eq!(get("/chunked", None).unwrap().body, b"hello world");
     // A limit inside the second chunk stops there.
     assert_eq!(get("/chunked", Some(7)).unwrap().body, b"hello w");
-    assert_eq!(get("/bad-chunk", None).unwrap_err(), failure("IncompleteRead"));
+    assert_eq!(
+        get("/bad-chunk", None).unwrap_err(),
+        failure("IncompleteRead")
+    );
     assert_eq!(get("/continue", None).unwrap().body, b"ok");
     assert_eq!(get("/204", None).unwrap().body, b"");
     // An unbounded read short of Content-Length is IncompleteRead; a bounded
@@ -196,30 +204,7 @@ fn malformed_responses_fail_as_http_client_raises() {
 }
 
 #[test]
-fn heads_and_chunked_bodies_hold_http_clients_limits() {
-    let long_header = format!("X: {}\r\n", "y".repeat(MAXLINE));
-    assert_eq!(
-        begin(&mut Cursor::new(format!("HTTP/1.1 200 OK\r\n{long_header}\r\n"))).err(),
-        Some(failure("LineTooLong"))
-    );
-    let long_interim = format!("HTTP/1.1 100 Continue\r\n{long_header}\r\n");
-    assert_eq!(
-        begin(&mut Cursor::new(long_interim)).err(),
-        Some(failure("LineTooLong"))
-    );
-    // A 1xx or 304 response has no body, whatever its Content-Length says.
-    let head = begin(&mut Cursor::new("HTTP/1.1 304 Not Modified\r\nContent-Length: 4\r\n\r\n"))
-        .unwrap();
-    assert_eq!((head.status, head.length, head.chunked), (304, Some(0), false));
-    let head = begin(&mut Cursor::new("HTTP/1.1 200 OK\r\nContent-Length: 1e3\r\n\r\n")).unwrap();
-    assert_eq!(head.length, None);
-    let head = begin(&mut Cursor::new(format!(
-        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-        "9".repeat(30)
-    )))
-    .unwrap();
-    assert_eq!(head.length, Some(u64::MAX));
-
+fn chunked_bodies_hold_http_clients_limits() {
     let trailer = "X: 1\r\n".repeat(MAXHEADERS + 1);
     let (base, server) = serve(vec![
         reply(&format!(
@@ -236,7 +221,12 @@ fn heads_and_chunked_bodies_hold_http_clients_limits() {
         reply("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel"),
     ]);
     let mut net = net(&[]);
-    for name in ["LineTooLong", "LineTooLong", "HTTPException", "IncompleteRead"] {
+    for name in [
+        "LineTooLong",
+        "LineTooLong",
+        "HTTPException",
+        "IncompleteRead",
+    ] {
         assert_eq!(get(&mut net, &base, None).unwrap_err(), failure(name));
     }
     server.join().unwrap();
@@ -265,19 +255,35 @@ fn redirects_are_followed_as_http_redirect_handler_does() {
     assert_eq!(response.url, format!("{base}/next;p?q=a%20b"));
     assert_eq!(response.body, b"ok");
     let response = get(&mut net, &format!("{base}/old"), None).unwrap();
-    assert_eq!((response.url, response.body), (format!("{base}/uri"), b"uri".to_vec()));
+    assert_eq!(
+        (response.url, response.body),
+        (format!("{base}/uri"), b"uri".to_vec())
+    );
     // No target, or a scheme urllib refuses, raises the redirect's status.
-    assert_eq!(get(&mut net, &base, None).unwrap_err(), Failure::Status(302));
-    assert_eq!(get(&mut net, &base, None).unwrap_err(), Failure::Status(302));
+    assert_eq!(
+        get(&mut net, &base, None).unwrap_err(),
+        Failure::Status(302)
+    );
+    assert_eq!(
+        get(&mut net, &base, None).unwrap_err(),
+        Failure::Status(302)
+    );
     // An FTP target is followed, then fails as urllib's FTP handler is not ported.
     assert_eq!(get(&mut net, &base, None).unwrap_err(), failure("URLError"));
     // A malformed target is the ValueError nothing catches.
     assert!(matches!(
         get(&mut net, &base, None),
-        Err(Failure::Uncaught { class: "ValueError", .. })
+        Err(Failure::Uncaught {
+            class: "ValueError",
+            ..
+        })
     ));
     let seen = server.join().unwrap();
-    assert!(seen[1].starts_with("GET /next;p?q=a%20b HTTP/1.1\r\n"), "{}", seen[1]);
+    assert!(
+        seen[1].starts_with("GET /next;p?q=a%20b HTTP/1.1\r\n"),
+        "{}",
+        seen[1]
+    );
     assert!(seen[3].starts_with("GET /uri HTTP/1.1\r\n"), "{}", seen[3]);
 }
 
@@ -306,7 +312,10 @@ fn an_exchange_follows_no_redirect_and_reports_every_status() {
     assert_eq!(ok.body.as_deref(), Some(&b"hel"[..]));
     for (status, header) in [(301, "Location"), (500, "Retry-After")] {
         let got = net.exchange(&base, 3, &mut Request::default()).unwrap();
-        assert_eq!((got.status, got.headers[0].0.as_str(), got.body), (status, header, None));
+        assert_eq!(
+            (got.status, got.headers[0].0.as_str(), got.body),
+            (status, header, None)
+        );
     }
     let empty = net.exchange(&base, 3, &mut Request::default()).unwrap();
     assert_eq!((empty.status, empty.body), (204, None));
@@ -358,7 +367,11 @@ fn requests_urllib_cannot_send_fail_before_connecting() {
         ("http://127.0.0.1:70000/", "URLError"),
     ];
     for (url, name) in cases {
-        assert_eq!(get(&mut net, url, None).unwrap_err(), failure(name), "{url}");
+        assert_eq!(
+            get(&mut net, url, None).unwrap_err(),
+            failure(name),
+            "{url}"
+        );
     }
     assert_eq!(
         get(&mut net, "http://127.0.0.1:1/caf\u{e9}", None).unwrap_err(),
@@ -370,7 +383,10 @@ fn requests_urllib_cannot_send_fail_before_connecting() {
     );
     assert!(matches!(
         get(&mut net, "nothing", None),
-        Err(Failure::Uncaught { class: "ValueError", .. })
+        Err(Failure::Uncaught {
+            class: "ValueError",
+            ..
+        })
     ));
 }
 
@@ -387,7 +403,10 @@ fn an_http_proxy_gets_the_full_url_and_the_credentials() {
     assert_eq!(response.body, b"vi");
     // A bare host:port proxy takes the request's scheme.
     let mut bare = self::net(&[("http", hostport)]);
-    assert_eq!(get(&mut bare, "http://origin.invalid/", None).unwrap().body, b"ok");
+    assert_eq!(
+        get(&mut bare, "http://origin.invalid/", None).unwrap().body,
+        b"ok"
+    );
     let seen = server.join().unwrap();
     assert_eq!(
         seen[0],
@@ -403,24 +422,15 @@ fn an_http_proxy_gets_the_full_url_and_the_credentials() {
 
 #[test]
 fn no_proxy_sends_matching_hosts_direct() {
-    let (base, server) = serve(vec![reply("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\ndirect")]);
+    let (base, server) = serve(vec![reply(
+        "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\ndirect",
+    )]);
     let mut net = net(&[
         ("http", "http://127.0.0.1:1"),
         ("no", " , .example.invalid,127.0.0.1"),
     ]);
     assert_eq!(get(&mut net, &base, None).unwrap().body, b"direct");
     server.join().unwrap();
-    for (host, bypassed) in [
-        ("example.invalid", true),
-        ("www.Example.invalid:8080", true),
-        ("127.0.0.1:99", true),
-        ("other.invalid", false),
-        ("notexample.invalid", false),
-    ] {
-        assert_eq!(net.bypass(host), bypassed, "{host}");
-    }
-    assert!(self::net(&[("no", "*")]).bypass("any"));
-    assert!(!self::net(&[]).bypass("any"));
 }
 
 #[test]
@@ -476,7 +486,11 @@ fn https_through_a_proxy_opens_a_connect_tunnel() {
         "CONNECT origin.invalid:443 HTTP/1.1\r\n\
          Proxy-Authorization: Basic dTpw\r\nHost: origin.invalid:443\r\n\r\n"
     );
-    assert!(seen[2].starts_with("CONNECT [::1]:8443 HTTP/1.1\r\n"), "{}", seen[2]);
+    assert!(
+        seen[2].starts_with("CONNECT [::1]:8443 HTTP/1.1\r\n"),
+        "{}",
+        seen[2]
+    );
     assert_eq!(seen.len(), 5);
     // A control character in the tunnel host is refused before CONNECT.
     let (proxy, server) = serve(vec![Turn::Raw(Vec::new())]);
@@ -498,60 +512,7 @@ fn a_direct_https_handshake_with_a_plain_server_fails_as_url_error() {
     let url = base.replace("http://", "https://");
     let mut net = net(&[]);
     assert_eq!(get(&mut net, &url, None).unwrap_err(), failure("URLError"));
-    assert!(net.tls.is_some());
     assert!(server.join().unwrap()[0].ends_with("from 0x16"));
-}
-
-#[test]
-fn proxies_come_from_the_environment_as_getproxies_reads_them() {
-    let env = |pairs: &[(&str, &str)]| {
-        let pairs: Vec<_> = pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-            .collect();
-        let mut got: Vec<_> = proxies_from(&pairs).into_iter().collect();
-        got.sort();
-        got
-    };
-    let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
-    assert_eq!(
-        env(&[("HTTP_PROXY", "upper"), ("http_proxy", "lower"), ("PATH", "/bin")]),
-        [pair("http", "lower")]
-    );
-    // An empty lowercase variable removes the uppercase one's proxy.
-    assert_eq!(env(&[("HTTPS_PROXY", "p"), ("https_proxy", "")]), []);
-    // A bare `_proxy` names the empty scheme.
-    assert_eq!(
-        env(&[("No_Proxy", "h"), ("_proxy", "x")]),
-        [pair("", "x"), pair("no", "h")]
-    );
-    // Under CGI, HTTP_PROXY is the client's header, so it is ignored.
-    assert_eq!(env(&[("HTTP_PROXY", "p"), ("REQUEST_METHOD", "GET")]), []);
-    assert_eq!(
-        env(&[("http_proxy", "p"), ("REQUEST_METHOD", "GET")]),
-        [pair("http", "p")]
-    );
-}
-
-#[test]
-fn socket_errors_take_the_names_python_gives_them() {
-    use io::ErrorKind::*;
-    for (kind, name) in [
-        (ConnectionReset, "ConnectionResetError"),
-        (ConnectionAborted, "ConnectionAbortedError"),
-        (BrokenPipe, "BrokenPipeError"),
-        (TimedOut, "TimeoutError"),
-        (WouldBlock, "TimeoutError"),
-        (InvalidData, "SSLError"),
-        (NotFound, "OSError"),
-    ] {
-        assert_eq!(os_error(&io::Error::from(kind)), failure(name));
-    }
-    assert_eq!(fail_name(failure("X")), "X");
-    assert_eq!(fail_name(Failure::Status(503)), "HTTP503");
-    assert_eq!(fail_name(value_error("m".into())), "ValueError");
-    assert_eq!(in_request(failure("OSError")), failure("URLError"));
-    assert_eq!(in_request(failure("LineTooLong")), failure("LineTooLong"));
 }
 
 #[test]
@@ -562,71 +523,12 @@ fn the_network_clock_runs_and_dates_are_local() {
     assert!(net.monotonic() >= before + 0.01);
     let today = net.today();
     assert_eq!(today.len(), 10);
-    assert!(py::Date::fromisoformat(&today).is_some(), "{today}");
+    assert!(
+        tax_radar_au::py::Date::fromisoformat(&today).is_some(),
+        "{today}"
+    );
+    assert_eq!(today, http::local_today());
     let now = net.utc_now();
     assert!(now.ends_with('Z') && now.len() == 20, "{now}");
     assert!(now.as_str() > "2026-01-01T00:00:00Z", "{now}");
-}
-
-/// A fake that scripts `get` alone, as the stages' simplest fakes do.
-struct Scripted(Vec<Result<Response, Failure>>);
-
-impl Http for Scripted {
-    fn get(&mut self, _: &str, _: Option<usize>, _: &mut Request) -> Result<Response, Failure> {
-        self.0.remove(0)
-    }
-    fn sleep(&mut self, _: f64) {}
-    fn today(&mut self) -> String {
-        "2026-11-28".into()
-    }
-}
-
-fn body(text: &str) -> Result<Response, Failure> {
-    Ok(Response {
-        url: String::new(),
-        content_type: String::new(),
-        body: text.as_bytes().to_vec(),
-    })
-}
-
-#[test]
-fn the_trait_defaults_fail_every_exchange_and_stand_the_clock_still() {
-    let mut fake = Scripted(Vec::new());
-    let mut request = Request::default();
-    assert_eq!(fake.exchange("u", 1, &mut request).unwrap_err(), failure("URLError"));
-    assert_eq!(
-        fake.download("u", "p", 1, None, true, &mut request).unwrap_err(),
-        failure("URLError")
-    );
-    assert_eq!(fake.monotonic(), 0.0);
-    assert_eq!(fake.utc_now(), "1970-01-01T00:00:00Z");
-    assert_eq!(fake.today(), "2026-11-28");
-}
-
-#[test]
-fn fetch_json_stops_the_stage_on_the_errors_it_does_not_catch() {
-    let uncaught = |class| Err(Failure::Uncaught { class, message: "m".into() });
-    let mut fake = Scripted(vec![uncaught("UnicodeEncodeError")]);
-    assert!(matches!(fetch_json(&mut fake, "u"), Err(Exc::UnicodeEncode(m)) if m == "m"));
-    let mut fake = Scripted(vec![uncaught("ValueError")]);
-    assert!(matches!(
-        fetch_json(&mut fake, "u"),
-        Err(Exc::Value { class: "ValueError", .. })
-    ));
-    let mut fake = Scripted(vec![body(&format!("{{\"n\": {}}}", "1".repeat(4301)))]);
-    assert!(matches!(
-        fetch_json(&mut fake, "u"),
-        Err(Exc::Value { message, .. }) if message.starts_with("Exceeds the limit")
-    ));
-    let mut fake = Scripted(vec![body(&"[".repeat(2 * pyjson::MAX_DEPTH))]);
-    assert!(matches!(fetch_json(&mut fake, "u"), Err(Exc::Recursion(_))));
-    // A failed request, an error member and a non-object are all retried.
-    let mut fake = Scripted(vec![
-        Err(failure("URLError")),
-        body("{\"error\": 1}"),
-        body("{\"ok\": 1}"),
-    ]);
-    assert!(fetch_json(&mut fake, "u").unwrap().is_some());
-    let mut fake = Scripted(vec![body("[]"), Err(Failure::Status(500)), body("x")]);
-    assert!(fetch_json(&mut fake, "u").unwrap().is_none());
 }

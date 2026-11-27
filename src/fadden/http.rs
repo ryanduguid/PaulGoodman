@@ -209,6 +209,18 @@ pub fn net_download(
     net.download(url, part, max_bytes, range_start, https_only, &mut request)
 }
 
+/// The network with `proxies` in place of the environment's, for loopback
+/// integration tests: `(scheme, proxy URL)` pairs, `no` for `no_proxy`.
+#[doc(hidden)]
+pub fn connect_via(proxies: &[(&str, &str)]) -> Box<dyn Http> {
+    let mut net = Net::new(UA);
+    net.proxies = proxies
+        .iter()
+        .map(|&(scheme, proxy)| (scheme.to_owned(), proxy.to_owned()))
+        .collect();
+    Box::new(net)
+}
+
 /// `http_fetch.attempts()`: attempt numbers 1..=tries, waiting `delay` before
 /// each attempt after the first.
 pub fn attempt(http: &mut dyn Http, number: u32) {
@@ -1856,7 +1868,7 @@ pub fn local_today() -> String {
 }
 
 #[cfg(test)]
-mod net_tests;
+mod opener_tests;
 
 #[cfg(test)]
 mod tests {

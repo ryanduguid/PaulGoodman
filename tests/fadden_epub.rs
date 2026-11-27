@@ -153,7 +153,10 @@ fn a_member_needing_a_later_zip_version_is_not_implemented() {
     entry.version = 64;
     match epub::from_bytes(build(&[entry])) {
         Err(Exc::Other { class, message }) => {
-            assert_eq!((class, message.as_str()), ("NotImplementedError", "zip file version 6.4"));
+            assert_eq!(
+                (class, message.as_str()),
+                ("NotImplementedError", "zip file version 6.4")
+            );
         }
         other => panic!("{:?}", other.err()),
     }
@@ -189,7 +192,10 @@ fn zip64_extra_fields_supply_the_sizes_and_offset() {
         "cannot fit 'int' into an offset-sized integer"
     );
     entry.extra = vec![1, 0, 16, 0, 0];
-    assert_eq!(refusal(build(&[entry])), "Corrupt extra field 0001 (size=16)");
+    assert_eq!(
+        refusal(build(&[entry])),
+        "Corrupt extra field 0001 (size=16)"
+    );
 }
 
 #[test]
@@ -208,7 +214,11 @@ fn a_unicode_path_extra_field_renames_the_member() {
     assert_eq!(book.members[0].orig_filename, "plain.xhtml");
     assert_eq!(book.read("ünï.xhtml").unwrap(), b"x");
     // A stale CRC, another version or an empty name leaves the name alone.
-    for extra in [path(1, crc ^ 1, b"other"), path(2, crc, b"other"), path(1, crc, b"")] {
+    for extra in [
+        path(1, crc ^ 1, b"other"),
+        path(2, crc, b"other"),
+        path(1, crc, b""),
+    ] {
         entry.extra = extra;
         let book = epub::from_bytes(build(&[entry.clone()])).unwrap();
         assert_eq!(book.namelist().collect::<Vec<_>>(), ["plain.xhtml"]);
@@ -219,7 +229,10 @@ fn a_unicode_path_extra_field_renames_the_member() {
         "Corrupt unicode path extra field (0x7075): invalid utf-8 bytes"
     );
     entry.extra = extra_field(0x7075, &[1, 0, 0]);
-    assert_eq!(refusal(build(&[entry])), "Corrupt unicode path extra field (0x7075)");
+    assert_eq!(
+        refusal(build(&[entry])),
+        "Corrupt unicode path extra field (0x7075)"
+    );
 }
 
 #[test]
@@ -321,14 +334,21 @@ fn reads_check_the_member_against_its_local_data() {
 #[test]
 fn deflated_members_must_end_where_their_sizes_say() {
     let ok = deflated("a", b"hello", deflate_stored(b"hello"));
-    assert_eq!(epub::from_bytes(build(&[ok])).unwrap().read("a").unwrap(), b"hello");
+    assert_eq!(
+        epub::from_bytes(build(&[ok])).unwrap().read("a").unwrap(),
+        b"hello"
+    );
     let mut short = deflated("a", b"hello", deflate_stored(b"hello"));
     short.size = 3;
     assert_eq!(
         read_refusal(build(&[short]), "a"),
         "EPUB member exceeds its declared uncompressed length"
     );
-    let trailing = deflated("a", b"hello", [deflate_stored(b"hello"), b"junk".to_vec()].concat());
+    let trailing = deflated(
+        "a",
+        b"hello",
+        [deflate_stored(b"hello"), b"junk".to_vec()].concat(),
+    );
     assert_eq!(
         read_refusal(build(&[trailing]), "a"),
         "EPUB member has trailing compressed data"
