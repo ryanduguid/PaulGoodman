@@ -29,12 +29,12 @@ fn raised(error: &Exc) -> String {
     }
 }
 
-/// `_candidate_bundle` over one SUPERSEDED title whose retained response is
-/// `response`. The observation's `capture_result_sha256` is filled in after
-/// `edit` unless `edit` set it.
-fn candidate(response: &str, edit: Edit) -> Result<(String, Json), Exc> {
-    let digest = sha256_id(response.as_bytes());
-    let mut title = json!({
+/// One SUPERSEDED title, its capture result and its observation, whose
+/// retained response is `RESPONSE`. The observation's `capture_result_sha256`
+/// is null until [`fill_digest`] sets it.
+fn parts() -> (Value, Value, Value) {
+    let digest = sha256_id(RESPONSE.as_bytes());
+    let title = json!({
         "register_id": "F2022L00347",
         "name": "Taxation Administration Regulations 2017",
         "collection": "LegislativeInstrument",
@@ -46,7 +46,7 @@ fn candidate(response: &str, edit: Edit) -> Result<(String, Json), Exc> {
         "source_url": "https://www.legislation.gov.au/F2022L00347/2026-08-05/2026-08-05/text/original/epub",
         "register_page": "https://www.legislation.gov.au/F2022L00347/latest/text"
     });
-    let mut result = json!({
+    let result = json!({
         "register_id": "F2022L00347",
         "collection": "LegislativeInstrument",
         "checked_at": "2026-08-28T00:00:00Z",
@@ -60,12 +60,12 @@ fn candidate(response: &str, edit: Edit) -> Result<(String, Json), Exc> {
             "transport_error_category": null,
             "attempt_count": 1,
             "response_headers": {"content-type": "application/json"},
-            "response_length": response.len(),
+            "response_length": RESPONSE.len(),
             "response_sha256": digest,
             "evidence_path": format!("evidence/sha256-{}.json", &digest[7..])
         }]
     });
-    let mut observation = json!({
+    let observation = json!({
         "register_id": "F2022L00347",
         "collection": "LegislativeInstrument",
         "state": "SUPERSEDED",
@@ -81,13 +81,23 @@ fn candidate(response: &str, edit: Edit) -> Result<(String, Json), Exc> {
         "primary_response_sha256": digest,
         "primary_response_media_type": "application/json"
     });
-    edit(&mut title, &mut result, &mut observation);
-    let result = py(&result);
+    (title, result, observation)
+}
+
+/// Set a null `capture_result_sha256` to the projected result's digest.
+fn fill_digest(result: &Value, observation: &mut Value) {
     if observation["capture_result_sha256"].is_null()
-        && let Ok(projected) = project_capture_result(&result)
+        && let Ok(projected) = project_capture_result(&py(result))
     {
         observation["capture_result_sha256"] = json!(sha256_id(&json_bytes(&projected).unwrap()));
     }
+}
+
+/// `_candidate_bundle` over [`parts`] after `edit`.
+fn candidate(edit: Edit) -> Result<(String, Json), Exc> {
+    let (mut title, mut result, mut observation) = parts();
+    edit(&mut title, &mut result, &mut observation);
+    fill_digest(&result, &mut observation);
     let run = Run4 {
         version: "1.2.3".into(),
         baseline_sha256: "sha256:b".into(),
@@ -96,20 +106,20 @@ fn candidate(response: &str, edit: Edit) -> Result<(String, Json), Exc> {
     };
     candidate_bundle(
         &py(&title),
-        &result,
+        &py(&result),
         &py(&observation),
         &run,
-        response.as_bytes(),
+        RESPONSE.as_bytes(),
     )
 }
 
 fn refusal(edit: Edit) -> String {
-    raised(&candidate(RESPONSE, edit).unwrap_err())
+    raised(&candidate(edit).unwrap_err())
 }
 
 #[test]
 fn the_unedited_candidate_is_accepted() {
-    let (id, bundle) = candidate(RESPONSE, Box::new(|_, _, _| {})).unwrap();
+    let (id, bundle) = candidate(Box::new(|_, _, _| {})).unwrap();
     assert_eq!(id, "bundle-frl-f2022l00347-f2026c00838-r1");
     assert!(is(get(&bundle, "schema_version"), "evidence-bundle.v2"));
 }
@@ -275,4 +285,125 @@ fn read_json_refuses_duplicates_non_objects_and_escapes_the_digit_limit() {
         let error = read_json(path.to_str().unwrap(), "baseline").unwrap_err();
         assert_eq!(raised(&error), expected, "{content}");
     }
+}
+
+/// `_build_validated_snapshot` over a graph of [`parts`] after `edit`: the
+/// baseline, the capture and the observation documents. Null digests are
+/// filled in after `edit`.
+fn snapshot(
+    edit: impl FnOnce(&mut Value, &mut Value, &mut Value),
+) -> Result<(String, Vec<(String, Json)>), Exc> {
+    let (title, result, mut item) = parts();
+    fill_digest(&result, &mut item);
+    let mut baseline = json!({"titles": [title]});
+    let mut capture = json!({
+        "schema_version": "au-tax-register-capture.v1",
+        "mode": "live",
+        "baseline_sha256": null,
+        "results": [result]
+    });
+    let mut observation = json!({
+        "schema_version": "au-tax-register-observation.v4",
+        "mode": "live",
+        "scope_id": "au-primary-tax-legislation.v4",
+        "complete": true,
+        "run_status": "VERIFIED",
+        "observed_at": "2026-08-28T00:00:00Z",
+        "baseline_sha256": null,
+        "capture_sha256": null,
+        "observations": [item]
+    });
+    edit(&mut baseline, &mut capture, &mut observation);
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, value: &Value| {
+        let bytes = value.to_string().into_bytes();
+        std::fs::write(dir.path().join(name), &bytes).unwrap();
+        sha256_id(&bytes)
+    };
+    let baseline_sha256 = write("monitor-baseline.json", &baseline);
+    for document in [&mut capture, &mut observation] {
+        if document["baseline_sha256"].is_null() {
+            document["baseline_sha256"] = json!(baseline_sha256);
+        }
+    }
+    let capture_sha256 = write("register-capture.json", &capture);
+    if observation["capture_sha256"].is_null() {
+        observation["capture_sha256"] = json!(capture_sha256);
+    }
+    write("register-observation.json", &observation);
+    let digest = sha256_id(RESPONSE.as_bytes());
+    std::fs::create_dir(dir.path().join("evidence")).unwrap();
+    std::fs::write(
+        dir.path()
+            .join("evidence")
+            .join(format!("sha256-{}.json", &digest[7..])),
+        RESPONSE,
+    )
+    .unwrap();
+    build_validated_snapshot(dir.path().to_str().unwrap())
+}
+
+#[test]
+fn the_snapshot_is_checked_before_any_candidate() {
+    type GraphEdit = Box<dyn FnOnce(&mut Value, &mut Value, &mut Value)>;
+    let cases: Vec<(GraphEdit, &str)> = vec![
+        (
+            Box::new(|_, c, _| c["baseline_sha256"] = json!("sha256:0")),
+            "capture graph digests are inconsistent.",
+        ),
+        (
+            Box::new(|b, _, _| b["titles"] = json!({})),
+            "capture graph collections must be arrays.",
+        ),
+        (
+            Box::new(|b, _, _| b["titles"][0]["register_id"] = json!("bad")),
+            "baseline title register_id is invalid.",
+        ),
+        (
+            Box::new(|_, c, _| c["results"][0]["register_id"] = json!("bad")),
+            "capture result register_id is invalid.",
+        ),
+        (
+            Box::new(|_, c, _| c["results"][0]["requests"] = json!([])),
+            "SUPERSEDED capture result must have a request.",
+        ),
+        (
+            Box::new(|_, c, _| {
+                c["results"][0]["requests"][0]["evidence_path"] = json!("evidence/other.json");
+            }),
+            "capture evidence path is invalid.",
+        ),
+        (
+            Box::new(|_, _, o| {
+                let item = o["observations"][0].clone();
+                o["observations"] = json!([item.clone(), item]);
+            }),
+            "candidate identity is duplicated.",
+        ),
+    ];
+    for (edit, expected) in cases {
+        assert_eq!(raised(&snapshot(edit).unwrap_err()), expected);
+    }
+}
+
+#[test]
+fn a_repeated_title_or_result_is_replaced_by_the_last() {
+    let (tag, candidates) = snapshot(|b, c, _| {
+        let title = b["titles"][0].clone();
+        let mut first = title.clone();
+        first["name"] = json!("an earlier entry");
+        b["titles"] = json!([first, title]);
+        let result = c["results"][0].clone();
+        let mut first = result.clone();
+        first["requests"] = json!([]);
+        c["results"] = json!([first, result]);
+    })
+    .unwrap();
+    assert!(tag.starts_with("live-evidence-v2-"));
+    assert_eq!(candidates.len(), 1);
+    let title = get(&candidates[0].1, "baseline_title");
+    assert!(is(
+        get(title, "name"),
+        "Taxation Administration Regulations 2017"
+    ));
 }
