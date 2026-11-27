@@ -1,0 +1,156 @@
+{"text": "abc", "convert_charrefs": true, "events": [["data", "abc", 1, 0]]}
+{"text": "abc", "convert_charrefs": false, "events": [["data", "abc", 1, 0]]}
+{"text": "a&b", "convert_charrefs": true, "events": [["data", "a&b", 1, 0]]}
+{"text": "a&b", "convert_charrefs": false, "events": [["data", "a", 1, 0], ["entityref", "b", 1, 1]]}
+{"text": "a &amp; b", "convert_charrefs": true, "events": [["data", "a & b", 1, 0]]}
+{"text": "a &amp; b", "convert_charrefs": false, "events": [["data", "a ", 1, 0], ["entityref", "amp", 1, 2], ["data", " b", 1, 7]]}
+{"text": "<script>abc", "convert_charrefs": true, "events": [["starttag", "script", [], 1, 0], ["data", "abc", 1, 8]]}
+{"text": "<script>abc", "convert_charrefs": false, "events": [["starttag", "script", [], 1, 0], ["data", "abc", 1, 8]]}
+{"text": "<script>a</script>b", "convert_charrefs": true, "events": [["starttag", "script", [], 1, 0], ["data", "a", 1, 8], ["endtag", "script", 1, 9], ["data", "b", 1, 18]]}
+{"text": "<script>a</script>b", "convert_charrefs": false, "events": [["starttag", "script", [], 1, 0], ["data", "a", 1, 8], ["endtag", "script", 1, 9], ["data", "b", 1, 18]]}
+{"text": "<script>a</scriptx</script >", "convert_charrefs": true, "events": [["starttag", "script", [], 1, 0], ["data", "a</scriptx", 1, 8], ["endtag", "script", 1, 18]]}
+{"text": "<script>a</scriptx</script >", "convert_charrefs": false, "events": [["starttag", "script", [], 1, 0], ["data", "a</scriptx", 1, 8], ["endtag", "script", 1, 18]]}
+{"text": "<style>x&amp;</style>", "convert_charrefs": true, "events": [["starttag", "style", [], 1, 0], ["data", "x&amp;", 1, 7], ["endtag", "style", 1, 13]]}
+{"text": "<style>x&amp;</style>", "convert_charrefs": false, "events": [["starttag", "style", [], 1, 0], ["data", "x&amp;", 1, 7], ["endtag", "style", 1, 13]]}
+{"text": "<title>a &amp; b</title>", "convert_charrefs": true, "events": [["starttag", "title", [], 1, 0], ["data", "a & b", 1, 7], ["endtag", "title", 1, 16]]}
+{"text": "<title>a &amp; b</title>", "convert_charrefs": false, "events": [["starttag", "title", [], 1, 0], ["data", "a ", 1, 7], ["entityref", "amp", 1, 9], ["data", " b", 1, 14], ["endtag", "title", 1, 16]]}
+{"text": "<textarea>x&lt;</textarea>", "convert_charrefs": true, "events": [["starttag", "textarea", [], 1, 0], ["data", "x<", 1, 10], ["endtag", "textarea", 1, 15]]}
+{"text": "<textarea>x&lt;</textarea>", "convert_charrefs": false, "events": [["starttag", "textarea", [], 1, 0], ["data", "x", 1, 10], ["entityref", "lt", 1, 11], ["endtag", "textarea", 1, 15]]}
+{"text": "<plaintext>a</b>", "convert_charrefs": true, "events": [["starttag", "plaintext", [], 1, 0], ["data", "a</b>", 1, 11]]}
+{"text": "<plaintext>a</b>", "convert_charrefs": false, "events": [["starttag", "plaintext", [], 1, 0], ["data", "a</b>", 1, 11]]}
+{"text": "<TITLE>x</Title>", "convert_charrefs": true, "events": [["starttag", "title", [], 1, 0], ["data", "x", 1, 7], ["endtag", "title", 1, 8]]}
+{"text": "<TITLE>x</Title>", "convert_charrefs": false, "events": [["starttag", "title", [], 1, 0], ["data", "x", 1, 7], ["endtag", "title", 1, 8]]}
+{"text": "<1", "convert_charrefs": true, "events": [["data", "<", 1, 0], ["data", "1", 1, 1]]}
+{"text": "<1", "convert_charrefs": false, "events": [["data", "<", 1, 0], ["data", "1", 1, 1]]}
+{"text": "< a", "convert_charrefs": true, "events": [["data", "<", 1, 0], ["data", " a", 1, 1]]}
+{"text": "< a", "convert_charrefs": false, "events": [["data", "<", 1, 0], ["data", " a", 1, 1]]}
+{"text": "a<", "convert_charrefs": true, "events": [["data", "a", 1, 0], ["data", "<", 1, 1]]}
+{"text": "a<", "convert_charrefs": false, "events": [["data", "a", 1, 0], ["data", "<", 1, 1]]}
+{"text": "<", "convert_charrefs": true, "events": [["data", "<", 1, 0]]}
+{"text": "<", "convert_charrefs": false, "events": [["data", "<", 1, 0]]}
+{"text": "a<b", "convert_charrefs": true, "events": [["data", "a", 1, 0]]}
+{"text": "a<b", "convert_charrefs": false, "events": [["data", "a", 1, 0]]}
+{"text": "</", "convert_charrefs": true, "events": [["data", "</", 1, 0]]}
+{"text": "</", "convert_charrefs": false, "events": [["data", "</", 1, 0]]}
+{"text": "</a", "convert_charrefs": true, "events": []}
+{"text": "</a", "convert_charrefs": false, "events": []}
+{"text": "</ x", "convert_charrefs": true, "events": [["comment", " x", 1, 0]]}
+{"text": "</ x", "convert_charrefs": false, "events": [["comment", " x", 1, 0]]}
+{"text": "</>x", "convert_charrefs": true, "events": [["data", "x", 1, 3]]}
+{"text": "</>x", "convert_charrefs": false, "events": [["data", "x", 1, 3]]}
+{"text": "</ x>", "convert_charrefs": true, "events": [["comment", " x", 1, 0]]}
+{"text": "</ x>", "convert_charrefs": false, "events": [["comment", " x", 1, 0]]}
+{"text": "</a b='>'>", "convert_charrefs": true, "events": [["endtag", "a", 1, 0]]}
+{"text": "</a b='>'>", "convert_charrefs": false, "events": [["endtag", "a", 1, 0]]}
+{"text": "</a b='>", "convert_charrefs": true, "events": []}
+{"text": "</a b='>", "convert_charrefs": false, "events": []}
+{"text": "</a b='>x", "convert_charrefs": true, "events": []}
+{"text": "</a b='>x", "convert_charrefs": false, "events": []}
+{"text": "<!--abc-", "convert_charrefs": true, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!--abc-", "convert_charrefs": false, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!--abc--", "convert_charrefs": true, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!--abc--", "convert_charrefs": false, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!--abc--!", "convert_charrefs": true, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!--abc--!", "convert_charrefs": false, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!--abc", "convert_charrefs": true, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!--abc", "convert_charrefs": false, "events": [["comment", "abc", 1, 0]]}
+{"text": "<!---->", "convert_charrefs": true, "events": [["comment", "", 1, 0]]}
+{"text": "<!---->", "convert_charrefs": false, "events": [["comment", "", 1, 0]]}
+{"text": "<!-->", "convert_charrefs": true, "events": [["comment", "", 1, 0]]}
+{"text": "<!-->", "convert_charrefs": false, "events": [["comment", "", 1, 0]]}
+{"text": "<!--->", "convert_charrefs": true, "events": [["comment", "", 1, 0]]}
+{"text": "<!--->", "convert_charrefs": false, "events": [["comment", "", 1, 0]]}
+{"text": "<![CDATA[x", "convert_charrefs": true, "events": [["unknown_decl", "CDATA[x", 1, 0]]}
+{"text": "<![CDATA[x", "convert_charrefs": false, "events": [["unknown_decl", "CDATA[x", 1, 0]]}
+{"text": "<![CDATA[x]]>y", "convert_charrefs": true, "events": [["unknown_decl", "CDATA[x", 1, 0], ["data", "y", 1, 13]]}
+{"text": "<![CDATA[x]]>y", "convert_charrefs": false, "events": [["unknown_decl", "CDATA[x", 1, 0], ["data", "y", 1, 13]]}
+{"text": "<!DOCTYPE html", "convert_charrefs": true, "events": [["decl", "DOCTYPE html", 1, 0]]}
+{"text": "<!DOCTYPE html", "convert_charrefs": false, "events": [["decl", "DOCTYPE html", 1, 0]]}
+{"text": "<!DOCTYPE html>", "convert_charrefs": true, "events": [["decl", "DOCTYPE html", 1, 0]]}
+{"text": "<!DOCTYPE html>", "convert_charrefs": false, "events": [["decl", "DOCTYPE html", 1, 0]]}
+{"text": "<!doctype>", "convert_charrefs": true, "events": [["decl", "doctype", 1, 0]]}
+{"text": "<!doctype>", "convert_charrefs": false, "events": [["decl", "doctype", 1, 0]]}
+{"text": "<!x", "convert_charrefs": true, "events": [["comment", "x", 1, 0]]}
+{"text": "<!x", "convert_charrefs": false, "events": [["comment", "x", 1, 0]]}
+{"text": "<!x>", "convert_charrefs": true, "events": [["comment", "x", 1, 0]]}
+{"text": "<!x>", "convert_charrefs": false, "events": [["comment", "x", 1, 0]]}
+{"text": "<!>", "convert_charrefs": true, "events": [["comment", "", 1, 0]]}
+{"text": "<!>", "convert_charrefs": false, "events": [["comment", "", 1, 0]]}
+{"text": "<?pi", "convert_charrefs": true, "events": [["pi", "pi", 1, 0]]}
+{"text": "<?pi", "convert_charrefs": false, "events": [["pi", "pi", 1, 0]]}
+{"text": "<?pi>", "convert_charrefs": true, "events": [["pi", "pi", 1, 0]]}
+{"text": "<?pi>", "convert_charrefs": false, "events": [["pi", "pi", 1, 0]]}
+{"text": "&#12", "convert_charrefs": true, "events": [["data", "\f", 1, 0]]}
+{"text": "&#12", "convert_charrefs": false, "events": [["charref", "12", 1, 0]]}
+{"text": "&#x1f", "convert_charrefs": true, "events": [["data", "", 1, 0]]}
+{"text": "&#x1f", "convert_charrefs": false, "events": [["charref", "x1f", 1, 0]]}
+{"text": "&#12;", "convert_charrefs": true, "events": [["data", "\f", 1, 0]]}
+{"text": "&#12;", "convert_charrefs": false, "events": [["charref", "12", 1, 0]]}
+{"text": "&#12 ", "convert_charrefs": true, "events": [["data", "\f ", 1, 0]]}
+{"text": "&#12 ", "convert_charrefs": false, "events": [["charref", "12", 1, 0], ["data", " ", 1, 4]]}
+{"text": "&#a bc", "convert_charrefs": true, "events": [["data", "&#a bc", 1, 0]]}
+{"text": "&#a bc", "convert_charrefs": false, "events": [["data", "&#", 1, 0], ["data", "a bc", 1, 2]]}
+{"text": "&#", "convert_charrefs": true, "events": [["data", "&#", 1, 0]]}
+{"text": "&#", "convert_charrefs": false, "events": [["data", "&#", 1, 0]]}
+{"text": "&#a", "convert_charrefs": true, "events": [["data", "&#a", 1, 0]]}
+{"text": "&#a", "convert_charrefs": false, "events": [["data", "&#a", 1, 0]]}
+{"text": "&#xg", "convert_charrefs": true, "events": [["data", "&#xg", 1, 0]]}
+{"text": "&#xg", "convert_charrefs": false, "events": [["data", "&#", 1, 0], ["data", "xg", 1, 2]]}
+{"text": "&#;", "convert_charrefs": true, "events": [["data", "&#;", 1, 0]]}
+{"text": "&#;", "convert_charrefs": false, "events": [["data", "&#;", 1, 0]]}
+{"text": "&amp", "convert_charrefs": true, "events": [["data", "&", 1, 0]]}
+{"text": "&amp", "convert_charrefs": false, "events": [["entityref", "amp", 1, 0]]}
+{"text": "&amp;", "convert_charrefs": true, "events": [["data", "&", 1, 0]]}
+{"text": "&amp;", "convert_charrefs": false, "events": [["entityref", "amp", 1, 0]]}
+{"text": "&amp x", "convert_charrefs": true, "events": [["data", "& x", 1, 0]]}
+{"text": "&amp x", "convert_charrefs": false, "events": [["entityref", "amp", 1, 0], ["data", " x", 1, 4]]}
+{"text": "&1 x", "convert_charrefs": true, "events": [["data", "&1 x", 1, 0]]}
+{"text": "&1 x", "convert_charrefs": false, "events": [["data", "&", 1, 0], ["data", "1 x", 1, 1]]}
+{"text": "&", "convert_charrefs": true, "events": [["data", "&", 1, 0]]}
+{"text": "&", "convert_charrefs": false, "events": [["data", "&", 1, 0]]}
+{"text": "a&", "convert_charrefs": true, "events": [["data", "a&", 1, 0]]}
+{"text": "a&", "convert_charrefs": false, "events": [["data", "a", 1, 0], ["data", "&", 1, 1]]}
+{"text": "&a", "convert_charrefs": true, "events": [["data", "&a", 1, 0]]}
+{"text": "&a", "convert_charrefs": false, "events": [["entityref", "a", 1, 0]]}
+{"text": "<a b='c'd>", "convert_charrefs": true, "events": [["starttag", "a", [["b", "c"], ["d", null]], 1, 0]]}
+{"text": "<a b='c'd>", "convert_charrefs": false, "events": [["starttag", "a", [["b", "c"], ["d", null]], 1, 0]]}
+{"text": "<a b=>", "convert_charrefs": true, "events": [["starttag", "a", [["b", ""]], 1, 0]]}
+{"text": "<a b=>", "convert_charrefs": false, "events": [["starttag", "a", [["b", ""]], 1, 0]]}
+{"text": "<a b= '>", "convert_charrefs": true, "events": [["starttag", "a", [["b", ""], ["'", null]], 1, 0]]}
+{"text": "<a b= '>", "convert_charrefs": false, "events": [["starttag", "a", [["b", ""], ["'", null]], 1, 0]]}
+{"text": "<a b='c' / >", "convert_charrefs": true, "events": [["starttag", "a", [["b", "c"]], 1, 0]]}
+{"text": "<a b='c' / >", "convert_charrefs": false, "events": [["starttag", "a", [["b", "c"]], 1, 0]]}
+{"text": "<a b c=\"d\"/>", "convert_charrefs": true, "events": [["startendtag", "a", [["b", null], ["c", "d"]], 1, 0]]}
+{"text": "<a b c=\"d\"/>", "convert_charrefs": false, "events": [["startendtag", "a", [["b", null], ["c", "d"]], 1, 0]]}
+{"text": "<a/b>", "convert_charrefs": true, "events": [["starttag", "a", [["b", null]], 1, 0]]}
+{"text": "<a/b>", "convert_charrefs": false, "events": [["starttag", "a", [["b", null]], 1, 0]]}
+{"text": "<a b='x>", "convert_charrefs": true, "events": []}
+{"text": "<a b='x>", "convert_charrefs": false, "events": []}
+{"text": "<a $>", "convert_charrefs": true, "events": [["starttag", "a", [["$", null]], 1, 0]]}
+{"text": "<a $>", "convert_charrefs": false, "events": [["starttag", "a", [["$", null]], 1, 0]]}
+{"text": "<a\"b\">", "convert_charrefs": true, "events": [["starttag", "a\"b\"", [], 1, 0]]}
+{"text": "<a\"b\">", "convert_charrefs": false, "events": [["starttag", "a\"b\"", [], 1, 0]]}
+{"text": "<a =b>", "convert_charrefs": true, "events": [["starttag", "a", [["=b", null]], 1, 0]]}
+{"text": "<a =b>", "convert_charrefs": false, "events": [["starttag", "a", [["=b", null]], 1, 0]]}
+{"text": "<a b='c'\"d\">", "convert_charrefs": true, "events": [["starttag", "a", [["b", "c"], ["\"d\"", null]], 1, 0]]}
+{"text": "<a b='c'\"d\">", "convert_charrefs": false, "events": [["starttag", "a", [["b", "c"], ["\"d\"", null]], 1, 0]]}
+{"text": "<a b='>", "convert_charrefs": true, "events": []}
+{"text": "<a b='>", "convert_charrefs": false, "events": []}
+{"text": "<a b=\">", "convert_charrefs": true, "events": []}
+{"text": "<a b=\">", "convert_charrefs": false, "events": []}
+{"text": "<a b='' c=\"\">", "convert_charrefs": true, "events": [["starttag", "a", [["b", ""], ["c", ""]], 1, 0]]}
+{"text": "<a b='' c=\"\">", "convert_charrefs": false, "events": [["starttag", "a", [["b", ""], ["c", ""]], 1, 0]]}
+{"text": "<a b=\"'\">", "convert_charrefs": true, "events": [["starttag", "a", [["b", "'"]], 1, 0]]}
+{"text": "<a b=\"'\">", "convert_charrefs": false, "events": [["starttag", "a", [["b", "'"]], 1, 0]]}
+{"text": "<a\n b='1'\n>x\ny", "convert_charrefs": true, "events": [["starttag", "a", [["b", "1"]], 1, 0], ["data", "x\ny", 3, 1]]}
+{"text": "<a\n b='1'\n>x\ny", "convert_charrefs": false, "events": [["starttag", "a", [["b", "1"]], 1, 0], ["data", "x\ny", 3, 1]]}
+{"text": "x\n&amp;\n<b>", "convert_charrefs": true, "events": [["data", "x\n&\n", 1, 0], ["starttag", "b", [], 3, 0]]}
+{"text": "x\n&amp;\n<b>", "convert_charrefs": false, "events": [["data", "x\n", 1, 0], ["entityref", "amp", 2, 0], ["data", "\n", 2, 5], ["starttag", "b", [], 3, 0]]}
+{"text": "&#12345678901234567890;", "convert_charrefs": true, "events": [["data", "\ufffd", 1, 0]]}
+{"text": "&#12345678901234567890;", "convert_charrefs": false, "events": [["charref", "12345678901234567890", 1, 0]]}
+{"text": "&notin;", "convert_charrefs": true, "events": [["data", "\u2209", 1, 0]]}
+{"text": "&notin;", "convert_charrefs": false, "events": [["entityref", "notin", 1, 0]]}
+{"text": "&notit;", "convert_charrefs": true, "events": [["data", "\u00acit;", 1, 0]]}
+{"text": "&notit;", "convert_charrefs": false, "events": [["entityref", "notit", 1, 0]]}
+{"text": "<a href='&notit;&amp;&#38;&amp=x'>", "convert_charrefs": true, "events": [["starttag", "a", [["href", "&notit;&&&amp=x"]], 1, 0]]}
+{"text": "<a href='&notit;&amp;&#38;&amp=x'>", "convert_charrefs": false, "events": [["starttag", "a", [["href", "&notit;&&&amp=x"]], 1, 0]]}

@@ -92,13 +92,11 @@ fn tolerant_tail(s: &[u8], mut at: usize) -> usize {
     at
 }
 
-/// `TAGFIND_TOLERANT` matched at `at`: the end of group 1 (the name) and of the match.
-fn tagfind(s: &[u8], at: usize) -> Option<(usize, usize)> {
-    if !s.get(at)?.is_ascii_alphabetic() {
-        return None;
-    }
+/// `TAGFIND_TOLERANT` matched at `at`, an ASCII letter: the end of group 1
+/// (the name) and of the match.
+fn tagfind(s: &[u8], at: usize) -> (usize, usize) {
     let name = skip(s, at + 1, name_first);
-    Some((name, tolerant_tail(s, name)))
+    (name, tolerant_tail(s, name))
 }
 
 /// The optional `[\t\n\r\f ]*=[\t\n\r\f ]*(value)` group at `at`, if it matches: where
@@ -257,16 +255,11 @@ impl Parser<'_> {
             // re.compile(r'\z') matches at the end.
             Some("plaintext") => Some(self.rawdata.len()),
             Some(elem) => {
-                // re.IGNORECASE | re.ASCII: only ASCII letters fold.
+                // re.IGNORECASE | re.ASCII. Every CDATA and RCDATA element
+                // name is lowercase ASCII letters, so none needs escaping.
                 let name: String = elem
                     .chars()
-                    .map(|c| {
-                        if c.is_ascii_alphabetic() {
-                            format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())
-                        } else {
-                            pyre::escape(&c.to_string())
-                        }
-                    })
+                    .map(|c| format!("[{c}{}]", c.to_ascii_uppercase()))
                     .collect();
                 let amp = if self.escapable && !self.convert_charrefs {
                     "&|"
@@ -374,10 +367,9 @@ impl Parser<'_> {
                         self.emit(Event::Decl(rest[2..].to_owned()));
                     } else if rest.starts_with("<!") {
                         self.emit(Event::Comment(rest[2..].to_owned()));
-                    } else if rest.starts_with("<?") {
-                        self.emit(Event::Pi(rest[2..].to_owned()));
                     } else {
-                        unreachable!("we should not get here!");
+                        // "<?": parse_pi is the last parser that can return -1.
+                        self.emit(Event::Pi(rest[2..].to_owned()));
                     }
                     k = n as isize;
                 }
@@ -406,7 +398,8 @@ impl Parser<'_> {
                 } else {
                     break;
                 }
-            } else if rest.starts_with('&') {
+            } else {
+                // `j` stopped at "<" or "&", and "<" is handled above.
                 let found = crate::static_re!("&([a-zA-Z][-.a-zA-Z0-9]*)[^a-zA-Z0-9]", 0)
                     .match_at(&self.rawdata, i)
                     .map(|m| reference(&m, 1));
@@ -430,8 +423,6 @@ impl Parser<'_> {
                 } else {
                     break;
                 }
-            } else {
-                unreachable!("interesting.search() lied");
             }
         }
         if end && i < n {
@@ -443,9 +434,7 @@ impl Parser<'_> {
 
     fn parse_html_declaration(&mut self, i: usize) -> isize {
         let rest = &self.rawdata[i..];
-        if rest.starts_with("<!--") {
-            self.parse_comment(i)
-        } else if rest.starts_with("<![CDATA[") {
+        if rest.starts_with("<![CDATA[") {
             match rest[9..].find("]]>") {
                 None => -1,
                 Some(j) => {
@@ -518,8 +507,7 @@ impl Parser<'_> {
     }
 
     fn parse_starttag_at(&mut self, rawdata: &str, i: usize, endpos: usize) -> isize {
-        let (name, mut k) =
-            tagfind(rawdata.as_bytes(), i + 1).expect("unexpected call to parse_starttag()");
+        let (name, mut k) = tagfind(rawdata.as_bytes(), i + 1);
         let tag = rawdata[i + 1..name].to_lowercase();
         let mut attrs = Vec::new();
         while k < endpos {
@@ -534,13 +522,8 @@ impl Parser<'_> {
                     let quoted = value.len() >= 2
                         && ((value.starts_with('\'') && value.ends_with('\''))
                             || (value.starts_with('"') && value.ends_with('"')));
-                    // Python's value[:1] == "'" == value[-1:] also holds for a lone quote.
-                    if quoted || value == "'" || value == "\"" {
-                        value = if value.len() >= 2 {
-                            &value[1..value.len() - 1]
-                        } else {
-                            ""
-                        };
+                    if quoted {
+                        value = &value[1..value.len() - 1];
                     }
                     Some(if value.is_empty() {
                         String::new()
@@ -552,12 +535,9 @@ impl Parser<'_> {
             attrs.push((name, value));
             k = m.end;
         }
-        let end = crate::py::strip(&rawdata[k..endpos]);
-        if end != ">" && end != "/>" {
-            self.emit(Event::Data(rawdata[i..endpos].to_owned()));
-            return endpos as isize;
-        }
-        if end.ends_with("/>") {
+        // The attributes end where LOCATETAGEND's do, so what is left is
+        // ">" or "/>", never the junk Python passes to handle_data.
+        if rawdata[k..endpos].ends_with("/>") {
             self.emit(Event::StartEndTag(tag, attrs));
         } else {
             self.emit(Event::StartTag(tag.clone(), attrs));
@@ -592,7 +572,7 @@ impl Parser<'_> {
         if self.rawdata.as_bytes()[j - 1] != b'>' {
             return -1;
         }
-        let (name, _) = tagfind(self.rawdata.as_bytes(), i + 2).expect("a tag");
+        let (name, _) = tagfind(self.rawdata.as_bytes(), i + 2);
         let tag = self.rawdata[i + 2..name].to_lowercase();
         self.emit(Event::EndTag(tag));
         self.clear_cdata_mode();
@@ -602,7 +582,7 @@ impl Parser<'_> {
 
 /// A reference's name (the match after `skip` bytes, less its final character) and where
 /// parsing resumes: after a `;`, or at the final character otherwise.
-fn reference(m: &crate::pyre::Caps<'_>, skip: usize) -> (String, usize) {
+fn reference(m: &pyre::Caps<'_>, skip: usize) -> (String, usize) {
     let whole = m.get(0).expect("group 0");
     let text = whole.as_str();
     let last = text.chars().next_back().expect("a character");
@@ -680,16 +660,22 @@ pub fn check_positions(data: &[u8]) -> Result<(), String> {
         return Ok(());
     };
     for convert_charrefs in [true, false] {
-        let events = parse(text, convert_charrefs);
-        for pair in events.windows(2) {
-            let before = (pair[0].line, pair[0].offset);
-            let after = (pair[1].line, pair[1].offset);
-            if after < before {
-                return Err(format!(
-                    "{:?} at {after:?} follows {:?} at {before:?} (convert_charrefs {convert_charrefs})",
-                    pair[1].event, pair[0].event
-                ));
-            }
+        in_order(&parse(text, convert_charrefs))
+            .map_err(|error| format!("{error} (convert_charrefs {convert_charrefs})"))?;
+    }
+    Ok(())
+}
+
+/// Each event's position is no earlier than the one before.
+fn in_order(events: &[Positioned]) -> Result<(), String> {
+    for pair in events.windows(2) {
+        let before = (pair[0].line, pair[0].offset);
+        let after = (pair[1].line, pair[1].offset);
+        if after < before {
+            return Err(format!(
+                "{:?} at {after:?} follows {:?} at {before:?}",
+                pair[1].event, pair[0].event
+            ));
         }
     }
     Ok(())
@@ -698,6 +684,7 @@ pub fn check_positions(data: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pyjson::{self, Json, Layout, dumps};
 
     fn events(text: &str) -> Vec<Event> {
         parse(text, true).into_iter().map(|p| p.event).collect()
@@ -744,7 +731,7 @@ mod tests {
             }
             for at in (0..text.len()).filter(|&at| s[at].is_ascii_alphabetic()) {
                 let m = re(TAGFIND_TOLERANT, 0).match_at(&text, at).unwrap();
-                let (name, end) = tagfind(s, at).unwrap();
+                let (name, end) = tagfind(s, at);
                 assert_eq!(
                     (m.get(1).unwrap().end(), m.get(0).unwrap().end()),
                     (name, end)
@@ -843,5 +830,68 @@ mod tests {
         let parsed = parse("é\n<a>\n  <b>", false);
         let starts: Vec<_> = parsed.iter().map(|p| (p.line, p.offset)).collect();
         assert_eq!(starts, vec![(1, 0), (2, 0), (2, 3), (3, 2)]);
+    }
+
+    /// Every handler call and its `getpos()`, as `[handler, *args, line, offset]`.
+    fn recorded(text: &str, convert_charrefs: bool) -> Json {
+        let s = |text: &str| Json::str(text);
+        let attrs = |attrs: Vec<(String, Option<String>)>| {
+            Json::Array(
+                attrs
+                    .into_iter()
+                    .map(|(k, v)| Json::Array(vec![s(&k), v.map_or(Json::Null, |v| s(&v))]))
+                    .collect(),
+            )
+        };
+        let calls = parse(text, convert_charrefs).into_iter().map(|p| {
+            let mut call = match p.event {
+                Event::StartTag(tag, a) => vec![s("starttag"), s(&tag), attrs(a)],
+                Event::StartEndTag(tag, a) => vec![s("startendtag"), s(&tag), attrs(a)],
+                Event::EndTag(tag) => vec![s("endtag"), s(&tag)],
+                Event::Data(d) => vec![s("data"), s(&d)],
+                Event::Comment(d) => vec![s("comment"), s(&d)],
+                Event::Decl(d) => vec![s("decl"), s(&d)],
+                Event::Pi(d) => vec![s("pi"), s(&d)],
+                Event::UnknownDecl(d) => vec![s("unknown_decl"), s(&d)],
+                Event::CharRef(d) => vec![s("charref"), s(&d)],
+                Event::EntityRef(d) => vec![s("entityref"), s(&d)],
+            };
+            call.push(Json::Int(p.line.into()));
+            call.push(Json::Int(p.offset.into()));
+            Json::Array(call)
+        });
+        Json::Array(calls.collect())
+    }
+
+    /// CPython 3.15's `html.parser` handler calls for unclosed and cut
+    /// constructs, references, CDATA modes and attribute forms, written by
+    /// a recording `HTMLParser` subclass after `feed(text); close()`.
+    #[test]
+    fn handler_calls_match_cpython() {
+        let fixture = include_str!("../tests/data/htmlparser-cpython.jsonl");
+        for line in fixture.lines() {
+            let case = pyjson::loads(line).unwrap();
+            let text = case.at("text").as_str().unwrap();
+            let convert = case.get("convert_charrefs") == Some(&Json::Bool(true));
+            assert_eq!(
+                dumps(&recorded(text, convert), Layout::Canonical),
+                dumps(case.get("events").unwrap(), Layout::Canonical),
+                "{text:?} convert_charrefs={convert}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_position_check_skips_non_utf8_and_reports_a_step_back() {
+        assert_eq!(check_positions(b"<a>\xff"), Ok(()));
+        let at = |line, offset| Positioned {
+            event: Event::Data("x".into()),
+            line,
+            offset,
+        };
+        assert_eq!(
+            in_order(&[at(2, 0), at(1, 5)]),
+            Err(r#"Data("x") at (1, 5) follows Data("x") at (2, 0)"#.to_string())
+        );
     }
 }
