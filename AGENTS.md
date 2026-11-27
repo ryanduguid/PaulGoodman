@@ -50,7 +50,9 @@ without proving it.
 The radar is the Rust `tax-radar-au` binary. The `rust` job runs its formatting, Clippy,
 tests and release build on Ubuntu and Windows, and uploads the Linux release binaries for
 the Ubuntu test legs and the cross-system contract test in
-`tests/corpus/test_monitor_contract.py`.
+`tests/corpus/test_monitor_contract.py`. The `rust-coverage` job repeats its 2 test runs
+under `cargo llvm-cov` on Ubuntu and uploads their line coverage to Codecov under the
+`rust` flag; the Python reports carry the `python` flag.
 
 `tests/fadden_golden.rs` replays `tests/golden/`: fabricated cases each run through the
 Python stages the `fadden` binary replaced, on Windows and Linux, with what Python printed
@@ -101,6 +103,11 @@ cargo build --locked --release
 cargo build --locked
 cargo audit --deny unsound --deny yanked && cargo audit --deny unsound --deny yanked --file fuzz/Cargo.lock
 cargo deny --locked check licenses sources
+rustup toolchain install && rustup component add llvm-tools-preview
+cargo llvm-cov --locked --no-report
+cargo llvm-cov --locked --no-report --features fake-http --test fadden_golden --test fadden_download --test fadden_retry13 --test fadden_quick
+cargo llvm-cov report --lcov --output-path coverage-rust.lcov
+cargo llvm-cov report --summary-only
 uv run --locked --extra dev ruff check .
 uv run --locked --extra dev mypy
 uv audit --locked --no-config --python-version 3.14

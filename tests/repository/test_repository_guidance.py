@@ -62,7 +62,9 @@ without proving it.
 The radar is the Rust `tax-radar-au` binary. The `rust` job runs its formatting, Clippy,
 tests and release build on Ubuntu and Windows, and uploads the Linux release binaries for
 the Ubuntu test legs and the cross-system contract test in
-`tests/corpus/test_monitor_contract.py`.
+`tests/corpus/test_monitor_contract.py`. The `rust-coverage` job repeats its 2 test runs
+under `cargo llvm-cov` on Ubuntu and uploads their line coverage to Codecov under the
+`rust` flag; the Python reports carry the `python` flag.
 
 `tests/fadden_golden.rs` replays `tests/golden/`: fabricated cases each run through the
 Python stages the `fadden` binary replaced, on Windows and Linux, with what Python printed
