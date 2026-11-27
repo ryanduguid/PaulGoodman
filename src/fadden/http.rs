@@ -726,19 +726,18 @@ impl Net {
 /// lowercase name winning; `HTTP_PROXY` is ignored under CGI. Windows
 /// environment names are upper case, as Python's `os.environ` gives them.
 fn environment_proxies() -> HashMap<String, String> {
-    let environ: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-        .map(|(name, value)| {
-            if cfg!(windows) {
-                (name.to_uppercase(), value)
-            } else {
-                (name, value)
-            }
-        })
-        .collect();
+    let environ = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
+    #[cfg(windows)]
+    let environ = environ.map(|(name, value)| (name.to_uppercase(), value));
+    proxies_from(&environ.collect::<Vec<_>>())
+}
+
+/// `getproxies_environment()` of the variables in `environ`.
+fn proxies_from(environ: &[(String, String)]) -> HashMap<String, String> {
     let mut proxies = HashMap::new();
     let mut matched = Vec::new();
-    for (name, value) in &environ {
+    for (name, value) in environ {
         let chars: Vec<char> = name.chars().collect();
         let n = chars.len();
         if n > 5
@@ -1855,6 +1854,9 @@ pub fn local_today() -> String {
         )
     }
 }
+
+#[cfg(test)]
+mod net_tests;
 
 #[cfg(test)]
 mod tests {
