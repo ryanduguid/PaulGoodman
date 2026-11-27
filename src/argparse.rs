@@ -29,7 +29,6 @@ pub enum Kind {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Nargs {
     One,
-    Optional,
     Zero,
     Parser,
     /// `nargs="+"`.
@@ -72,15 +71,6 @@ impl Action {
             int: false,
             help: None,
             metavar: None,
-        }
-    }
-    /// `nargs="?"` with a default.
-    pub fn optional_positional(dest: &str, default: Value) -> Self {
-        Self {
-            nargs: Nargs::Optional,
-            required: false,
-            default,
-            ..Self::positional(dest)
         }
     }
     pub fn option(flag: &str) -> Self {
@@ -273,11 +263,10 @@ fn metavar(action: &Action, default: &str) -> String {
 fn format_args(action: &Action, default: &str) -> String {
     let m = metavar(action, default);
     match action.nargs {
-        Nargs::One => m,
-        Nargs::Optional => format!("[{m}]"),
         Nargs::Parser => format!("{m} ..."),
         Nargs::OneOrMore => format!("{m} [{m} ...]"),
-        Nargs::Zero => String::new(),
+        // Only options take no argument, and their callers show none.
+        Nargs::One | Nargs::Zero => m,
     }
 }
 
@@ -337,11 +326,8 @@ fn format_usage(p: &Parser, t: &Theme) -> String {
             .chain(&pos_parts)
             .map(|x| x.coloured.as_str())
             .collect();
-        if coloured.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", coloured.join(" "))
-        }
+        // Never empty: every parser has its help option.
+        format!(" {}", coloured.join(" "))
     } else {
         wrapped_usage(&p.prog, &opt_parts, &pos_parts, text_width)
     };
@@ -360,21 +346,13 @@ fn wrapped_usage(prog: &str, opt_parts: &[Part], pos_parts: &[Part], text_width:
     let prog_part = part(prog.to_string(), prog.to_string());
     if (prefix_len + pytext::py_len(prog)) as f64 <= 0.75 * text_width as f64 {
         let indent = " ".repeat(prefix_len + pytext::py_len(prog) + 1);
-        let lines = if !opt_parts.is_empty() {
-            let head: Vec<Part> = std::iter::once(prog_part)
-                .chain(opt_parts.iter().cloned())
-                .collect();
-            let mut lines = get_lines(&head, &indent, true);
-            lines.extend(get_lines(pos_parts, &indent, false));
-            lines
-        } else if !pos_parts.is_empty() {
-            let head: Vec<Part> = std::iter::once(prog_part)
-                .chain(pos_parts.iter().cloned())
-                .collect();
-            get_lines(&head, &indent, true)
-        } else {
-            vec![prog.to_string()]
-        };
+        // `opt_parts` is never empty (the help option), so Python's other
+        // two layouts do not arise.
+        let head: Vec<Part> = std::iter::once(prog_part)
+            .chain(opt_parts.iter().cloned())
+            .collect();
+        let mut lines = get_lines(&head, &indent, true);
+        lines.extend(get_lines(pos_parts, &indent, false));
         return lines.join("\n")[prog.len()..].to_string();
     }
     let indent = " ".repeat(prefix_len);
@@ -610,10 +588,9 @@ impl From<ArgError> for Fail {
 /// option string, the separator and any explicit argument.
 type OptionTuple = (Option<usize>, String, Option<String>, Option<String>);
 
+/// `parse_optional` asks only about an `arg` starting with `-`.
 fn looks_like_negative_number(arg: &str) -> bool {
-    let Some(body) = arg.strip_prefix('-') else {
-        return false;
-    };
+    let body = &arg[1..];
     let digit = |c: char| pytext::decimal_value(c as u32).is_some();
     (!body.is_empty() && body.chars().all(digit))
         || body.split_once('.').is_some_and(|(int, frac)| {
@@ -703,14 +680,12 @@ impl Parser {
         match (action.nargs, option) {
             (Nargs::One, true) => "([A])",
             (Nargs::One, false) => "(-*A-*)",
-            (Nargs::Optional, true) => "(A?)",
-            (Nargs::Optional, false) => "(-*A?-*)",
-            (Nargs::Parser, true) => "(A[AO]*)",
-            (Nargs::Parser, false) => "(-*A[-AO]*)",
+            // The subparsers action is always positional and a
+            // zero-argument action always an option.
+            (Nargs::Parser, _) => "(-*A[-AO]*)",
             (Nargs::OneOrMore, true) => "(A[A]*)",
             (Nargs::OneOrMore, false) => "(-*A[A-]*)",
-            (Nargs::Zero, true) => "()",
-            (Nargs::Zero, false) => "(-*)",
+            (Nargs::Zero, _) => "()",
         }
     }
 
@@ -721,7 +696,6 @@ impl Parser {
             None => Err(ArgError(
                 Some(action_name(action)),
                 match action.nargs {
-                    Nargs::Optional => "expected at most one argument".into(),
                     Nargs::OneOrMore => "expected at least one argument".into(),
                     _ => "expected one argument".into(),
                 },
@@ -736,17 +710,12 @@ impl Parser {
                 .map(|a| Self::nargs_pattern(a))
                 .collect();
             let re = regex::Regex::new(&format!("^{joined}")).expect("pattern");
+            // Python drops trailing empty matches before an option; every
+            // positional pattern here needs an `A`, so no match is empty.
             if let Some(c) = re.captures(pattern) {
-                let mut result: Vec<usize> = (1..c.len())
+                return (1..c.len())
                     .map(|g| c.get(g).map_or(0, |m| m.len()))
                     .collect();
-                let end = c.get(0).map_or(0, |m| m.end());
-                if end < pattern.len() && pattern.as_bytes()[end] == b'O' {
-                    while result.last() == Some(&0) {
-                        result.pop();
-                    }
-                }
-                return result;
             }
         }
         vec![]
@@ -800,13 +769,7 @@ impl Parser {
     }
 
     fn values(action: &Action, args: &[String]) -> Result<Value, ArgError> {
-        if args.is_empty() && action.nargs == Nargs::Optional {
-            return match &action.default {
-                Value::Str(s) => Self::convert(action, s),
-                other => Ok(other.clone()),
-            };
-        }
-        if args.len() == 1 && matches!(action.nargs, Nargs::One | Nargs::Optional) {
+        if args.len() == 1 && action.nargs == Nargs::One {
             let value = Self::convert(action, &args[0])?;
             match &value {
                 Value::Int(n) => Self::check(action, &n.to_string())?,
@@ -867,16 +830,14 @@ impl Parser {
                 ns.insert(action.dest.clone(), Value::List(items));
             }
             Kind::Parsers => {
-                let Value::List(values) = value else {
-                    unreachable!()
-                };
-                ns.insert(action.dest.clone(), Value::Str(values[0].clone()));
+                // `values` has checked `args[0]` against the sub-parser names.
+                ns.insert(action.dest.clone(), Value::Str(args[0].clone()));
                 let (_, _, sub) = self
                     .subparsers
                     .iter()
-                    .find(|(name, _, _)| *name == values[0])
+                    .find(|(name, _, _)| *name == args[0])
                     .expect("checked choice");
-                let (sub_ns, sub_extras) = sub.parse_known(&values[1..]).map_err(Fail::Exit)?;
+                let (sub_ns, sub_extras) = sub.parse_known(&args[1..]).map_err(Fail::Exit)?;
                 ns.extend(sub_ns);
                 extras.extend(sub_extras);
             }
@@ -1142,12 +1103,9 @@ fn sequence_ratio(a: &[u32], b: &[u32]) -> f64 {
             }
         }
     }
-    let total = a.len() + b.len();
-    if total == 0 {
-        1.0
-    } else {
-        2.0 * matches as f64 / total as f64
-    }
+    // Never 0 / 0: an empty word equal to an empty choice is accepted
+    // before any close match is sought.
+    2.0 * matches as f64 / (a.len() + b.len()) as f64
 }
 
 fn longest_match(
@@ -1213,7 +1171,6 @@ pub trait Get {
     fn str(&self, key: &str) -> Option<String>;
     fn flag(&self, key: &str) -> bool;
     fn list(&self, key: &str) -> Vec<String>;
-    fn int(&self, key: &str) -> Option<i64>;
 }
 
 impl Get for Namespace {
@@ -1230,12 +1187,6 @@ impl Get for Namespace {
         match self.get(key) {
             Some(Value::List(items)) => items.clone(),
             _ => vec![],
-        }
-    }
-    fn int(&self, key: &str) -> Option<i64> {
-        match self.get(key) {
-            Some(Value::Int(n)) => Some(*n),
-            _ => None,
         }
     }
 }
