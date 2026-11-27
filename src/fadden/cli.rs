@@ -47,19 +47,22 @@ pub const STAGES: [&str; 25] = [
 const USAGE: &str = "usage: fadden {as_at,authorities,capture_register,compare_builds,discover,dist,dist_verify,download,export_live_evidence_bundles,export_monitor_contract,export_publication_bundles,extract,finalize,pii_scan,pii_scan2,probe13,quick,rates,retry13,rulings,rulings_targets,search,state,versions,witness} [arguments ...]\n";
 
 /// Text-mode output: newlines become the platform's line separator.
+#[cfg(windows)]
 fn text_mode(bytes: &[u8]) -> Vec<u8> {
-    if cfg!(windows) {
-        let mut out = Vec::with_capacity(bytes.len());
-        for &b in bytes {
-            if b == b'\n' {
-                out.push(b'\r');
-            }
-            out.push(b);
+    let mut out = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        if b == b'\n' {
+            out.push(b'\r');
         }
-        out
-    } else {
-        bytes.to_vec()
+        out.push(b);
     }
+    out
+}
+
+/// Text-mode output: newlines are the platform's line separator already.
+#[cfg(not(windows))]
+fn text_mode(bytes: &[u8]) -> Vec<u8> {
+    bytes.to_vec()
 }
 
 /// Run the command line; the result is the exit status.
