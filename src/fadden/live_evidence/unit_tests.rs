@@ -34,7 +34,11 @@ fn raised(error: &Exc) -> String {
 /// is null until [`fill_digest`] sets it.
 fn parts() -> (Value, Value, Value) {
     let digest = sha256_id(RESPONSE.as_bytes());
-    let title = json!({
+    (title(), result(&digest), observation(&digest))
+}
+
+fn title() -> Value {
+    json!({
         "register_id": "F2022L00347",
         "name": "Taxation Administration Regulations 2017",
         "collection": "LegislativeInstrument",
@@ -45,8 +49,11 @@ fn parts() -> (Value, Value, Value) {
         "retrieved": "2026-08-05",
         "source_url": "https://www.legislation.gov.au/F2022L00347/2026-08-05/2026-08-05/text/original/epub",
         "register_page": "https://www.legislation.gov.au/F2022L00347/latest/text"
-    });
-    let result = json!({
+    })
+}
+
+fn result(digest: &str) -> Value {
+    json!({
         "register_id": "F2022L00347",
         "collection": "LegislativeInstrument",
         "checked_at": "2026-08-28T00:00:00Z",
@@ -64,8 +71,11 @@ fn parts() -> (Value, Value, Value) {
             "response_sha256": digest,
             "evidence_path": format!("evidence/sha256-{}.json", &digest[7..])
         }]
-    });
-    let observation = json!({
+    })
+}
+
+fn observation(digest: &str) -> Value {
+    json!({
         "register_id": "F2022L00347",
         "collection": "LegislativeInstrument",
         "state": "SUPERSEDED",
@@ -80,8 +90,7 @@ fn parts() -> (Value, Value, Value) {
         "capture_result_sha256": null,
         "primary_response_sha256": digest,
         "primary_response_media_type": "application/json"
-    });
-    (title, result, observation)
+    })
 }
 
 /// Set a null `capture_result_sha256` to the projected result's digest.
@@ -124,10 +133,15 @@ fn the_unedited_candidate_is_accepted() {
     assert!(is(get(&bundle, "schema_version"), "evidence-bundle.v2"));
 }
 
+fn refusals(cases: Vec<(Edit, &str)>) {
+    for (edit, expected) in cases {
+        assert_eq!(refusal(edit), expected);
+    }
+}
+
 #[test]
-fn each_candidate_field_is_checked() {
-    let other = format!("sha256:{}", "0".repeat(64));
-    let cases: Vec<(Edit, &str)> = vec![
+fn the_projections_and_identifiers_are_checked() {
+    refusals(vec![
         (
             Box::new(|t, _, _| t["register_id"] = json!("f2022l00347")),
             "baseline title register_id is invalid.",
@@ -155,6 +169,13 @@ fn each_candidate_field_is_checked() {
             Box::new(|_, r, _| r["requests"] = json!([])),
             "SUPERSEDED capture result must have one request.",
         ),
+    ]);
+}
+
+#[test]
+fn the_request_must_declare_the_retained_response() {
+    let other = format!("sha256:{}", "0".repeat(64));
+    refusals(vec![
         (
             Box::new(|_, r, _| r["requests"][0]["response_sha256"] = json!(5)),
             "response SHA-256 must be non-empty text.",
@@ -175,6 +196,12 @@ fn each_candidate_field_is_checked() {
             Box::new(|_, _, o| o["primary_response_sha256"] = json!("sha256:0")),
             "observation response digest does not match the capture request.",
         ),
+    ]);
+}
+
+#[test]
+fn the_candidate_must_be_a_current_superseded_json_capture() {
+    refusals(vec![
         (
             Box::new(|_, r, _| r["state"] = json!("UNCHANGED")),
             "candidate state is not SUPERSEDED.",
@@ -203,10 +230,7 @@ fn each_candidate_field_is_checked() {
             Box::new(|_, _, o| o["capture_result_sha256"] = json!("sha256:0")),
             "observation capture result digest is invalid.",
         ),
-    ];
-    for (edit, expected) in cases {
-        assert_eq!(refusal(edit), expected);
-    }
+    ]);
 }
 
 #[test]
@@ -293,16 +317,26 @@ fn read_json_refuses_duplicates_non_objects_and_escapes_the_digit_limit() {
 fn snapshot(
     edit: impl FnOnce(&mut Value, &mut Value, &mut Value),
 ) -> Result<(String, Vec<(String, Json)>), Exc> {
+    let (mut baseline, mut capture, mut observation) = graph();
+    edit(&mut baseline, &mut capture, &mut observation);
+    let dir = tempfile::tempdir().unwrap();
+    write_graph(dir.path(), &baseline, &mut capture, &mut observation);
+    build_validated_snapshot(dir.path().to_str().unwrap())
+}
+
+/// The baseline, capture and observation documents over [`parts`], with
+/// null graph digests.
+fn graph() -> (Value, Value, Value) {
     let (title, result, mut item) = parts();
     fill_digest(&result, &mut item);
-    let mut baseline = json!({"titles": [title]});
-    let mut capture = json!({
+    let baseline = json!({"titles": [title]});
+    let capture = json!({
         "schema_version": "au-tax-register-capture.v1",
         "mode": "live",
         "baseline_sha256": null,
         "results": [result]
     });
-    let mut observation = json!({
+    let observation = json!({
         "schema_version": "au-tax-register-observation.v4",
         "mode": "live",
         "scope_id": "au-primary-tax-legislation.v4",
@@ -313,34 +347,40 @@ fn snapshot(
         "capture_sha256": null,
         "observations": [item]
     });
-    edit(&mut baseline, &mut capture, &mut observation);
-    let dir = tempfile::tempdir().unwrap();
+    (baseline, capture, observation)
+}
+
+/// Write the graph and `RESPONSE` into `dir`, filling in null digests.
+fn write_graph(
+    dir: &std::path::Path,
+    baseline: &Value,
+    capture: &mut Value,
+    observation: &mut Value,
+) {
     let write = |name: &str, value: &Value| {
         let bytes = value.to_string().into_bytes();
-        std::fs::write(dir.path().join(name), &bytes).unwrap();
+        std::fs::write(dir.join(name), &bytes).unwrap();
         sha256_id(&bytes)
     };
-    let baseline_sha256 = write("monitor-baseline.json", &baseline);
-    for document in [&mut capture, &mut observation] {
+    let baseline_sha256 = write("monitor-baseline.json", baseline);
+    for document in [&mut *capture, &mut *observation] {
         if document["baseline_sha256"].is_null() {
             document["baseline_sha256"] = json!(baseline_sha256);
         }
     }
-    let capture_sha256 = write("register-capture.json", &capture);
+    let capture_sha256 = write("register-capture.json", capture);
     if observation["capture_sha256"].is_null() {
         observation["capture_sha256"] = json!(capture_sha256);
     }
-    write("register-observation.json", &observation);
+    write("register-observation.json", observation);
     let digest = sha256_id(RESPONSE.as_bytes());
-    std::fs::create_dir(dir.path().join("evidence")).unwrap();
+    std::fs::create_dir(dir.join("evidence")).unwrap();
     std::fs::write(
-        dir.path()
-            .join("evidence")
+        dir.join("evidence")
             .join(format!("sha256-{}.json", &digest[7..])),
         RESPONSE,
     )
     .unwrap();
-    build_validated_snapshot(dir.path().to_str().unwrap())
 }
 
 #[test]
