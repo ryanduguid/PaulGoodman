@@ -88,11 +88,9 @@ fn cp437(bytes: &[u8]) -> String {
 /// `_sanitize_filename`: cut at the first NUL; Windows maps `\` to `/`.
 fn sanitize(name: &str) -> String {
     let name = name.split('\0').next().unwrap_or_default();
-    if cfg!(windows) {
-        name.replace('\\', "/")
-    } else {
-        name.to_string()
-    }
+    #[cfg(windows)]
+    let name = name.replace('\\', "/");
+    name.to_string()
 }
 
 /// `bytes[start:end]` with Python's clamping.
@@ -513,13 +511,12 @@ pub fn check_read(data: &[u8]) -> Result<(), String> {
     let Ok(epub) = from_bytes(data.to_vec()) else {
         return Ok(());
     };
-    for name in epub.namelist() {
+    for info in &epub.members {
+        // `read` returns the first member with the name, as zipfile does;
+        // names are unique once admitted, so that member is `info`.
+        let name = &info.filename;
         let Ok(content) = epub.read(name) else {
             continue;
-        };
-        // `read` returns the first member with the name, as zipfile does.
-        let Some(info) = epub.members.iter().find(|m| m.filename == name) else {
-            return Err(format!("{name:?} is listed but has no member"));
         };
         if content.len() as u64 != info.file_size || crc32(&content, 0) != info.crc {
             return Err(format!(
