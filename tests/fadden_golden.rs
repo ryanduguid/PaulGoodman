@@ -78,6 +78,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use regex::Regex;
 use serde_json::Value;
@@ -723,11 +724,32 @@ fn family(name: &str) {
     let shared = tempfile::tempdir().unwrap();
     let module = shared.path().join("fadden");
     copy_module(&module);
+    // Each case has its own directory and only reads the shared module, so the
+    // cases run in parallel; their failures are reported in case order.
     let run = |dates: &[String]| -> Vec<String> {
-        cases
-            .iter()
-            .filter_map(|case| run_case(name, case, &module, dates))
-            .collect()
+        let next = AtomicUsize::new(0);
+        let workers = std::thread::available_parallelism().map_or(1, usize::from);
+        let worker = || {
+            let mut found = Vec::new();
+            loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(case) = cases.get(index) else {
+                    return found;
+                };
+                found.extend(run_case(name, case, &module, dates).map(|p| (index, p)));
+            }
+        };
+        let mut found: Vec<(usize, String)> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..workers.min(cases.len()))
+                .map(|_| scope.spawn(worker))
+                .collect();
+            threads
+                .into_iter()
+                .flat_map(|t| t.join().unwrap())
+                .collect()
+        });
+        found.sort_unstable_by_key(|(index, _)| *index);
+        found.into_iter().map(|(_, problem)| problem).collect()
     };
     // finalize is given today's date; a run across midnight is run again
     // accepting either day.
