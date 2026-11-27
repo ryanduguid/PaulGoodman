@@ -204,3 +204,41 @@ fn fetch_json_stops_the_stage_on_the_errors_it_does_not_catch() {
     let mut fake = Scripted(vec![body("[]"), Err(Failure::Status(500)), body("x")]);
     assert!(fetch_json(&mut fake, "u").unwrap().is_none());
 }
+
+#[test]
+fn small_parsers_follow_urllib_and_http_client() {
+    // A proxy without a scheme or an authority slash is all host:port.
+    assert_eq!(
+        parse_proxy("proxyhost").unwrap(),
+        (None, None, None, "proxyhost")
+    );
+    assert_eq!(
+        parse_proxy("http://user@p:1").unwrap(),
+        (Some("http".into()), Some("user"), None, "p:1")
+    );
+    // A header block cut off before its line break still yields the field.
+    assert_eq!(
+        parse_header_lines(&[b"A: 1".to_vec()]),
+        [("A".into(), "1".into())]
+    );
+    // A query straight after the host gets a leading slash.
+    let req = Req::new("http://h?q=1", Vec::new()).unwrap();
+    assert_eq!((req.host.as_str(), req.selector.as_str()), ("h", "/?q=1"));
+    let mut headers = Vec::new();
+    set_header(&mut headers, "A", "1");
+    set_header(&mut headers, "B", "2");
+    set_header(&mut headers, "A", "3");
+    assert_eq!(
+        headers,
+        [("A".to_owned(), "3".to_owned()), ("B".into(), "2".into())]
+    );
+}
+
+#[test]
+fn redirect_targets_are_split_quoted_and_joined_as_urllib_does() {
+    let target = |location| redirect_target("http://h/x/y", location).unwrap();
+    assert_eq!(target("a;p").as_deref(), Some("http://h/x/a;p"));
+    assert_eq!(target("http://other").as_deref(), Some("http://other/"));
+    assert_eq!(target("/p;").as_deref(), Some("http://h/p"));
+    assert_eq!(target("data:x"), None);
+}

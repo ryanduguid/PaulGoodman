@@ -1265,10 +1265,6 @@ impl Body {
         let mut buf = [0u8; 65_536];
         while left > 0 {
             let room = sink.room();
-            if room == 0 {
-                sink.out.flush()?;
-                return Ok(Some((true, None)));
-            }
             let want = usize::try_from(left.min(u128::from(room)).min(65_536)).unwrap();
             match self.wire.read(&mut buf[..want]) {
                 Ok(0) => return Ok(Some(sink.failed("IncompleteRead".into()))),
@@ -1290,10 +1286,6 @@ impl Body {
         let mut wire_read = 0u64;
         loop {
             let room = sink.room();
-            if room == 0 {
-                sink.out.flush()?;
-                return Ok((true, None));
-            }
             let want = match self.length {
                 Some(len) => {
                     let rem = len.saturating_sub(wire_read);
@@ -1337,11 +1329,12 @@ struct Sink<'a, W: Write> {
 }
 
 impl<W: Write> Sink<'_, W> {
-    /// Bytes still accepted before the budget is exceeded by one.
+    /// Bytes still accepted before the budget is exceeded by one; at least 1,
+    /// as `write` ends the stream once `written` passes `max_bytes`.
     fn room(&self) -> u64 {
         self.max_bytes
-            .saturating_add(1)
             .saturating_sub(self.written)
+            .saturating_add(1)
     }
 
     /// Write `bytes`; true once more than the budget has been written (flushed).
