@@ -428,12 +428,9 @@ fn stale_source_lines(records: &[Json]) -> Result<Vec<P>, Exc> {
     for r in records {
         if matches!(r.get("version_is_current"), Some(Json::Bool(false))) {
             let id = or(field(r, "register_id"), &unknown).clone();
-            let key = pyvalue::key(&id).map_err(|m| {
-                Exc::Type(format!(
-                    "cannot use '{}' as a dict key ({m})",
-                    type_name(&id)
-                ))
-            })?;
+            // render_rates_markdown has already refused every truthy id that
+            // does not hash, and a falsy one is "unknown".
+            let key = pyvalue::key(&id).map_err(Exc::Type)?;
             if !stale.iter().any(|(k, _, _)| *k == key) {
                 stale.push((key, id, r));
             }
@@ -2265,6 +2262,33 @@ mod tests {
             )
         );
         assert!(!rewritten.contains("raw EPUBs"));
+    }
+
+    #[test]
+    fn dict_keys_take_their_json_spelling() {
+        for (value, spelled) in [
+            (Json::Null, "null"),
+            (Json::Bool(true), "true"),
+            (Json::Bool(false), "false"),
+            (Json::str("Act"), "Act"),
+            (int(7), "7"),
+        ] {
+            assert_eq!(json_key(&value).code_points(), pts(spelled));
+        }
+    }
+
+    #[test]
+    fn set_changes_only_an_object() {
+        let mut list = Json::Array(vec![int(1)]);
+        set(&mut list, "rate_id", Json::str("R00001"));
+        assert!(matches!(&list, Json::Array(items) if items.len() == 1));
+        let mut object = Json::obj([("rate_id", Json::str("R00009"))]);
+        set(&mut object, "rate_id", Json::str("R00001"));
+        set(&mut object, "kind", Json::str("rate"));
+        assert_eq!(
+            dumps_line(&object, false),
+            pts(r#"{"rate_id": "R00001", "kind": "rate"}"#)
+        );
     }
 
     /// What `json.dump` leaves in the file and raises for a lone surrogate:

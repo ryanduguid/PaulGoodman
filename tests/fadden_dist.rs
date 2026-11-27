@@ -3827,3 +3827,313 @@ fn documents_the_ato_notice_does_not_cover_are_left_out_and_listed() {
         "FAIL"
     );
 }
+
+// ------------------------------------------- rates index and REMOVED.md edges
+
+fn rates_md(rows: &[Value]) -> Result<String, String> {
+    let records: Vec<Json> = rows.iter().map(pyjson_value).collect();
+    dist::render_rates_markdown(&records)
+        .map(|md| points(&md))
+        .map_err(|e| format!("{}: {e}", e.class()))
+}
+
+/// A public rate row with `changes` applied over it.
+fn rate_row(changes: Value) -> Value {
+    let mut row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": "Act", "section": "1",
+                         "heading": "Public rate", "topic": "income tax rates", "kind": "rate",
+                         "amounts": ["10%"], "content": "The public rate is 10%."});
+    for (key, value) in changes.as_object().unwrap() {
+        row[key] = value.clone();
+    }
+    row
+}
+
+#[test]
+fn rate_amounts_join_as_python_joins_each_iterable() {
+    let md = rates_md(&[
+        rate_row(json!({"amounts": {"5%": 1, "6%": 2}})),
+        rate_row(json!({"amounts": "7%"})),
+        rate_row(json!({"register_id": ""})),
+    ])
+    .unwrap();
+    assert!(md.contains("| rate | 5%, 6% |"), "{md}");
+    assert!(md.contains("| rate | 7, % |"), "{md}");
+    // A row with no register id is counted as an entry, not as a title.
+    assert!(md.contains("3 entries across 1 titles."), "{md}");
+    for (amounts, message) in [
+        (json!(5), "TypeError: can only join an iterable"),
+        (
+            json!(["5%", 1]),
+            "TypeError: sequence item 1: expected str instance, int found",
+        ),
+    ] {
+        assert_eq!(
+            rates_md(&[rate_row(json!({ "amounts": amounts }))]),
+            Err(message.to_string())
+        );
+    }
+}
+
+#[test]
+fn rate_rows_python_cannot_index_raise_its_type_errors() {
+    assert_eq!(
+        rates_md(&[rate_row(json!({"register_id": [PUBLIC_ID]}))]),
+        Err("TypeError: cannot use 'list' as a set element (unhashable type: 'list')".into())
+    );
+    assert_eq!(
+        rates_md(&[rate_row(json!({"topic": 5}))]),
+        Err("TypeError: can only concatenate str (not \"int\") to str".into())
+    );
+    // `"\n".join(md)` names the first non-str table body once all is built.
+    let table = |content: Value| rate_row(json!({"kind": "table", "content": content}));
+    let error =
+        rates_md(&[table(json!(5)), table(json!(["x"])), table(json!("| a |"))]).unwrap_err();
+    assert!(
+        error.starts_with("TypeError: sequence item ")
+            && error.ends_with(": expected str instance, int found"),
+        "{error}"
+    );
+}
+
+fn edit_json(path: &Path, change: impl FnOnce(&mut Value)) {
+    let mut value = read_json(path);
+    change(&mut value);
+    std::fs::write(path, value.to_string()).unwrap();
+}
+
+#[test]
+fn a_row_collection_python_cannot_count_is_its_type_error() {
+    let f = fixture();
+    let marker = with_existing_dist(&f);
+    let row = json!({"register_id": PUBLIC_ID, "act": PUBLIC_NAME, "collection": ["Act"], "section": "1",
+                     "heading": "Public rate", "kind": "section", "text": "The public rate is 10%."});
+    write(
+        &f.root
+            .join("markdown")
+            .join(PUBLIC_ID)
+            .join("sections.jsonl"),
+        &format!("{row}\n"),
+    );
+    assert_eq!(
+        publish_in_process(&f),
+        Err("TypeError: cannot use 'list' as a dict key (unhashable type: 'list')".into())
+    );
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me");
+    assert!(managed_paths(&f).is_empty());
+}
+
+#[test]
+fn a_rate_register_id_python_cannot_hash_is_its_type_error() {
+    let f = fixture();
+    let row = rate_row(json!({"register_id": [PUBLIC_ID]}));
+    write(
+        &f.root.join("rates").join("rates.jsonl"),
+        &format!("{row}\n"),
+    );
+    assert_eq!(
+        publish_in_process(&f),
+        Err("TypeError: cannot use 'list' as a set element (unhashable type: 'list')".into())
+    );
+    assert!(managed_paths(&f).is_empty());
+}
+
+#[test]
+fn a_rate_row_holding_a_lone_surrogate_stops_after_the_rows_before_it() {
+    let f = fixture();
+    let good = rate_row(json!({}));
+    let bad = r#"{"register_id": "C2004A00001", "act": "Public Tax Act", "heading": "\ud800"}"#;
+    write(
+        &f.root.join("rates").join("rates.jsonl"),
+        &format!("{good}\n{bad}\n"),
+    );
+    let error = publish_in_process(&f).unwrap_err();
+    assert!(
+        error.starts_with("UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800'"),
+        "{error}"
+    );
+    assert!(managed_paths(&f).is_empty());
+}
+
+#[test]
+fn sources_without_the_optional_title_lists_publish() {
+    let f = fixture();
+    edit_json(&f.root.join("sources.json"), |sources| {
+        let sources = sources.as_object_mut().unwrap();
+        sources.remove("titles_without_epub");
+        sources.remove("titles_not_current_version");
+    });
+    let shipped = read_json(&publish(&f).join("sources.json"));
+    assert_eq!(shipped["titles_without_epub"], json!([]));
+    assert_eq!(shipped["titles_not_current_version"], json!([]));
+}
+
+fn flag(changes: Value) -> Value {
+    let mut entry = json!({"register_id": PRIVATE_ID, "name": PRIVATE_NAME, "rows_total": 1,
+                           "rows_flagged": 1, "names_est": 3, "words": 3});
+    for (key, value) in changes.as_object().unwrap() {
+        entry[key] = value.clone();
+    }
+    entry
+}
+
+#[test]
+fn a_title_flagged_twice_is_listed_once_from_its_last_entry() {
+    let f = fixture();
+    let entries = json!([
+        flag(json!({})),
+        flag(json!({"names_est": true, "rows_total": 2.9}))
+    ]);
+    write(&f.build.join("pii_flagged.json"), &entries.to_string());
+    let removed = std::fs::read_to_string(publish(&f).join("REMOVED.md")).unwrap();
+    let row = format!(
+        "| [{PRIVATE_ID}](https://www.legislation.gov.au/{PRIVATE_ID}/latest/text) | 2 | {PRIVATE_NAME} |"
+    );
+    assert_eq!(removed.matches(&row).count(), 1, "{removed}");
+}
+
+#[test]
+fn flagged_counts_python_cannot_format_raise_its_errors() {
+    for (text, message) in [
+        (
+            r#""names_est": "3""#,
+            "TypeError: bad operand type for unary -: 'str'",
+        ),
+        (r#""names_est": 2.5, "rows_total": true"#, ""),
+        (
+            r#""rows_total": NaN"#,
+            "ValueError: cannot convert float NaN to integer",
+        ),
+        (
+            r#""rows_total": -Infinity"#,
+            "OverflowError: cannot convert float infinity to integer",
+        ),
+        (
+            r#""rows_total": "1""#,
+            "TypeError: format argument 3: %d requires a real number, not str",
+        ),
+    ] {
+        let f = fixture();
+        let entry = format!(
+            r#"[{{"register_id": "{PRIVATE_ID}", "name": "{PRIVATE_NAME}", "rows_total": 1, "rows_flagged": 1, "names_est": 3, "words": 3, {text}}}]"#
+        );
+        write(&f.build.join("pii_flagged.json"), &entry);
+        let outcome = publish_in_process(&f);
+        if message.is_empty() {
+            assert_eq!(outcome, Ok(()), "{text}");
+            let removed = std::fs::read_to_string(f.dist().join("REMOVED.md")).unwrap();
+            assert!(
+                removed.contains(" | 1 | Private Disciplinary Register |"),
+                "{removed}"
+            );
+        } else {
+            assert_eq!(outcome, Err(message.to_string()), "{text}");
+            assert!(managed_paths(&f).is_empty());
+        }
+    }
+}
+
+#[test]
+fn a_restricted_standard_listed_twice_is_excluded_once() {
+    let f = fixture();
+    let standard = "F2015L01601";
+    edit_json(&f.root.join("sources.json"), |sources| {
+        let mut title = sources["titles"][0].clone();
+        title["register_id"] = json!(standard);
+        for name in ["AASB 112 - first listing", "AASB 112 - last listing"] {
+            title["name"] = json!(name);
+            sources["titles"]
+                .as_array_mut()
+                .unwrap()
+                .push(title.clone());
+        }
+    });
+    let readme = f.root.join("README.md");
+    let text = std::fs::read_to_string(&readme)
+        .unwrap()
+        .replace("2 in-force principal titles", "4 in-force principal titles");
+    std::fs::write(&readme, text).unwrap();
+    let shipped = read_json(&publish(&f).join("sources.json"));
+    let excluded: Vec<&Value> = shipped["excluded_titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["register_id"] == standard)
+        .collect();
+    assert_eq!(
+        excluded,
+        [
+            &json!({"register_id": standard, "name": "AASB 112 - last listing",
+                  "reason": "restrictive copyright notice; see REMOVED.md"})
+        ]
+    );
+}
+
+#[test]
+fn a_compilations_entry_that_is_not_a_directory_is_refused() {
+    let f = fixture();
+    write(&f.root.join("compilations"), "not a folder\n");
+    assert_eq!(
+        publish_in_process(&f),
+        Err("RuntimeError: compilations is not a real directory".into())
+    );
+    let f = fixture();
+    write(
+        &f.root.join("compilations").join("2026-01-01"),
+        "not a folder\n",
+    );
+    assert_eq!(
+        publish_in_process(&f),
+        Err("RuntimeError: compilations/2026-01-01 is not a directory".into())
+    );
+    assert!(managed_paths(&f).is_empty());
+}
+
+/// Python's `shutil.copytree` collects each failed entry into one
+/// `shutil.Error`: a file it cannot read, a pipe, and a nested directory's own
+/// failures, including one it cannot list.
+#[cfg(unix)]
+#[test]
+fn copy_failures_are_collected_into_one_shutil_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    let marker = with_existing_dist(&f);
+    let title = f.root.join("markdown").join(PUBLIC_ID);
+    let shown = title.clone();
+    dist::set_preflight_hook(move || {
+        let locked = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let md = shown.join(format!("{PUBLIC_ID}.md"));
+        locked(&md, 0o000);
+        let pipe = std::ffi::CString::new(s(&shown.join("pipe"))).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(pipe.as_ptr(), 0o600) }, 0);
+        let nested = shown.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("note.md"), "note\n").unwrap();
+        locked(&nested.join("note.md"), 0o000);
+        let closed = nested.join("closed");
+        std::fs::create_dir(&closed).unwrap();
+        locked(&closed, 0o000);
+    });
+    let error = publish_in_process(&f).unwrap_err();
+    dist::set_preflight_hook(|| {});
+    for path in [
+        title.join(format!("{PUBLIC_ID}.md")),
+        title.join("nested").join("note.md"),
+        title.join("nested").join("closed"),
+    ] {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    assert!(error.starts_with("shutil.Error: [("), "{error}");
+    for needle in [
+        format!("{PUBLIC_ID}.md', \"[Errno 13] Permission denied: "),
+        "note.md', \"[Errno 13] Permission denied: ".to_string(),
+        "closed'".to_string(),
+        "pipe` is a named pipe".to_string(),
+    ] {
+        assert!(error.contains(&needle), "{error} lacks {needle}");
+    }
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me");
+    assert!(managed_paths(&f).is_empty());
+}
