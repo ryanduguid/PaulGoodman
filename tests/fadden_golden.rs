@@ -6,55 +6,19 @@
 //! replaced (the base revision, 43b5e0c) on Windows and on Linux. Every input
 //! is fabricated. For each case the binary must exit as Python did, print what
 //! Python printed (the last line of a traceback where Python printed one), and
-//! leave every file with the recorded SHA-256 of its normalised text. The
-//! `compare_builds` cases depart from 43b5e0c on purpose: they were re-recorded
-//! against a stricter `compare_builds.py` that refuses repeated JSON members,
-//! rows naming another title, section metadata that is not text and rows from
-//! two compilations, and lists each title found in only one build. Where that
-//! Python admits a lone surrogate in a container, section, heading, compilation
-//! number or compilation date and then fails while printing it, the binary
-//! refuses the row before printing anything (`tests/fadden_compare_builds.rs`);
-//! no golden case holds that input.
-//!
-//! No Python search stage remains, so the search cases were edited by hand where
-//! search changed: #284 (0ee6bc4) re-recorded index digests and usage text, and
-//! #286 (7d6fdcc) added the `refs` line saying an index holds no rulings, and
-//! `define --json` gained the `"defined": false` line it prints first for a term
-//! with no definition of its own (3 steps).
-//!
-//! The rulings cases' `LICENCE-NOTICE.md` digest was re-recorded by hand when
-//! the stage's notice dropped a sentence the ATO's copyright notice does not ask
-//! for; no other rulings output changed.
-//!
-//! The discover cases that finish (1, 3, 5 and 7) depart from 43b5e0c on
-//! purpose: after its keyword searches `discover` fetches the reviewed named
-//! titles in one request, so each script gained the Register's answer and each
-//! output was re-recorded with those titles appended. Cases 8 and 9 have no
-//! Python counterpart: a named title the Register no longer holds in force, and
-//! one a keyword already matches.
-//!
-//! The finalize fixtures refresh the shipped http_fetch.py digest for the
-//! PaulGoodman contact URL.
+//! leave every file with the recorded SHA-256 of its normalised text. Some
+//! stages' cases depart from the base revision on purpose; each stage's
+//! departures are in its own paragraph below, so regenerating that stage's
+//! cases from the base revision would undo them.
 //!
 //! Outputs are normalised as the harness normalised them: the case directory
 //! reads `ROOT`, the module directory `MODULE`, generated stage, backup and
 //! temporary names `HEX`, whole-second sleeps in the discover and versions
 //! fake-http logs `sleep N`, finalize's date `TODAY` (today's, taken from the
 //! operating system before and after the cases, so a run across midnight
-//! accepts either day), and bytes that are not UTF-8 `\xNN`. finalize's
-//! `build/build-record.json` holds a timestamp and the binary's digest, so it
-//! is checked whole by `check_build_record` rather than by a recorded hash.
-//! Search schema 4 deliberately adds captured-window metadata and a Porter
-//! index. Its valid databases use the independent Python logical oracle in
-//! `search-indexes.json`, including original and new FTS postings; malformed
-//! files keep their frozen hashes. Query usage adds only the `--exact` and `--stem` flags
-//! and the `--max-chars` and `--source` options.
-//! The `retry13`, `download` and `quick` cases were recorded from 1913ba9,
-//! the last revision with those Python stages, with the harness's Python side
-//! answering each curl call from the script. The Python stages downloaded
-//! through curl and the binary downloads in process, so a transport failure
-//! names the error (`URLError`) where Python named curl's exit status
-//! (`curl exit 7`); that one wording is recorded as the binary prints it.
+//! accepts either day), and bytes that are not UTF-8 `\xNN`. `departed` maps
+//! the wording fixes the finalize and dist paragraphs list back to Python's
+//! text before hashing.
 //!
 //! `capture_register`, `rulings`, `probe13`, `discover`, `versions`,
 //! `retry13` and `download` fetch over HTTP, so their cases need the scripted responses of the `fake-http`
@@ -62,22 +26,65 @@
 //! leaves out the other cases, which the default run covers and which never
 //! reach the script. How hard can it be? (Top Gear)
 //!
-//! 5 wording fixes depart from Python on purpose, and `departed` maps each
-//! back to Python's text before hashing: finalize's README says "about 1
-//! minute" where Python said "1 minutes" and "retrieval dates can vary" where
-//! Python said they "vary", and its README and `sources.json` selection add the
-//! reviewed named titles `discover` appends (above); dist's REMOVED.md names
-//! the contact allowlist's size as that, where Python called it the contacts
-//! the second pass approved, and names the licence's exclusions, where Python
-//! said the grant covered everything but the Coat of Arms. dist's other
-//! departures never reach these cases: its README and LICENCE-NOTICE.md
-//! section rewrites and its `licence_note` apply only to finalize's title,
-//! headings and note, which no dist input holds, so those are covered by
-//! tests/fadden_dist.rs alone.
+//! `compare_builds`: the cases were re-recorded against a stricter
+//! `compare_builds.py` that refuses repeated JSON members, rows naming another
+//! title, section metadata that is not text and rows from two compilations, and
+//! lists each title found in only one build. Where that Python admits a lone
+//! surrogate in a container, section, heading, compilation number or
+//! compilation date and then fails while printing it, the binary refuses the
+//! row before printing anything (`tests/fadden_compare_builds.rs`); no golden
+//! case holds that input.
+//!
+//! `discover`: the cases that finish (1, 3, 5 and 7) depart from 43b5e0c on
+//! purpose: after its keyword searches `discover` fetches the reviewed named
+//! titles in one request, so each script gained the Register's answer and each
+//! output was re-recorded with those titles appended. Cases 8 and 9 have no
+//! Python counterpart: a named title the Register no longer holds in force, and
+//! one a keyword already matches.
+//!
+//! `dist`: 2 wording fixes depart from Python on purpose. REMOVED.md names the
+//! contact allowlist's size as that, where Python called it the contacts the
+//! second pass approved, and names the licence's exclusions, where Python said
+//! the grant covered everything but the Coat of Arms. dist's other departures
+//! never reach these cases: its README and LICENCE-NOTICE.md section rewrites
+//! and its `licence_note` apply only to finalize's title, headings and note,
+//! which no dist input holds, so those are covered by tests/fadden_dist.rs
+//! alone.
+//!
+//! `download`, `quick` and `retry13`: the cases were recorded from 1913ba9,
+//! the last revision with those Python stages, with the harness's Python side
+//! answering each curl call from the script. The Python stages downloaded
+//! through curl and the binary downloads in process, so a transport failure
+//! names the error (`URLError`) where Python named curl's exit status
+//! (`curl exit 7`); that one wording is recorded as the binary prints it.
+//!
+//! `finalize`: 3 wording fixes depart from Python on purpose. Its README says
+//! "about 1 minute" where Python said "1 minutes" and "retrieval dates can
+//! vary" where Python said they "vary", and its README and `sources.json`
+//! selection add the reviewed named titles `discover` appends. The fixtures
+//! refresh the shipped http_fetch.py digest for the PaulGoodman contact URL.
+//! `build/build-record.json` holds a timestamp and the binary's digest, so it
+//! is checked whole by `check_build_record` rather than by a recorded hash.
+//!
+//! `rulings`: the cases' `LICENCE-NOTICE.md` digest was re-recorded by hand
+//! when the stage's notice dropped a sentence the ATO's copyright notice does
+//! not ask for; no other rulings output changed.
+//!
+//! `search`: no Python search stage remains, so the cases were edited by hand
+//! where search changed: #284 (0ee6bc4) re-recorded index digests and usage
+//! text, and #286 (7d6fdcc) added the `refs` line saying an index holds no
+//! rulings, and `define --json` gained the `"defined": false` line it prints
+//! first for a term with no definition of its own (3 steps). Search schema 4
+//! deliberately adds captured-window metadata and a Porter index. Its valid
+//! databases use the independent Python logical oracle in
+//! `search-indexes.json`, including original and new FTS postings; malformed
+//! files keep their frozen hashes. Query usage adds only the `--exact` and
+//! `--stem` flags and the `--max-chars` and `--source` options.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use regex::Regex;
 use serde_json::Value;
@@ -723,11 +730,32 @@ fn family(name: &str) {
     let shared = tempfile::tempdir().unwrap();
     let module = shared.path().join("fadden");
     copy_module(&module);
+    // Each case has its own directory and only reads the shared module, so the
+    // cases run in parallel; their failures are reported in case order.
     let run = |dates: &[String]| -> Vec<String> {
-        cases
-            .iter()
-            .filter_map(|case| run_case(name, case, &module, dates))
-            .collect()
+        let next = AtomicUsize::new(0);
+        let workers = std::thread::available_parallelism().map_or(1, usize::from);
+        let worker = || {
+            let mut found = Vec::new();
+            loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(case) = cases.get(index) else {
+                    return found;
+                };
+                found.extend(run_case(name, case, &module, dates).map(|p| (index, p)));
+            }
+        };
+        let mut found: Vec<(usize, String)> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..workers.min(cases.len()))
+                .map(|_| scope.spawn(worker))
+                .collect();
+            threads
+                .into_iter()
+                .flat_map(|t| t.join().unwrap())
+                .collect()
+        });
+        found.sort_unstable_by_key(|(index, _)| *index);
+        found.into_iter().map(|(_, problem)| problem).collect()
     };
     // finalize is given today's date; a run across midnight is run again
     // accepting either day.
