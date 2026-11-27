@@ -206,6 +206,18 @@ fn invalid_choices_suggest_a_close_match() {
         &["x", "--pair", &long],
         &format!("argument --pair: invalid choice: '{long}' {choices}"),
     );
+    // Below difflib's 0.6 cutoff once the match before "ab" finds its only
+    // "z" past the end of that sub-range.
+    let parser = Parser::new("q").arg(Action::option("--code").choices(&["zabq"]));
+    assert_eq!(
+        outcome(&parser, &["--code", "qabz"]).unwrap_err(),
+        (
+            2,
+            "usage: q [-h] [--code {zabq}]\nq: error: argument --code: invalid choice: \
+             'qabz' (choose from 'zabq')\n"
+                .to_string()
+        )
+    );
 }
 
 #[test]
