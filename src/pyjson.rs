@@ -582,15 +582,24 @@ pub fn check_round_trip(data: &[u8]) -> Result<(), String> {
             .collect::<Result<_, _>>()?;
         let again =
             loads_standard(&once).map_err(|e| format!("{once:?} does not decode: {e:?}"))?;
-        let twice: Vec<u32> = crate::pyvalue::dumps_with(&again, None, true, false);
-        if twice
-            .into_iter()
-            .filter_map(char::from_u32)
-            .collect::<String>()
-            != once
-        {
-            return Err(format!("{once:?} changed in a round trip"));
-        }
+        same_text(
+            &once,
+            &crate::pyvalue::dumps_with(&again, None, true, false),
+        )?;
+    }
+    Ok(())
+}
+
+/// `twice`, as text, is `once`.
+fn same_text(once: &str, twice: &[u32]) -> Result<(), String> {
+    if twice
+        .iter()
+        .copied()
+        .filter_map(char::from_u32)
+        .collect::<String>()
+        != once
+    {
+        return Err(format!("{once:?} changed in a round trip"));
     }
     Ok(())
 }
@@ -1127,7 +1136,7 @@ mod tests {
             err(&"{\"a\":".repeat(MAX_DEPTH + 1)),
             DecodeError::Recursion("object")
         );
-        assert_eq!(loads(r#""\b\f""#).unwrap(), Json::str("\u{8}\u{c}"));
+        assert_eq!(loads(r#""\b\f\r""#).unwrap(), Json::str("\u{8}\u{c}\r"));
     }
 
     /// `json.loads(bytes)` in each encoding `json.detect_encoding` picks, as
@@ -1146,6 +1155,7 @@ mod tests {
             }
         };
         for (hex, expected) in [
+            ("efbbbf31", "1"),
             ("0000feff000000220000006100000022", r#""a""#),
             ("fffe0000220000006100000022000000", r#""a""#),
             ("feff005b0031005d", "[1]"),
@@ -1190,11 +1200,18 @@ mod tests {
         assert!(Json::Str(lone).truthy());
         let mut record = Json::Object(vec![(PyStr::Text("a".into()), Json::Int(1.into()))]);
         set_field(&mut record, "b", Json::Int(2.into()));
+        let mut not_a_record = Json::Null;
+        set_field(&mut not_a_record, "b", Json::Null);
+        assert_eq!(not_a_record, Json::Null);
         assert_eq!(dumps(&record, Layout::Canonical), r#"{"a":1,"b":2}"#);
     }
 
     #[test]
     fn the_round_trip_check_skips_bytes_that_are_not_utf8() {
+        assert_eq!(
+            same_text("[1]", &[0x5b, 0x32, 0x5d]),
+            Err(r#""[1]" changed in a round trip"#.into())
+        );
         assert_eq!(check_round_trip(b"\"\xff\""), Ok(()));
     }
 }
