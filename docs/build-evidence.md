@@ -96,6 +96,19 @@ One run of `python -m fadden quick` on 6 November 2026 took an empty folder to a
 
 The folder held 9 titles, 9,439 rows, 3,678 definitions and 32,463 references, from 9.1 MB of EPUBs, in 82 MB. All 9 Acts had a published document for their current version, so `probe13` and `retry13` did not run. With `AUS_ACCOUNTING_CORPUS_ROOT` set to that folder, `search_tax_legislation` in the published `aus-accounting-mcp` 0.7.1 returned `C2004A05138:0035:8-1`, section 8-1 of the ITAA 1997, first for 'general deductions', 1.03 seconds after the script started, including the server's import.
 
+## Full staged build
+
+On 27 November 2026 the stages ran in order from an empty checkout at `6d87c5e` on a Linux laptop (AMD Ryzen 7 4800H, 16 threads). `discover` found 1,626 in-force titles, 944 of them principal, and took 102 seconds; `versions` resolved all 944 in 206 seconds. `download` fetched 935 EPUBs (37.7 MB) at the 10-second Crawl-delay. Its first run stopped at title 284 when one fetch failed 3 times with a `URLError` after 3,754 seconds; the rerun kept the files already held and finished in 7,921 seconds. The 9 titles with no published document for their current version went to `probe13` (19 seconds) and `retry13` (115 seconds), which recovered all 9. `extract` took 19 seconds, `pii_scan` 7 and `finalize` 3. `pii_scan2` exited 1 on 4 TFN-shaped matches and 1 phone-shaped match with no allowlist entry: scanner matches, not confirmed identifiers.
+
+| | |
+|---|---|
+| Titles | 944: 177 Acts, 665 legislative instruments, 102 notifiable instruments |
+| Retrieval rows | 22,113 |
+| Words | 6,419,596 |
+| First privacy scan | 169 flagged rows |
+
+`search build` indexed 944 titles, 22,113 rows, 8,868 definitions and 62,065 section references into a 92,708,864-byte file in 35.3, 31.7 and 30.6 seconds over 3 runs, with a peak resident size of about 192 MiB. SQLite's `dbstat` gives the Porter table `rows_stem`, which `--stem` reads, 15,392,768 bytes and the plain table `rows_fts` 16,027,648. The `fadden` binary at `2f3ca51~1`, the commit before word-form matching was added, indexed the same corpus into 77,291,520 bytes in 26.6 and 26.2 seconds; it also predates later definition and reference changes, so not all of the time difference is the second index. One machine on one day is not a benchmark.
+
 ## Published snapshot as an MCP corpus
 
 On 12 November 2026 the `corpus-2026-11-11` archive matched its `SHA256SUMS`, and its unpacked `dist` folder (34 files) served as `AUS_ACCOUNTING_CORPUS_ROOT` for `aus-accounting-mcp` 0.7.1 from PyPI and for australian-accounting `main` at `166333f`. In both, `search_tax_legislation` returned `C2004A05138:0035:8-1`, section 8-1 of the ITAA 1997, first for 'general deductions'; `read_tax_legislation_section` read that row; `search_tax_rates` and `define_tax_term` returned rows from the folder. `aus-accounting-mcp doctor` on `main` reported the folder OK with 9,439 section rows in 9 title indexes and 1,664 rate rows. These show the folder loads and answers, not that any answer is complete or current.
