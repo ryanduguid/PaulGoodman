@@ -2566,26 +2566,50 @@ fn source_pattern() -> String {
     )
 }
 
-/// The byte range of the sentence around a citation ending at `end`.
-fn sentence_around(draft: &str, end: usize) -> (usize, usize) {
-    let (mut start, mut stop) = (0, draft.len());
-    for found in pyre::re(SENTENCE_END, 0).captures_iter(draft) {
-        let boundary = found.get(0).expect("group 0");
-        if boundary.end() <= end {
-            start = boundary.end();
-        } else {
-            stop = boundary.start();
-            break;
+/// Where a draft's sentences and lines break, found once so that each citation looks
+/// its sentence and line up rather than scanning the draft from its start.
+struct Breaks {
+    /// The byte range of each sentence end, in draft order.
+    sentences: Vec<(usize, usize)>,
+    /// The byte offset of each newline, in draft order.
+    newlines: Vec<usize>,
+    len: usize,
+}
+
+impl Breaks {
+    fn new(draft: &str) -> Self {
+        let sentences = pyre::re(SENTENCE_END, 0)
+            .captures_iter(draft)
+            .map(|found| found.get(0).expect("group 0"))
+            .map(|boundary| (boundary.start(), boundary.end()))
+            .collect();
+        let newlines = draft.bytes().enumerate().filter(|(_, b)| *b == b'\n');
+        Breaks {
+            sentences,
+            newlines: newlines.map(|(at, _)| at).collect(),
+            len: draft.len(),
         }
     }
-    (start, stop)
+
+    /// The byte range of the sentence around a citation ending at `end`: from the last
+    /// sentence end at or before `end` to the next one that ends after it.
+    fn sentence_around(&self, end: usize) -> (usize, usize) {
+        let next = self.sentences.partition_point(|b| b.1 <= end);
+        let start = next.checked_sub(1).map_or(0, |i| self.sentences[i].1);
+        (start, self.sentences.get(next).map_or(self.len, |b| b.0))
+    }
+
+    /// The 1-based line a citation ending at `end` ends on.
+    fn line(&self, end: usize) -> usize {
+        self.newlines.partition_point(|&at| at < end) + 1
+    }
 }
 
 /// Whether the sentence around a citation ending at `end` may name a source, so that
 /// `--title` cannot stand in for the Act. A sentence's own capitalised first word does
 /// not count, but `ITAA 1936 section 8-1` opens with a name and does.
-fn sentence_names_a_source(draft: &str, end: usize) -> bool {
-    let (start, stop) = sentence_around(draft, end);
+fn sentence_names_a_source(draft: &str, breaks: &Breaks, end: usize) -> bool {
+    let (start, stop) = breaks.sentence_around(end);
     let sentence = &draft[start..stop];
     let opening = pyre::re(r"\W*[A-Z]?[a-z]*\b", 0)
         .match_at(sentence, 0)
@@ -2654,6 +2678,7 @@ fn title_names(connection: &Connection) -> Result<BTreeMap<String, String>, Exc>
 /// named title must end where the name does. A name that is not held has no reason.
 fn citation_target(
     draft: &str,
+    breaks: &Breaks,
     end: usize,
     act: Option<&str>,
     own: Option<&str>,
@@ -2666,7 +2691,7 @@ fn citation_target(
         }
     } else if own.is_none() {
         return (None, Some("no title is named"));
-    } else if sentence_names_a_source(draft, end) {
+    } else if sentence_names_a_source(draft, breaks, end) {
         return (None, Some("its sentence may name another source"));
     }
     match cited_title(draft, end, act, own, lookup) {
@@ -2916,10 +2941,12 @@ fn quotation_report(
     Ok(object(report))
 }
 
-/// A draft's quotations, and each citation's end with the sentence around it.
+/// A draft's quotations, each citation's end with the sentence around it, and where
+/// the draft's sentences and lines break.
 struct DraftQuotes {
     all: Vec<Quotation>,
     citations: Vec<(usize, (usize, usize))>,
+    breaks: Breaks,
 }
 
 /// Each quotation in the sentence around a citation ending at `end`, compared with `row`
@@ -2928,7 +2955,6 @@ struct DraftQuotes {
 /// the quotation is listed uncompared rather than lost.
 fn sentence_quotations(
     connection: &Connection,
-    draft: &str,
     end: usize,
     quotes: &DraftQuotes,
     row: Option<&Json>,
@@ -2936,7 +2962,7 @@ fn sentence_quotations(
     if quotes.all.is_empty() {
         return Ok(Json::Array(Vec::new()));
     }
-    let sentence = sentence_around(draft, end);
+    let sentence = quotes.breaks.sentence_around(end);
     let answered = |q: &Quotation| {
         let outside = |c: &&(usize, (usize, usize))| !q.surrounds(c.0) && q.in_sentence(c.1);
         quotes.citations.iter().find(outside).is_some()
@@ -2959,7 +2985,8 @@ fn citation_report(
     quotes: &DraftQuotes,
 ) -> Result<Json, Exc> {
     let (kind, key, act, citation, end) = item;
-    let (target, reason) = citation_target(draft, end, act.as_deref(), own, names);
+    let breaks = &quotes.breaks;
+    let (target, reason) = citation_target(draft, breaks, end, act.as_deref(), own, names);
     let (rows, held) = match &target {
         Some(rid) => cited_rows(connection, rid, &kind, &key)?,
         None => (Vec::new(), None),
@@ -2974,12 +3001,11 @@ fn citation_report(
         kind == "section",
         act.is_none(),
     );
-    let newlines = draft.as_bytes()[..end].iter().filter(|b| **b == b'\n');
     let reason = reason.or((outcome == "ambiguous").then_some("several rows share this number"));
     let row_ids: Vec<Json> = rows.iter().map(|r| field(r, "row_id").clone()).collect();
     let graded = matches!(outcome, "resolved" | "assumed") && kind == "section";
     let row = row_ids.first().filter(|_| graded);
-    let quotations = sentence_quotations(connection, draft, end, quotes, row)?;
+    let quotations = sentence_quotations(connection, end, quotes, row)?;
     // The verbatim text of the one row a section citation reached.
     let text = rows
         .first()
@@ -2992,7 +3018,7 @@ fn citation_report(
         _ => Json::Null,
     };
     let mut fields = vec![
-        ("line".into(), Json::Int((newlines.count() + 1).into())),
+        ("line".into(), Json::Int(breaks.line(end).into())),
         ("citation".into(), Json::str(&citation)),
         ("kind".into(), Json::str(&kind)),
         ("key".into(), Json::str(&key)),
@@ -3025,11 +3051,13 @@ pub fn cite_check(
     let digest = sources_digest(connection)?;
     let found = citations(draft);
     let all = quotes::quotations(draft);
-    let spans = |item: &FoundCitation| (item.4, sentence_around(draft, item.4));
+    let breaks = Breaks::new(draft);
+    let spans = |item: &FoundCitation| (item.4, breaks.sentence_around(item.4));
     let spans = found.iter().filter(|_| !all.is_empty()).map(spans);
     let draft_quotes = DraftQuotes {
         citations: spans.collect(),
         all,
+        breaks,
     };
     found
         .into_iter()
