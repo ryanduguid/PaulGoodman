@@ -2038,6 +2038,35 @@ fn cite_check_gives_each_citation_one_outcome_against_the_build() {
 }
 
 #[test]
+fn cite_check_reads_each_citation_in_its_own_sentence_and_line() {
+    let c = case();
+    let connection = built(&c);
+    let draft = "See section 2-1.\nThe Other Sample Act 2099 applies to section 2-1.\n\n\
+See section 2-1.\nAnd see section 2-1";
+    let report = values(search::cite_check(&connection, draft, Some(ACT)).unwrap());
+    let found: Vec<(u64, &str, &str)> = report
+        .iter()
+        .map(|item| {
+            let reason = item["reason"].as_str().unwrap_or("");
+            (
+                item["line"].as_u64().unwrap(),
+                item["outcome"].as_str().unwrap(),
+                reason,
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (1, "assumed", ""),
+            (2, "ambiguous", "its sentence may name another source"),
+            (4, "assumed", ""),
+            (5, "assumed", ""),
+        ]
+    );
+}
+
+#[test]
 fn cite_check_pins_each_result_to_the_build() {
     let c = case();
     let connection = built(&c);
