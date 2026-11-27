@@ -535,10 +535,7 @@ fn the_network_clock_runs_and_dates_are_local() {
 
 #[test]
 fn a_reused_request_is_sent_again_unchanged() {
-    let again = "HTTP/1.1 503 Busy
-Content-Length: 0
-
-";
+    let again = "HTTP/1.1 503 Busy\r\nContent-Length: 0\r\n\r\n";
     let (base, server) = serve(vec![reply(again), reply(again)]);
     let mut net = net(&[]);
     let mut request = Request::default();
@@ -553,20 +550,14 @@ Content-Length: 0
 #[test]
 fn an_ftp_url_is_fetched_through_an_http_proxy() {
     let (proxy, server) = serve(vec![reply(
-        "HTTP/1.1 200 OK
-Content-Length: 4
-
-file",
+        "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nfile",
     )]);
     let mut net = net(&[("ftp", &proxy)]);
     let response = get(&mut net, "ftp://files.invalid/x", None).unwrap();
     assert_eq!(response.body, b"file");
     let seen = server.join().unwrap();
     assert!(
-        seen[0].starts_with(
-            "GET ftp://files.invalid/x HTTP/1.1
-"
-        ),
+        seen[0].starts_with("GET ftp://files.invalid/x HTTP/1.1\r\n"),
         "{}",
         seen[0]
     );
@@ -583,10 +574,7 @@ fn download(body: &str, max_bytes: u64) -> (Transfer, Vec<u8>) {
     let dir = tempfile::tempdir().unwrap();
     let part = dir.path().join("x.part");
     let part = part.to_str().unwrap().to_owned();
-    let (base, server) = serve(vec![reply(&format!(
-        "HTTP/1.1 200 OK
-{body}"
-    ))]);
+    let (base, server) = serve(vec![reply(&format!("HTTP/1.1 200 OK\r\n{body}"))]);
     let transfer = http::net_download(&base, &part, max_bytes, None, false).unwrap();
     server.join().unwrap();
     (transfer, std::fs::read(&part).unwrap())
@@ -594,55 +582,26 @@ fn download(body: &str, max_bytes: u64) -> (Transfer, Vec<u8>) {
 
 #[test]
 fn a_streamed_download_keeps_what_arrived_before_a_framing_error() {
-    let chunked = "Transfer-Encoding: chunked
-
-";
+    let chunked = "Transfer-Encoding: chunked\r\n\r\n";
     let cases = [
         (
-            format!(
-                "{chunked}5
-hello"
-            ),
+            format!("{chunked}5\r\nhello"),
             "IncompleteRead",
             &b"hello"[..],
         ),
         (
-            format!(
-                "{chunked}5
-hello
-{}",
-                "1".repeat(MAXLINE + 1)
-            ),
+            format!("{chunked}5\r\nhello\r\n{}", "1".repeat(MAXLINE + 1)),
             "LineTooLong",
             &b"hello"[..],
         ),
         (
-            format!(
-                "{chunked}0
-{}
-",
-                "t".repeat(MAXLINE + 1)
-            ),
+            format!("{chunked}0\r\n{}\r\n", "t".repeat(MAXLINE + 1)),
             "LineTooLong",
             &b""[..],
         ),
+        (format!("{chunked}a\r\nhel"), "IncompleteRead", &b"hel"[..]),
         (
-            format!(
-                "{chunked}a
-hel"
-            ),
-            "IncompleteRead",
-            &b"hel"[..],
-        ),
-        (
-            format!(
-                "{chunked}0
-{}
-",
-                "X: 1
-"
-                .repeat(MAXHEADERS + 1)
-            ),
+            format!("{chunked}0\r\n{}\r\n", "X: 1\r\n".repeat(MAXHEADERS + 1)),
             "HTTPException",
             &b""[..],
         ),
@@ -663,25 +622,13 @@ hel"
 #[test]
 fn a_streamed_download_stops_one_byte_past_its_budget() {
     let (transfer, written) = download(
-        "Transfer-Encoding: chunked
-
-3
-abc
-4
-defg
-0
-
-",
+        "Transfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n4\r\ndefg\r\n0\r\n\r\n",
         4,
     );
     assert!(transfer.exceeds_budget);
     assert_eq!(written, b"abcde");
     // Without a length the body runs to the close.
-    let (transfer, written) = download(
-        "
-to the end",
-        1024,
-    );
+    let (transfer, written) = download("\r\nto the end", 1024);
     assert_eq!(
         (transfer.exceeds_budget, transfer.transport_error),
         (false, None)
