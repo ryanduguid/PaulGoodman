@@ -361,11 +361,25 @@ fn deflated_members_must_end_where_their_sizes_say() {
 }
 
 #[test]
-fn the_fuzz_invariant_skips_members_that_fail_to_read() {
+fn a_zip64_field_with_nothing_to_supply_changes_nothing() {
+    let mut entry = stored("a", b"hello");
+    entry.extra = extra_field(0x0001, &[]);
+    let book = epub::from_bytes(build(&[entry])).unwrap();
+    let m = &book.members[0];
+    assert_eq!((m.file_size, m.compress_size, m.header_offset), (5, 5, 0));
+    assert_eq!(book.read("a").unwrap(), b"hello");
+}
+
+#[test]
+fn an_archive_with_a_member_that_fails_its_checksum_is_not_valid() {
     let mut bad_crc = stored("a", b"hello");
     bad_crc.crc ^= 1;
     let data = build(&[bad_crc, stored("b", b"ok")]);
     assert!(!epub::valid_zip_bytes(data.clone()));
-    assert_eq!(epub::check_read(&data), Ok(()));
-    assert_eq!(epub::check_read(b"not a zip"), Ok(()));
+    let book = epub::from_bytes(data).unwrap();
+    assert_eq!(
+        book.read("a").unwrap_err().to_string(),
+        "EPUB member length, checksum or deflate endpoint is invalid"
+    );
+    assert_eq!(book.read("b").unwrap(), b"ok");
 }
