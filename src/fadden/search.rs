@@ -533,7 +533,10 @@ fn refused(message: impl Into<String>) -> Exc {
 
 fn sqlite_error(error: &rusqlite::Error) -> Exc {
     let message = match error {
-        rusqlite::Error::SqliteFailure(_, Some(message)) => message.clone(),
+        // A statement that fails to prepare: sqlite3 shows the library's
+        // message alone, not the SQL and the offset rusqlite adds.
+        rusqlite::Error::SqliteFailure(_, Some(message))
+        | rusqlite::Error::SqlInputError { msg: message, .. } => message.clone(),
         rusqlite::Error::SqliteFailure(code, None) => code.to_string(),
         other => other.to_string(),
     };
@@ -1006,29 +1009,23 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json], run_date: &str) -
         }
         listed.push((docid, count, document));
     }
-    for index in 0..held.len().max(listed.len()) {
-        match (listed.get(index), held.get(index)) {
-            (Some((docid, count, document)), Some(group)) => {
-                let difference = document_difference(docid, count, document, group, run_date);
-                if difference.is_some() {
-                    return difference;
-                }
-            }
-            (Some((docid, _, _)), None) => {
-                return Some(format!(
-                    "manifest.json lists {docid}, which rulings.jsonl does not hold"
-                ));
-            }
-            (None, Some(group)) => {
-                return Some(format!(
-                    "rulings.jsonl holds {} after the last document manifest.json lists",
-                    group[0].docid
-                ));
-            }
-            (None, None) => {}
+    for (index, (docid, count, document)) in listed.iter().enumerate() {
+        let Some(group) = held.get(index) else {
+            return Some(format!(
+                "manifest.json lists {docid}, which rulings.jsonl does not hold"
+            ));
+        };
+        let difference = document_difference(docid, count, document, group, run_date);
+        if difference.is_some() {
+            return difference;
         }
     }
-    None
+    held.get(listed.len()).map(|group| {
+        format!(
+            "rulings.jsonl holds {} after the last document manifest.json lists",
+            group[0].docid
+        )
+    })
 }
 
 /// The first document whose rows come in 2 groups, if any. The stage refuses a repeated
@@ -4047,3 +4044,6 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc>
         _ => execute_refs(args, &connection, run),
     }
 }
+
+#[cfg(test)]
+mod unit_tests;
