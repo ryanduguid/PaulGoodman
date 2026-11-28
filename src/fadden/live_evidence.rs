@@ -203,8 +203,9 @@ fn io_fault(step: Step) -> std::io::Result<()> {
     injected(step).map_or(Ok(()), |error| Err(std::io::Error::other(error.text)))
 }
 
+#[cfg(windows)]
 fn is_windows() -> bool {
-    cfg!(windows) && !NOT_WINDOWS.with(std::cell::Cell::get)
+    !NOT_WINDOWS.with(std::cell::Cell::get)
 }
 
 // ------------------------------------------------------------ identities
@@ -689,6 +690,34 @@ fn errno() -> *mut libc::c_int {
     unsafe { libc::__error() }
 }
 
+#[cfg(unix)]
+struct DirStream(*mut libc::DIR);
+
+#[cfg(unix)]
+impl Drop for DirStream {
+    fn drop(&mut self) {
+        // SAFETY: the stream is owned by this guard and closed once.
+        unsafe { libc::closedir(self.0) };
+    }
+}
+
+#[cfg(unix)]
+unsafe fn finish_dirent(
+    entry: *mut libc::dirent,
+    code: libc::c_int,
+) -> std::io::Result<Option<String>> {
+    if entry.is_null() {
+        return if code != 0 {
+            Err(std::io::Error::from_raw_os_error(code))
+        } else {
+            Ok(None)
+        };
+    }
+    // SAFETY: d_name is NUL-terminated within the entry.
+    let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+    Ok(Some(String::from_utf8_lossy(name.to_bytes()).into_owned()))
+}
+
 /// `os.listdir(fd)`.
 #[cfg(unix)]
 fn list_fd(fd: std::os::fd::RawFd) -> std::io::Result<Vec<String>> {
@@ -698,43 +727,33 @@ fn list_fd(fd: std::os::fd::RawFd) -> std::io::Result<Vec<String>> {
         return Err(std::io::Error::last_os_error());
     }
     // SAFETY: `copy` is an open directory descriptor owned by the stream.
-    let stream = unsafe { libc::fdopendir(copy) };
-    if stream.is_null() {
+    let raw = unsafe { libc::fdopendir(copy) };
+    if raw.is_null() {
         let error = std::io::Error::last_os_error();
         // SAFETY: fdopendir failed, so `copy` is still ours to close.
         unsafe { libc::close(copy) };
         return Err(error);
     }
+    let stream = DirStream(raw);
     // SAFETY: the stream is open.
-    unsafe { libc::rewinddir(stream) };
+    unsafe { libc::rewinddir(stream.0) };
     let mut names = Vec::new();
     loop {
         // readdir returns null at the end and on an error; only errno tells
         // them apart, so it is cleared first, as CPython's listdir does.
         // SAFETY: errno is this thread's; the stream is open.
-        let entry = unsafe {
+        let (entry, code) = unsafe {
             *errno() = 0;
-            libc::readdir(stream)
+            let e = libc::readdir(stream.0);
+            (e, *errno())
         };
-        if entry.is_null() {
-            // SAFETY: errno is this thread's.
-            let code = unsafe { *errno() };
-            if code != 0 {
-                // SAFETY: the stream is closed once.
-                unsafe { libc::closedir(stream) };
-                return Err(std::io::Error::from_raw_os_error(code));
-            }
+        let Some(name) = (unsafe { finish_dirent(entry, code) })? else {
             break;
-        }
-        // SAFETY: d_name is NUL-terminated within the entry.
-        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
-        let name = String::from_utf8_lossy(name.to_bytes()).into_owned();
+        };
         if name != "." && name != ".." {
             names.push(name);
         }
     }
-    // SAFETY: the stream is closed once.
-    unsafe { libc::closedir(stream) };
     Ok(names)
 }
 
@@ -1074,13 +1093,8 @@ fn snapshot_into(
     for name in evidence_inventory.keys() {
         let path = source_evidence.join(name);
         let expected = ordinary_file_details(pinned, &path, evidence_index)?;
-        let stat = copy_regular_file(
-            pinned,
-            &path,
-            &pypath::join(&evidence_snapshot, name),
-            evidence_index,
-            expected,
-        )?;
+        let ev_dst = pypath::join(&evidence_snapshot, name);
+        let stat = copy_regular_file(pinned, &path, &ev_dst, evidence_index, expected)?;
         copied.push((path, evidence_index, stat));
     }
     injected(Step::Copied(&source_text));
@@ -1543,10 +1557,8 @@ fn build_validated_snapshot(capture: &str) -> Result<(String, Vec<(String, Json)
         read_json(&pypath::join(capture, "monitor-baseline.json"), "baseline")?;
     let (capture_bytes, capture_document) =
         read_json(&pypath::join(capture, "register-capture.json"), "capture")?;
-    let (observation_bytes, observation_document) = read_json(
-        &pypath::join(capture, "register-observation.json"),
-        "observation",
-    )?;
+    let obs_path = pypath::join(capture, "register-observation.json");
+    let (observation_bytes, observation_document) = read_json(&obs_path, "observation")?;
     if !is(
         get(&capture_document, "schema_version"),
         "au-tax-register-capture.v1",
@@ -1644,14 +1656,12 @@ fn build_validated_snapshot(capture: &str) -> Result<(String, Vec<(String, Json)
             return Err(live_error("capture evidence path is invalid."));
         }
         let response = read_response(&pypath::join(capture, &expected_path))?;
+        let obs_at = required_text(get(&observation_document, "observed_at"), "observed_at")?;
         let run = Run4 {
             version: producer_version()?,
             baseline_sha256: baseline_sha256.clone(),
             observation_sha256: observation_sha256.clone(),
-            observed_at: Json::Str(PyStr::from_code_points(required_text(
-                get(&observation_document, "observed_at"),
-                "observed_at",
-            )?)),
+            observed_at: Json::Str(PyStr::from_code_points(obs_at)),
         };
         let candidate = candidate_bundle(title, result, observation, &run, &response)?;
         if candidates.iter().any(|(k, _)| *k == candidate.0) {
@@ -1706,6 +1716,10 @@ fn require_ordinary_ancestors(path: &PyPath, label: &str) -> Result<(), Exc> {
 fn output_collides_capture(output: &str, capture: &str) -> Result<bool, Exc> {
     let output = pypath::normcase(&pypath::realpath(output)?);
     let capture = pypath::normcase(&pypath::realpath(capture)?);
+    Ok(paths_collide(&output, &capture))
+}
+
+fn paths_collide(output: &str, capture: &str) -> bool {
     let parts = |p: &str| -> Vec<String> {
         let (drive, root, tail) = pypath::splitroot(p);
         let mut parts = vec![format!("{drive}{root}")];
@@ -1717,12 +1731,12 @@ fn output_collides_capture(output: &str, capture: &str) -> Result<bool, Exc> {
         );
         parts
     };
-    let (o, c) = (parts(&output), parts(&capture));
+    let (o, c) = (parts(output), parts(capture));
     // commonpath raises ValueError for different drives or root kinds.
     if o[0] != c[0] {
-        return Ok(false);
+        return false;
     }
-    Ok(o.len() >= c.len() && o[..c.len()] == c[..])
+    o.len() >= c.len() && o[..c.len()] == c[..c.len()]
 }
 
 /// `_preflight_output(output)`: whether the one missing parent must be
@@ -2093,23 +2107,25 @@ fn publish_candidates(
         expected.push((format!("{bundle_id}.json"), content));
     }
     let (create_parent, known_parent) = preflight_output(output)?;
-    if !is_windows() {
-        return Err(live_error(
+    #[cfg(not(windows))]
+    {
+        let _ = (create_parent, known_parent);
+        Err(live_error(
             "identity-bound live evidence publication is supported only on Windows.",
-        ));
+        ))
     }
     #[cfg(windows)]
     {
+        if !is_windows() {
+            return Err(live_error(
+                "identity-bound live evidence publication is supported only on Windows.",
+            ));
+        }
         publish_on_windows(output, &expected, create_parent, known_parent)?;
         Ok(expected
             .iter()
             .map(|(name, _)| output.join(name).display())
             .collect())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (create_parent, known_parent);
-        unreachable!("is_windows() is false off Windows")
     }
 }
 
@@ -2186,13 +2202,18 @@ fn publish_on_windows(
 /// `tempfile.TemporaryDirectory(prefix="tax-radar-live-evidence-")` makes one.
 fn temporary_directory() -> std::io::Result<String> {
     let base = std::env::temp_dir();
-    let base = base.to_string_lossy();
+    temporary_directory_in(&base.to_string_lossy(), || {
+        pyos::try_random_hex(8).map_err(|e| std::io::Error::other(e.text))
+    })
+}
+
+fn temporary_directory_in(
+    base: &str,
+    mut next_hex: impl FnMut() -> std::io::Result<String>,
+) -> std::io::Result<String> {
     for _ in 0..100 {
-        let name = format!(
-            "tax-radar-live-evidence-{}",
-            pyos::try_random_hex(8).map_err(|e| std::io::Error::other(e.text))?
-        );
-        let path = pypath::join(&base, &name);
+        let name = format!("tax-radar-live-evidence-{}", next_hex()?);
+        let path = pypath::join(base, &name);
         match pyos::mkdir_private(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -2240,12 +2261,26 @@ pub fn export_live_evidence_bundles(
     })();
     let removed =
         io_fault(Step::TempCleanup(&temporary)).and_then(|()| std::fs::remove_dir_all(&temporary));
-    let (release_tag, candidates) = match (built, removed) {
-        (_, Err(_)) => return Err(cleanup_failed()),
-        (Err(Exc::Os(_)), Ok(())) => return Err(cleanup_failed()),
-        (outcome, Ok(())) => outcome?,
-    };
-    let paths = match publish_candidates(&output, candidates) {
+    let (release_tag, candidates) = resolve_snapshot_outcome(built, removed)?;
+    finish_export(release_tag, publish_candidates(&output, candidates))
+}
+
+fn resolve_snapshot_outcome<T>(
+    built: Result<T, Exc>,
+    removed: std::io::Result<()>,
+) -> Result<T, Exc> {
+    let cleanup_failed = || live_error("live evidence snapshot cleanup failed.");
+    match (built, removed) {
+        (_, Err(_)) | (Err(Exc::Os(_)), Ok(())) => Err(cleanup_failed()),
+        (outcome, Ok(())) => outcome,
+    }
+}
+
+fn finish_export(
+    release_tag: String,
+    published: Result<Vec<String>, Exc>,
+) -> Result<LiveEvidenceExport, Exc> {
+    let paths = match published {
         Ok(paths) => paths,
         Err(Exc::Os(_)) => return Err(live_error("live evidence export failed.")),
         Err(error) => return Err(error),
@@ -2263,28 +2298,209 @@ fn parser() -> Parser {
         .arg(Action::option("--out").required().metavar("OUTPUT_DIR"))
 }
 
+fn report_export(outcome: Result<LiveEvidenceExport, Exc>, run: &mut Run) -> i32 {
+    match outcome {
+        Ok(export) => {
+            run.print(&format!("candidate_count={}", export.candidates.len()));
+            run.print(&format!("release_tag={}", export.release_tag));
+            0
+        }
+        Err(error) => {
+            if let Some(message) = live_message(&error) {
+                run.eprint(&format!("error: {message}"));
+                return 1;
+            }
+            if let Exc::Os(_) = error {
+                run.eprint("error: live evidence export failed");
+                return 1;
+            }
+            run.uncaught(&error)
+        }
+    }
+}
+
 /// `python -m fadden export_live_evidence_bundles capture --out DIR`.
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     let parser = parser();
     let args = parser.parse(argv)?;
     let arg = |name: &str| args.str(name).unwrap_or_default();
-    match export_live_evidence_bundles(&arg("capture_dir"), &arg("out")) {
-        Ok(export) => {
-            run.print(&format!("candidate_count={}", export.candidates.len()));
-            run.print(&format!("release_tag={}", export.release_tag));
-            Ok(0)
+    Ok(report_export(
+        export_live_evidence_bundles(&arg("capture_dir"), &arg("out")),
+        run,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_fd_and_chain_helpers_cover_error_paths() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("f.txt");
+        std::fs::write(&file_path, "abc").unwrap();
+        let missing = dir.path().join("nope");
+        assert!(open_at(None, missing.to_str().unwrap(), libc::O_RDONLY).is_err());
+        let dir_fd = open_at(
+            None,
+            dir.path().to_str().unwrap(),
+            libc::O_RDONLY | libc::O_DIRECTORY,
+        )
+        .unwrap();
+        assert!(stat_at(dir_fd.as_raw_fd(), "nope").is_err());
+        assert!(fstat_fd(-1).is_err());
+        assert!(list_fd(-1).is_err());
+        let file = std::fs::File::open(&file_path).unwrap();
+        assert!(list_fd(file.as_raw_fd()).is_err());
+        assert_eq!(
+            unsafe { finish_dirent(std::ptr::null_mut(), libc::EIO) }
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EIO)
+        );
+        let mut chain = PinnedChain::new();
+        let ffd = open_at(None, file_path.to_str().unwrap(), libc::O_RDONLY).unwrap();
+        chain
+            .held
+            .push((file_path.to_str().unwrap().into(), Pinned::Fd(ffd)));
+        assert!(pinned_directory_details(&chain, file_path.to_str().unwrap(), 0).is_err());
+        let _ = chain.close();
+    }
+
+    #[cfg(unix)]
+    fn make_stub_capture_dir(root: &std::path::Path) -> std::path::PathBuf {
+        let src_dir = root.join("cap");
+        std::fs::create_dir_all(src_dir.join("evidence")).unwrap();
+        for name in [
+            "monitor-baseline.json",
+            "register-capture.json",
+            "register-observation.json",
+        ] {
+            std::fs::write(src_dir.join(name), "{}\n").unwrap();
         }
-        Err(error) => {
-            if let Some(message) = live_message(&error) {
-                run.eprint(&format!("error: {message}"));
-                return Ok(1);
+        src_dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_regular_file_detects_stat_mismatch_and_concurrent_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = make_stub_capture_dir(dir.path());
+        let mut chain = PinnedChain::new();
+        let idx = chain
+            .pin(&PyPath::new(src_dir.to_str().unwrap()), "cap", None)
+            .unwrap();
+        let fpath = PyPath::new(src_dir.join("monitor-baseline.json").to_str().unwrap());
+        let wrong_stat = Stat {
+            mode: 0,
+            dev: 0,
+            ino: 0,
+            nlink: 0,
+            size: 999,
+            reparse: false,
+        };
+        let t1 = dir.path().join("t1");
+        assert!(copy_regular_file(&chain, &fpath, t1.to_str().unwrap(), idx, wrong_stat).is_err());
+        let real_stat = ordinary_file_details(&chain, &fpath, idx).unwrap();
+        let replace_path = src_dir.join("monitor-baseline.json");
+        set_fault_hook(move |step| {
+            if matches!(step, Step::Copy(_)) {
+                let _ = std::fs::remove_file(&replace_path);
+                let _ = std::fs::write(&replace_path, "{}\n  ");
             }
-            if let Exc::Os(_) = error {
-                run.eprint("error: live evidence export failed");
-                return Ok(1);
+            None
+        });
+        let t2 = dir.path().join("t2");
+        let race = copy_regular_file(&chain, &fpath, t2.to_str().unwrap(), idx, real_stat);
+        FAULT_HOOK.with(|h| *h.borrow_mut() = None);
+        assert!(race.is_err());
+        let _ = chain.close();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_capture_graph_detects_directory_rename_race() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = make_stub_capture_dir(dir.path());
+        let ev_path = src_dir.join("evidence");
+        let moved = dir.path().join("cap_moved");
+        let src_dir_c = src_dir.clone();
+        set_fault_hook(move |step| {
+            if let Step::Pin(p) = step
+                && p == ev_path.to_str().unwrap()
+            {
+                let _ = std::fs::rename(&src_dir_c, &moved);
             }
-            Ok(run.uncaught(&error))
-        }
+            None
+        });
+        let snap = snapshot_capture_graph(
+            src_dir.to_str().unwrap(),
+            dir.path().join("s").to_str().unwrap(),
+        );
+        FAULT_HOOK.with(|h| *h.borrow_mut() = None);
+        assert!(snap.is_err());
+    }
+
+    #[test]
+    fn live_evidence_validation_and_tempdir_helpers_cover_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.json");
+        std::fs::write(&big, vec![b'a'; MAX_RESPONSE_BYTES + 1]).unwrap();
+        assert!(read_response(big.to_str().unwrap()).is_err());
+        assert!(ordinary_directory_details(big.to_str().unwrap(), "x").is_err());
+        assert!(!paths_collide("//unc/a", "/tmp/b"));
+        assert!(preflight_output(&PyPath::new(&format!("{}/sub/out", big.display()))).is_err());
+        let mut n = 0usize;
+        std::fs::create_dir(dir.path().join("tax-radar-live-evidence-dup")).unwrap();
+        let made = temporary_directory_in(dir.path().to_str().unwrap(), || {
+            n += 1;
+            Ok(if n == 1 { "dup".into() } else { "ok".into() })
+        })
+        .unwrap();
+        assert!(made.ends_with("ok"));
+        assert!(temporary_directory_in(dir.path().to_str().unwrap(), || Ok("dup".into())).is_err());
+        assert!(
+            temporary_directory_in(dir.path().join("nope").to_str().unwrap(), || Ok("x".into()))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn live_evidence_reporting_and_deep_json_export_cover_errors() {
+        let os = || {
+            OsError::new(
+                &std::io::Error::other("io"),
+                None,
+                crate::pyos::Style::Errno,
+            )
+        };
+        assert!(resolve_snapshot_outcome::<()>(Err(Exc::Os(os())), Ok(())).is_err());
+        let ok = finish_export("tag".into(), Ok(vec!["a.json".into()])).unwrap();
+        assert_eq!(ok.release_tag, "tag");
+        assert!(finish_export("tag".into(), Err(Exc::Os(os()))).is_err());
+        let mut r = Run::default();
+        assert_eq!(report_export(Ok(ok), &mut r), 0);
+        assert_eq!(report_export(Err(Exc::Os(os())), &mut r), 1);
+        assert_eq!(report_export(Err(Exc::Runtime("boom".into())), &mut r), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let cap = dir.path().join("deep_cap");
+        std::fs::create_dir_all(cap.join("evidence")).unwrap();
+        std::fs::write(
+            cap.join("monitor-baseline.json"),
+            "[".repeat(2 * pyjson::MAX_DEPTH),
+        )
+        .unwrap();
+        std::fs::write(cap.join("register-capture.json"), "{}\n").unwrap();
+        std::fs::write(cap.join("register-observation.json"), "{}\n").unwrap();
+        assert!(matches!(
+            export_live_evidence_bundles(
+                cap.to_str().unwrap(),
+                dir.path().join("out").to_str().unwrap()
+            ),
+            Err(Exc::Recursion(_))
+        ));
     }
 }
 

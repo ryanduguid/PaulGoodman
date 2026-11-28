@@ -543,3 +543,17 @@ pub(super) fn walk(xml: &str, walker: &mut impl Handler) -> (Option<(String, Att
     .unwrap_or_else(|never| match never {});
     (root, comments)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xml_parser_refuses_empty_wrong_root_and_sectionless_documents() {
+        assert!(parse("", "x", "X").is_err());
+        assert!(parse("<other/>", "x", "X").is_err());
+        let empty = r#"<act id="x" title="X" date.as.at="2026-01-01"><level><heading><no>1</no>Title</heading></level></act>"#;
+        let err = parse(empty, "x", "X").unwrap_err();
+        assert!(err.to_string().contains("no "), "{err}");
+    }
+}

@@ -415,7 +415,8 @@ impl RegisterSession for HttpsSession {
     fn get(&mut self, url: &str) -> Result<RegisterExchange, Exc> {
         check_request_url(url)?;
         let mut request = http::Request::default();
-        for attempt in 1..=MAX_ATTEMPTS {
+        let mut attempt = 1;
+        loop {
             http::attempt(self.http.as_mut(), attempt);
             self.pace();
             match self
@@ -424,6 +425,7 @@ impl RegisterSession for HttpsSession {
             {
                 Ok(response) => {
                     if retryable(response.status) && attempt < MAX_ATTEMPTS {
+                        attempt += 1;
                         continue;
                     }
                     let headers = selected_headers(response.headers);
@@ -440,13 +442,13 @@ impl RegisterSession for HttpsSession {
                 }
                 Err(Failure::Transport(_) | Failure::Status(_)) => {
                     if attempt < MAX_ATTEMPTS {
+                        attempt += 1;
                         continue;
                     }
                     return Ok(self.exchange(None, Vec::new(), None, attempt, true));
                 }
             }
         }
-        unreachable!("the final attempt always returns")
     }
 }
 
@@ -614,8 +616,8 @@ fn load_manifest(path: &PyPath) -> Result<Vec<Json>, Exc> {
     Ok(items)
 }
 
-/// `_project_baseline(rows)`: the monitor baseline the capture is checked against.
-fn project_baseline(rows: &[Json]) -> Result<Json, Exc> {
+/// `_project_baseline(rows)`: the monitor baseline and its sorted titles.
+fn project_baseline(rows: &[Json]) -> Result<(Json, Vec<Json>), Exc> {
     let mut titles: Vec<(String, Json)> = Vec::new();
     let mut retrieved_max: Option<P> = None;
     for (index, row) in rows.iter().enumerate() {
@@ -699,16 +701,15 @@ fn project_baseline(rows: &[Json]) -> Result<Json, Exc> {
         ));
     }
     titles.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(obj(vec![
+    let projected: Vec<Json> = titles.into_iter().map(|(_, t)| t).collect();
+    let baseline = obj(vec![
         ("corpus", Json::str(CORPUS)),
         ("retrieved", text_json(retrieved_max.unwrap_or_default())),
         ("source", Json::str(SOURCE)),
         ("source_api", Json::str(SOURCE_API)),
-        (
-            "titles",
-            Json::Array(titles.into_iter().map(|(_, t)| t).collect()),
-        ),
-    ]))
+        ("titles", Json::Array(projected.clone())),
+    ]);
+    Ok((baseline, projected))
 }
 
 /// `urllib.parse.quote(text, safe="")`.
@@ -1322,10 +1323,8 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
     let (_, observation) =
         load_generated_object(&staging.join("register-observation.json").display())?;
 
-    require_exact_fields(
-        &baseline,
-        &["corpus", "retrieved", "source", "source_api", "titles"],
-    )?;
+    let base_fields = ["corpus", "retrieved", "source", "source_api", "titles"];
+    require_exact_fields(&baseline, &base_fields)?;
     let titles = match get(&baseline, "titles") {
         Json::Array(items) if !items.is_empty() => Some(items),
         _ => None,
@@ -1340,6 +1339,7 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
     };
     date(get(&baseline, "retrieved"), "baseline retrieved")?;
     let mut title_order: Vec<String> = Vec::new();
+    let mut retrieved_dates: Vec<P> = Vec::new();
     for title in titles {
         if !matches!(title, Json::Object(_)) {
             return Err(capture_error("staged capture baseline title is invalid"));
@@ -1358,7 +1358,7 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
             ));
         }
         let compilation_date = date(get(title, "compilation_date"), "baseline compilation date")?;
-        date(get(title, "retrieved"), "baseline title retrieved")?;
+        retrieved_dates.push(date(get(title, "retrieved"), "baseline title retrieved")?);
         let Json::Bool(is_current) = get(title, "version_is_current") else {
             return Err(capture_error(
                 "staged capture baseline current flag is invalid",
@@ -1401,14 +1401,7 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
         return Err(capture_error("staged capture baseline order is invalid"));
     }
     // Every retrieved date is a validated ISO date, so text order is date order.
-    let retrieved_max = titles
-        .iter()
-        .filter_map(|t| match get(t, "retrieved") {
-            Json::Str(s) => Some(s.code_points()),
-            _ => None,
-        })
-        .max()
-        .unwrap_or_default();
+    let retrieved_max = retrieved_dates.into_iter().max().unwrap_or_default();
     if !py_eq(get(&baseline, "retrieved"), &text_json(retrieved_max)) {
         return Err(capture_error(
             "staged capture baseline retrieval date is invalid",
@@ -1421,19 +1414,17 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
             .expect("a validated title")
     };
 
-    require_exact_fields(
-        &capture,
-        &[
-            "schema_version",
-            "mode",
-            "observed_at",
-            "source_api",
-            "baseline_sha256",
-            "expected_register_ids",
-            "complete",
-            "results",
-        ],
-    )?;
+    let capture_fields = [
+        "schema_version",
+        "mode",
+        "observed_at",
+        "source_api",
+        "baseline_sha256",
+        "expected_register_ids",
+        "complete",
+        "results",
+    ];
+    require_exact_fields(&capture, &capture_fields)?;
     let order_json = Json::Array(title_order.iter().map(|id| Json::str(id)).collect());
     let results = match get(&capture, "results") {
         Json::Array(items) if items.len() == title_order.len() => Some(items),
@@ -1454,21 +1445,20 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
     utc_timestamp(get(&capture, "observed_at"), "capture observed_at")?;
 
     let mut declared: Vec<(String, (String, i64))> = Vec::new();
+    let mut validated_requests: Vec<&[Json]> = Vec::with_capacity(results.len());
+    let result_fields = [
+        "register_id",
+        "collection",
+        "checked_at",
+        "state",
+        "error_category",
+        "requests",
+    ];
     for (index, result) in results.iter().enumerate() {
         if !matches!(result, Json::Object(_)) {
             return Err(capture_error("staged capture result is invalid"));
         }
-        require_exact_fields(
-            result,
-            &[
-                "register_id",
-                "collection",
-                "checked_at",
-                "state",
-                "error_category",
-                "requests",
-            ],
-        )?;
+        require_exact_fields(result, &result_fields)?;
         let title_id = &title_order[index];
         if !is(get(result, "register_id"), title_id) {
             return Err(capture_error("staged capture result identity is invalid"));
@@ -1491,6 +1481,7 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
             Json::Array(items) if (1..=2).contains(&items.len()) => items,
             _ => return Err(capture_error("staged capture request list is invalid")),
         };
+        validated_requests.push(requests);
         let roles: Vec<&Json> = requests
             .iter()
             .filter(|r| matches!(r, Json::Object(_)))
@@ -1516,18 +1507,17 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
             }
             utc_timestamp(get(request, "checked_at"), "request checked_at")?;
             let headers = get(request, "response_headers");
+            let Json::Object(pairs) = headers else {
+                return Err(capture_error("staged capture request metadata is invalid"));
+            };
             let metadata_ok = int(get(request, "attempt_count"))
                 .is_some_and(|a| (0..=i64::from(MAX_ATTEMPTS)).contains(&a))
-                && matches!(headers, Json::Object(_))
                 && object_keys(headers)
                     .iter()
                     .all(|k| RETAINED_HEADER_NAMES.contains(&k.as_str()));
             if !metadata_ok {
                 return Err(capture_error("staged capture request metadata is invalid"));
             }
-            let Json::Object(pairs) = headers else {
-                unreachable!("checked above")
-            };
             let items: Vec<(Json, Json)> = pairs
                 .iter()
                 .map(|(k, v)| (Json::Str(k.clone()), v.clone()))
@@ -1615,21 +1605,19 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
         }
     }
 
-    require_exact_fields(
-        &observation,
-        &[
-            "schema_version",
-            "mode",
-            "observed_at",
-            "scope_id",
-            "baseline_sha256",
-            "capture_sha256",
-            "expected_register_ids",
-            "complete",
-            "run_status",
-            "observations",
-        ],
-    )?;
+    let obs_fields = [
+        "schema_version",
+        "mode",
+        "observed_at",
+        "scope_id",
+        "baseline_sha256",
+        "capture_sha256",
+        "expected_register_ids",
+        "complete",
+        "run_status",
+        "observations",
+    ];
+    require_exact_fields(&observation, &obs_fields)?;
     let blocked = results.iter().any(|r| is(get(r, "state"), "LOOKUP_FAILED"));
     let items = match get(&observation, "observations") {
         Json::Array(items) if items.len() == title_order.len() => Some(items),
@@ -1686,10 +1674,7 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
                 "staged capture observation item is inconsistent",
             ));
         }
-        let Json::Array(requests) = get(result, "requests") else {
-            unreachable!("validated above")
-        };
-        let primary = &requests[0];
+        let primary = &validated_requests[index][0];
         if !py_eq(
             field("primary_response_sha256"),
             get(primary, "response_sha256"),
@@ -1700,8 +1685,7 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
         }
         let content_type = get(get(primary, "response_headers"), "content-type");
         let expected_media = match (get(primary, "response_sha256"), content_type) {
-            (Json::Null, _) | (_, Json::Null) => Json::Null,
-            (_, Json::Str(s)) => Json::str(&media_type(&s.code_points())),
+            (Json::Str(_), Json::Str(s)) => Json::str(&media_type(&s.code_points())),
             _ => Json::Null,
         };
         if !py_eq(field("primary_response_media_type"), &expected_media) {
@@ -1709,11 +1693,8 @@ fn validate_staged_graph_inner(staging: &PyPath) -> Result<(), Exc> {
                 "staged capture primary media type is inconsistent",
             ));
         }
-        let state = pyvalue::points_lossy(&match field("state") {
-            Json::Str(s) => s.code_points(),
-            _ => Vec::new(),
-        });
-        let required: &[&str] = match state.as_str() {
+        let state = field("state").as_str().unwrap_or_default();
+        let required: &[&str] = match state {
             "SUPERSEDED" => &[
                 "observed_compilation_number",
                 "observed_compilation_date",
@@ -1925,7 +1906,7 @@ pub fn capture_register_run(
     let observed_at = utc_timestamp(&session.observed_at(), "session observed_at")?;
     let manifest = PyPath::new(&abspath(manifest_path));
     let output = PyPath::new(&abspath(destination));
-    let baseline = project_baseline(&load_manifest(&manifest)?)?;
+    let (baseline, titles) = project_baseline(&load_manifest(&manifest)?)?;
     let create_output_parent = preflight_output(&output, &manifest.display())?;
 
     let baseline_content = json_bytes(&baseline)?;
@@ -1933,10 +1914,7 @@ pub fn capture_register_run(
     let mut evidence: Vec<(String, Vec<u8>)> = Vec::new();
     let mut results = Vec::new();
     let mut observations = Vec::new();
-    let Json::Array(titles) = get(&baseline, "titles") else {
-        unreachable!("project_baseline returns titles")
-    };
-    for title in titles {
+    for title in &titles {
         let (result, item) = observe_title(title, session, &mut evidence)?;
         results.push(result);
         observations.push(item);
@@ -2007,14 +1985,10 @@ pub fn capture_register_run(
             for (relative, content) in &evidence {
                 write_new(&pypath::join(&staging_text, relative), content)?;
             }
-            write_new(
-                &staging.join("register-capture.json").display(),
-                &capture_content,
-            )?;
-            write_new(
-                &staging.join("register-observation.json").display(),
-                &observation_content,
-            )
+            let capture_file = staging.join("register-capture.json").display();
+            write_new(&capture_file, &capture_content)?;
+            let obs_file = staging.join("register-observation.json").display();
+            write_new(&obs_file, &observation_content)
         })();
         written.map_err(|_| capture_error("capture output could not be written."))?;
         injected(Step::Validate(&staging_text));
@@ -2083,5 +2057,219 @@ pub fn main_with(
             message,
         }) => Err(parser.error(&message)),
         Err(error) => Ok(run.uncaught(&error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UncaughtHttp;
+    impl Http for UncaughtHttp {
+        fn get(
+            &mut self,
+            _: &str,
+            _: Option<usize>,
+            _: &mut http::Request,
+        ) -> Result<http::Response, Failure> {
+            Err(Failure::Transport("unused".into()))
+        }
+        fn exchange(
+            &mut self,
+            _: &str,
+            _: usize,
+            _: &mut http::Request,
+        ) -> Result<http::Exchange, Failure> {
+            Err(Failure::Uncaught {
+                class: "ValueError",
+                message: "bad".into(),
+            })
+        }
+        fn sleep(&mut self, _: f64) {}
+        fn today(&mut self) -> String {
+            "2026-01-01".into()
+        }
+    }
+
+    struct ErrSession;
+    impl RegisterSession for ErrSession {
+        fn observed_at(&self) -> Json {
+            Json::str("2026-01-01T00:00:00Z")
+        }
+        fn get(&mut self, _: &str) -> Result<RegisterExchange, Exc> {
+            Err(Exc::Runtime("boom".into()))
+        }
+    }
+
+    #[test]
+    fn helpers_session_odata_and_retain_cover_edge_errors() {
+        assert_eq!(value_message(Exc::Runtime("boom".into())), "boom");
+        assert!(object_keys(&Json::Null).is_empty());
+        let mut session = HttpsSession::new(Box::new(UncaughtHttp));
+        assert!(matches!(
+            session.get(&current_url("C2099A00001")),
+            Err(Exc::Value {
+                class: "ValueError",
+                ..
+            })
+        ));
+        let deep = "[".repeat(2 * pyjson::MAX_DEPTH);
+        assert_eq!(
+            parse_odata_rows(deep.as_bytes(), "C2099A00001", "current").unwrap(),
+            Err("INVALID_ODATA_SHAPE")
+        );
+        let big = format!("{{\"n\":{}}}", "1".repeat(4301));
+        assert!(matches!(
+            parse_odata_rows(big.as_bytes(), "C2099A00001", "current"),
+            Err(Exc::Value { .. })
+        ));
+        let non_arr = format!(r#"{{"@odata.context":"{}","value":1}}"#, odata_context());
+        assert_eq!(
+            parse_odata_rows(non_arr.as_bytes(), "C2099A00001", "current").unwrap(),
+            Err("INVALID_ODATA_SHAPE")
+        );
+        let title = obj(vec![
+            ("register_id", Json::str("C2099A00001")),
+            ("collection", Json::str("Acts")),
+        ]);
+        let mut ev = Vec::new();
+        assert!(matches!(
+            observe_title(&title, &mut ErrSession, &mut ev),
+            Err(Exc::Runtime(_))
+        ));
+        let evaluated = Evaluated {
+            request: Json::Null,
+            rows: None,
+            error_category: None,
+            retained_body: Some(b"b".to_vec()),
+            media_type: None,
+            response_sha256: None,
+            evidence_path: Some("evidence/a.json".into()),
+            checked_at: pts("2026-01-01T00:00:00Z"),
+        };
+        ev.push(("evidence/a.json".into(), b"a".to_vec()));
+        assert!(retain(&evaluated, &mut ev).is_err());
+    }
+
+    #[test]
+    fn manifest_generated_object_and_staged_graph_cover_error_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.json");
+        std::fs::write(&big, vec![b' '; MAX_MANIFEST_BYTES as usize + 1]).unwrap();
+        assert!(load_manifest(&PyPath::new(big.to_str().unwrap())).is_err());
+        let deep = dir.path().join("deep.json");
+        std::fs::write(&deep, "[".repeat(2 * pyjson::MAX_DEPTH)).unwrap();
+        assert!(matches!(
+            load_manifest(&PyPath::new(deep.to_str().unwrap())),
+            Err(Exc::Recursion(_))
+        ));
+        let dup = dir.path().join("dup.json");
+        std::fs::write(&dup, r#"{"a":1,"a":2}"#).unwrap();
+        assert!(load_generated_object(dup.to_str().unwrap()).is_err());
+        assert!(matches!(
+            load_generated_object(deep.to_str().unwrap()),
+            Err(Exc::Recursion(_))
+        ));
+        let mut run = Run::default();
+        let out = dir.path().join("out");
+        let argv = vec![
+            deep.to_str().unwrap().into(),
+            "--out".into(),
+            out.to_str().unwrap().into(),
+        ];
+        assert_eq!(
+            main_with(&argv, &mut run, &mut |_| Box::new(ErrSession)).unwrap(),
+            1
+        );
+        let stage = dir.path().join("stage");
+        std::fs::create_dir_all(stage.join("evidence")).unwrap();
+        std::fs::write(
+            stage.join("monitor-baseline.json"),
+            "[".repeat(2 * pyjson::MAX_DEPTH),
+        )
+        .unwrap();
+        std::fs::write(stage.join("register-capture.json"), "{}\n").unwrap();
+        std::fs::write(stage.join("register-observation.json"), "{}\n").unwrap();
+        assert!(matches!(
+            validate_staged_graph(&PyPath::new(stage.to_str().unwrap())),
+            Err(Exc::Recursion(_))
+        ));
+    }
+
+    fn sample_baseline_bytes() -> Vec<u8> {
+        let title = obj(vec![
+            ("register_id", Json::str("C2099A00001")),
+            ("name", Json::str("Act")),
+            ("collection", Json::str("Acts")),
+            ("compilation_number", Json::str("C1")),
+            ("compilation_date", Json::str("2025-01-01")),
+            ("version_is_current", Json::Bool(true)),
+            ("current_version_start", Json::Null),
+            ("retrieved", Json::str("2026-01-01")),
+            (
+                "source_url",
+                Json::str(&format!(
+                    "{REGISTER_SITE}/C2099A00001/2025-01-01/2025-01-01/text/original/epub"
+                )),
+            ),
+            (
+                "register_page",
+                Json::str(&format!("{REGISTER_SITE}/C2099A00001/latest/text")),
+            ),
+        ]);
+        let base = obj(vec![
+            ("corpus", Json::str(CORPUS)),
+            ("retrieved", Json::str("2026-01-01")),
+            ("source", Json::str(SOURCE)),
+            ("source_api", Json::str(SOURCE_API)),
+            ("titles", Json::Array(vec![title])),
+        ]);
+        json_bytes(&base).unwrap()
+    }
+
+    #[test]
+    fn staged_graph_rejects_non_array_results_and_observations() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = dir.path().join("stage");
+        std::fs::create_dir_all(stage.join("evidence")).unwrap();
+        let base_bytes = sample_baseline_bytes();
+        let base_sha = sha256_id(&base_bytes);
+        let cap_bad = obj(vec![
+            ("schema_version", Json::str(CAPTURE_SCHEMA)),
+            ("mode", Json::str("live")),
+            ("observed_at", Json::str("2026-02-01T00:00:00Z")),
+            ("source_api", Json::str(SOURCE_API)),
+            ("baseline_sha256", Json::str(&base_sha)),
+            (
+                "expected_register_ids",
+                Json::Array(vec![Json::str("C2099A00001")]),
+            ),
+            ("complete", Json::Bool(true)),
+            ("results", Json::Null),
+        ]);
+        let cap_bytes = json_bytes(&cap_bad).unwrap();
+        let obs_bad = obj(vec![
+            ("schema_version", Json::str(OBSERVATION_SCHEMA)),
+            ("mode", Json::str("live")),
+            ("observed_at", Json::str("2026-02-01T00:00:00Z")),
+            ("scope_id", Json::str(OBSERVATION_SCOPE)),
+            ("baseline_sha256", Json::str(&base_sha)),
+            ("capture_sha256", Json::str(&sha256_id(&cap_bytes))),
+            (
+                "expected_register_ids",
+                Json::Array(vec![Json::str("C2099A00001")]),
+            ),
+            ("complete", Json::Bool(true)),
+            ("run_status", Json::str("VERIFIED")),
+            ("observations", Json::Null),
+        ]);
+        std::fs::write(stage.join("monitor-baseline.json"), &base_bytes).unwrap();
+        std::fs::write(stage.join("register-capture.json"), &cap_bytes).unwrap();
+        std::fs::write(
+            stage.join("register-observation.json"),
+            json_bytes(&obs_bad).unwrap(),
+        )
+        .unwrap();
+        assert!(validate_staged_graph(&PyPath::new(stage.to_str().unwrap())).is_err());
     }
 }

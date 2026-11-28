@@ -242,3 +242,47 @@ fn redirect_targets_are_split_quoted_and_joined_as_urllib_does() {
     assert_eq!(target("/p;").as_deref(), Some("http://h/p"));
     assert_eq!(target("data:x"), None);
 }
+
+#[test]
+fn stream_to_reports_wire_read_errors_for_chunked_and_plain_bodies() {
+    struct FailAfter {
+        prefix: Vec<u8>,
+        pos: usize,
+    }
+    impl Read for FailAfter {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pos < self.prefix.len() {
+                let n = (self.prefix.len() - self.pos).min(buf.len());
+                buf[..n].copy_from_slice(&self.prefix[self.pos..self.pos + n]);
+                self.pos += n;
+                return Ok(n);
+            }
+            Err(io::Error::from(io::ErrorKind::ConnectionReset))
+        }
+    }
+    let run = |prefix: &[u8], chunked, length| {
+        let wire = BufReader::new(FailAfter {
+            prefix: prefix.to_vec(),
+            pos: 0,
+        });
+        let mut body = Body {
+            wire,
+            chunked,
+            length,
+        };
+        let mut out = Vec::new();
+        body.stream_to(&mut out, 1024).unwrap()
+    };
+    assert_eq!(
+        run(b"", true, None),
+        (false, Some("ConnectionResetError".into()))
+    );
+    assert_eq!(
+        run(b"5\r\n", true, None),
+        (false, Some("ConnectionResetError".into()))
+    );
+    assert_eq!(
+        run(b"", false, Some(5)),
+        (false, Some("ConnectionResetError".into()))
+    );
+}

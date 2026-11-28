@@ -14,20 +14,7 @@ use crate::py;
 const ESCAPE: char = '\u{10F7FF}';
 const CARRY_OFFSET: u32 = 0x10_F800 - 0xD800;
 
-/// Append a code point (a Unicode scalar value or a lone surrogate) to OS-derived text.
-#[allow(dead_code)]
-pub fn push_code_point(out: &mut String, cp: u32) {
-    match char::from_u32(cp) {
-        Some(ESCAPE) => out.extend([ESCAPE, ESCAPE]),
-        Some(ch) => out.push(ch),
-        None => out.extend([
-            ESCAPE,
-            char::from_u32(cp + CARRY_OFFSET).expect("surrogates map to scalar values"),
-        ]),
-    }
-}
-
-/// The code points text stands for, reading the escapes `push_code_point` writes.
+/// The code points text stands for, reading the carrier escapes for lone surrogates.
 pub fn code_points(text: &str) -> impl Iterator<Item = u32> + '_ {
     let mut chars = text.chars().peekable();
     std::iter::from_fn(move || {
@@ -142,5 +129,8 @@ mod tests {
         assert_eq!(repr("caf\u{e9}"), "'caf\u{e9}'");
         assert_eq!(repr_code_points(&[0xD800]), "'\\ud800'");
         assert_eq!(repr("\u{e0001}"), "'\\U000e0001'");
+        assert_eq!(repr("\\\t\n\r"), r"'\\\t\n\r'");
+        assert_eq!(repr_os("\u{10F7FF}\u{10F7FF}a"), r"'\U0010f7ffa'");
+        assert_eq!(repr_os("\u{10F7FF}a"), r"'\U0010f7ffa'");
     }
 }

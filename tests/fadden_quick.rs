@@ -817,3 +817,18 @@ fn cli_binary_builds_and_indexes_9_act_preset_with_probe13_and_dated_compilation
             .is_file()
     );
 }
+
+#[test]
+fn run_subprocess_reports_non_zero_exit_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut r = tax_radar_au::fadden::Run::default();
+    let err = tax_radar_au::fadden::quick::run_subprocess(
+        env!("CARGO_BIN_EXE_fadden"),
+        &dir.path().to_string_lossy(),
+        &["--no-such-flag"],
+        false,
+        &mut r,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("exited"));
+}

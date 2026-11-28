@@ -485,5 +485,16 @@ mod tests {
                 ("4".to_string(), 0, 1)
             ]
         );
+        assert_eq!(
+            reason(2, 3),
+            "the EPUB extraction yields 2 section rows numbered so and the Word rendition 3 headings"
+        );
+        assert_eq!(listed(&Json::obj([("k", Json::Bool(true))]), "k"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let obj = dir.path().join("obj.json");
+        std::fs::write(&obj, "{}").unwrap();
+        assert!(load_sample(&obj.to_string_lossy()).is_err());
+        assert!(listing_rows(&obj.to_string_lossy()).is_err());
+        assert!(volume_files(&dir.path().join("missing").to_string_lossy(), &[]).is_err());
     }
 }

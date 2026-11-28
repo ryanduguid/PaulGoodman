@@ -110,3 +110,31 @@ pub fn decode_envelope(path: &str) -> Envelope {
         .collect();
     Envelope::Valid(Json::Object(pairs))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_and_envelope_size_and_write_refusals() {
+        assert_eq!(decode_base64_strict("//8="), Some(vec![0xff, 0xff]));
+        assert_eq!(decode_base64_strict("AAA=AAAA"), None);
+
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.epub");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(MAX_DOWNLOAD_BYTES + 1).unwrap();
+        drop(f);
+        assert_eq!(decode_envelope(&big.to_string_lossy()), Envelope::Invalid);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let ro = dir.path().join("ro.epub");
+            std::fs::write(&ro, r#"{"bytes":"//8="}"#).unwrap();
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o444)).unwrap();
+            assert_eq!(decode_envelope(&ro.to_string_lossy()), Envelope::Invalid);
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
+}

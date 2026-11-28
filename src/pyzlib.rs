@@ -156,7 +156,9 @@ impl Huffman {
             };
         }
         let (mut code, mut first, mut index) = (0i32, 0i32, 0i32);
-        for len in 1..16u32 {
+        let mut len = 1u32;
+        loop {
+            debug_assert!(len < 16, "a complete code resolves within 15 bits");
             if len > bits {
                 return Decoded::NeedMore;
             }
@@ -172,9 +174,14 @@ impl Huffman {
             first += count;
             first <<= 1;
             code <<= 1;
+            len += 1;
         }
-        unreachable!("a complete code resolves within 15 bits")
     }
+}
+
+enum Resolved {
+    Symbol(u16, u32),
+    Invalid(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -284,7 +291,7 @@ impl Inflate {
     }
 
     /// Decode one code, pulling bytes until it resolves; None leaves the call.
-    fn decode(&mut self, dist: bool, input: &mut Input) -> Option<Decoded> {
+    fn decode(&mut self, dist: bool, input: &mut Input) -> Option<Resolved> {
         loop {
             let table = if dist { &self.distcode } else { &self.lencode };
             let decoded = table
@@ -297,7 +304,8 @@ impl Inflate {
                         return None;
                     }
                 }
-                other => return Some(other),
+                Decoded::Symbol(sym, used) => return Some(Resolved::Symbol(sym, used)),
+                Decoded::Invalid(used) => return Some(Resolved::Invalid(used)),
             }
         }
     }
@@ -421,9 +429,8 @@ impl Inflate {
                         // An empty code-length code still reads 1 bit as length 0.
                         let (val, used) = match self.decode(false, &mut input) {
                             None => return self.leave(input.next),
-                            Some(Decoded::Symbol(val, used)) => (val, used),
-                            Some(Decoded::Invalid(used)) => (0, used),
-                            Some(Decoded::NeedMore) => unreachable!(),
+                            Some(Resolved::Symbol(val, used)) => (val, used),
+                            Some(Resolved::Invalid(used)) => (0, used),
                         };
                         if val < 16 {
                             self.take(used);
@@ -479,13 +486,12 @@ impl Inflate {
                 Mode::Len => {
                     let (sym, used) = match self.decode(false, &mut input) {
                         None => break,
-                        Some(Decoded::Symbol(sym, used)) => (sym, used),
-                        Some(Decoded::Invalid(used)) => {
+                        Some(Resolved::Symbol(sym, used)) => (sym, used),
+                        Some(Resolved::Invalid(used)) => {
                             self.take(used);
                             self.mode = Mode::Bad;
                             continue;
                         }
-                        Some(Decoded::NeedMore) => unreachable!(),
                     };
                     self.take(used);
                     match sym {
@@ -516,13 +522,12 @@ impl Inflate {
                 Mode::Dist => {
                     let (sym, used) = match self.decode(true, &mut input) {
                         None => break,
-                        Some(Decoded::Symbol(sym, used)) => (sym, used),
-                        Some(Decoded::Invalid(used)) => {
+                        Some(Resolved::Symbol(sym, used)) => (sym, used),
+                        Some(Resolved::Invalid(used)) => {
                             self.take(used);
                             self.mode = Mode::Bad;
                             continue;
                         }
-                        Some(Decoded::NeedMore) => unreachable!(),
                     };
                     self.take(used);
                     if sym >= 30 {
@@ -814,6 +819,18 @@ mod tests {
         let mut d = Decompress::default();
         assert_eq!(d.decompress(&stream, 1 << 20).unwrap(), text.as_bytes());
         assert!(d.eof && d.unused_data.is_empty());
+        // Streaming one byte at a time with max_length=1 hits every pause point.
+        let mut streamed = Decompress::default();
+        let mut out = Vec::new();
+        for &byte in &stream {
+            out.extend(streamed.decompress(&[byte], 1).unwrap());
+            while !streamed.unconsumed_tail.is_empty() {
+                let tail = streamed.unconsumed_tail.clone();
+                out.extend(streamed.decompress(&tail, 1).unwrap());
+            }
+        }
+        assert_eq!(out, text.as_bytes());
+        assert!(streamed.eof);
     }
 
     #[test]
@@ -861,5 +878,137 @@ mod tests {
             bytes[i / 8] |= b << (i % 8);
         }
         assert_eq!(Decompress::default().decompress(&bytes, 10), Err(ZlibError));
+    }
+
+    fn pack_bits(fields: &[(u32, u32)]) -> Vec<u8> {
+        let (mut bytes, mut bit) = (Vec::new(), 0usize);
+        for &(val, n) in fields {
+            for k in 0..n as usize {
+                if bit / 8 == bytes.len() {
+                    bytes.push(0);
+                }
+                bytes[bit / 8] |= (((val >> k) & 1) as u8) << (bit % 8);
+                bit += 1;
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn huffman_validation_and_truncated_streams() {
+        let empty = Huffman::build(&[0; 4], Kind::Codes).unwrap();
+        assert_eq!(empty.decode_bits(0, 1), Decoded::Invalid(1));
+        assert_eq!(empty.decode_bits(0, 0), Decoded::NeedMore);
+        assert!(Huffman::build(&[1, 1, 1], Kind::Lens).is_none());
+        assert!(Huffman::build(&[2, 2], Kind::Lens).is_none());
+        assert!(Huffman::build(&[1, 0], Kind::Codes).is_none());
+        // Empty input and 1-byte stored block pause before header completes.
+        let mut d = Decompress::default();
+        assert_eq!(d.decompress(&[], 10).unwrap(), b"");
+        assert_eq!(d.decompress(&[0x01], 10).unwrap(), b"");
+        assert!(!d.eof);
+        // Truncated LenExt (fixed block, literal 144 = 9-bit 0b110010000 -> LSB 0b000010011,
+        // sym 281 = 8-bit 0b11000001 -> LSB 0b10000011 + 5 extra bits missing).
+        let len_ext = pack_bits(&[(1, 1), (1, 2), (0b0_0001_0011, 9), (0b1000_0011, 8)]);
+        assert_eq!(
+            Decompress::default().decompress(&len_ext, 10).unwrap(),
+            [144]
+        );
+        // Truncated DistExt (fixed block, sym 257 = 7 bits, dist 29 = 5 bits + 13 extra).
+        let dist_ext = pack_bits(&[(1, 1), (1, 2), (0b100_0000, 7), (0b1_0111, 5)]);
+        assert_eq!(
+            Decompress::default().decompress(&dist_ext, 10).unwrap(),
+            b""
+        );
+    }
+
+    fn assert_bad_bits(fields: &[(u32, u32)]) {
+        let data = pack_bits(fields);
+        assert_eq!(Decompress::default().decompress(&data, 10), Err(ZlibError));
+    }
+
+    #[test]
+    fn invalid_dynamic_and_fixed_blocks_return_data_error() {
+        assert_bad_bits(&[(1, 1), (2, 2), (30, 5), (0, 5), (0, 4)]);
+        assert_bad_bits(&[
+            (1, 1),
+            (2, 2),
+            (0, 5),
+            (0, 5),
+            (0, 4),
+            (1, 3),
+            (1, 3),
+            (1, 3),
+            (0, 3),
+        ]);
+        let mut empty_cl = vec![(1, 1), (2, 2), (0, 5), (0, 5), (0, 4), (0, 12)];
+        empty_cl.extend(std::iter::repeat_n((0, 16), 17));
+        assert_bad_bits(&empty_cl);
+        assert_bad_bits(&[
+            (1, 1),
+            (2, 2),
+            (0, 5),
+            (0, 5),
+            (0, 4),
+            (1, 3),
+            (1, 3),
+            (0, 6),
+            (0, 1),
+            (0, 2),
+        ]);
+        assert_bad_bits(&[
+            (1, 1),
+            (2, 2),
+            (0, 5),
+            (0, 5),
+            (0, 4),
+            (0, 6),
+            (1, 3),
+            (1, 3),
+            (1, 1),
+            (127, 7),
+            (1, 1),
+            (127, 7),
+        ]);
+        assert_bad_bits(&[(1, 1), (1, 2), (0b0110_0011, 8)]);
+        assert_bad_bits(&[(1, 1), (1, 2), (0b100_0000, 7), (0b0_1111, 5)]);
+    }
+
+    fn emit_cl_zeros(v: &mut Vec<(u32, u32)>, mut n: u32) {
+        while n >= 11 {
+            let take = n.min(138);
+            v.extend([(0b11, 2), (take - 11, 7)]);
+            n -= take;
+        }
+        for _ in 0..n {
+            v.push((0b01, 2));
+        }
+    }
+
+    #[test]
+    fn invalid_dynamic_tables_and_half_code_errors() {
+        let mut base = vec![(1, 1), (2, 2), (0, 5), (0, 5), (14, 4)];
+        for i in 0..18 {
+            let len = match i {
+                2 | 3 => 2,
+                17 => 1,
+                _ => 0,
+            };
+            base.push((len, 3));
+        }
+        let mut over = base.clone();
+        over.extend([(0, 1), (0, 1)]);
+        emit_cl_zeros(&mut over, 254);
+        over.extend([(0, 1), (0b01, 2)]);
+        assert_bad_bits(&over);
+        let mut bad_len = base.clone();
+        emit_cl_zeros(&mut bad_len, 256);
+        bad_len.extend([(0, 1), (0b01, 2), (1, 1)]);
+        assert_bad_bits(&bad_len);
+        let mut bad_dist = base;
+        bad_dist[2] = (1, 5);
+        emit_cl_zeros(&mut bad_dist, 256);
+        bad_dist.extend([(0, 1), (0, 1), (0b01, 2), (1, 1), (1, 1)]);
+        assert_bad_bits(&bad_dist);
     }
 }

@@ -568,3 +568,43 @@ fn cli_refuses_a_fifo_markdown_companion_without_blocking() {
         assert!(!out.exists());
     }
 }
+
+#[test]
+fn exposure_cli_reports_monitor_error_from_write_and_closed_stdout() {
+    let dir = tempdir().unwrap();
+    let qdir = dir.path().join("queue");
+    assert_eq!(run(&compare_argv(&qdir), None).status.code(), Some(0));
+    let queue = qdir.join("impact-queue.json");
+    let done = cli(
+        &[
+            "exposure",
+            "--queue",
+            &queue.to_string_lossy(),
+            "--profiles",
+            &sample("profiles", "sample-client-profiles.json").to_string_lossy(),
+            "--out",
+            "../outside",
+        ],
+        Some(dir.path()),
+    );
+    assert_eq!(done.status.code(), Some(2));
+    assert!(stderr(&done).contains("output path must stay within"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let out_closed = dir.path().join("closed");
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_tax-radar-au"));
+        cmd.args(compare_argv(&out_closed)).stderr(Stdio::piped());
+        // SAFETY: closing fd 1 in the child before exec is async-signal-safe.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::close(1);
+                Ok(())
+            });
+        }
+        let done = cmd.output().unwrap();
+        assert_eq!(done.status.code(), Some(0));
+        assert!(out_closed.join("impact-queue.json").exists());
+    }
+}

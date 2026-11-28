@@ -114,20 +114,25 @@ fn int(n: usize) -> Json {
     Json::Int(n.into())
 }
 
-fn first_scan(run: &mut Run) -> Result<(), Exc> {
-    let directory = script_dir("pii_scan.py")?;
-    let root = corpus_root(&directory);
-    require_builder_layout(&directory)?;
-    let scratch = module_dir();
-    let titles = load(&pypath::join(&scratch, "manifest_md.json"))?;
+fn index_titles(titles: &Json) -> Result<Vec<(Key, Json)>, Exc> {
     let mut byid: Vec<(Key, Json)> = Vec::new();
-    for t in iterate(&titles)? {
+    for t in iterate(titles)? {
         let key = dict_key(getitem(&t, "id")?, "dict key")?;
         match byid.iter_mut().find(|(k, _)| *k == key) {
             Some(slot) => slot.1 = t,
             None => byid.push((key, t)),
         }
     }
+    Ok(byid)
+}
+
+fn first_scan(run: &mut Run) -> Result<(), Exc> {
+    let directory = script_dir("pii_scan.py")?;
+    let root = corpus_root(&directory);
+    require_builder_layout(&directory)?;
+    let scratch = module_dir();
+    let titles = load(&pypath::join(&scratch, "manifest_md.json"))?;
+    let byid = index_titles(&titles)?;
 
     let mut flagged: Vec<Flagged> = Vec::new();
     let markdown_root = child(&root, &["markdown"])?;
@@ -220,10 +225,8 @@ fn first_scan(run: &mut Run) -> Result<(), Exc> {
     let path = pypath::join(&scratch, "pii_flagged.json");
     if let Err(error) = super::refuse_deeper_than(&document, FLAGGED_DEPTH) {
         // Python opened the file, and its encoder wrote up to the container it stopped at.
-        write_text(
-            &path,
-            &pyvalue::dumps_until(&document, Some(1), true, false, FLAGGED_DEPTH),
-        )?;
+        let partial = pyvalue::dumps_until(&document, Some(1), true, false, FLAGGED_DEPTH);
+        write_text(&path, &partial)?;
         return Err(error);
     }
     write_text(&path, &dumps_with(&document, Some(1), true, false))
@@ -358,4 +361,20 @@ pub fn main2(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
         Ok(code) => code,
         Err(error) => run.uncaught(&error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_title_id_replaces_earlier_entry() {
+        let titles = Json::Array(vec![
+            Json::obj([("id", Json::str("A")), ("name", Json::str("first"))]),
+            Json::obj([("id", Json::str("A")), ("name", Json::str("second"))]),
+        ]);
+        let byid = index_titles(&titles).unwrap();
+        assert_eq!(byid.len(), 1);
+        assert_eq!(byid[0].1.at("name").as_str(), Some("second"));
+    }
 }

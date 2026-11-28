@@ -175,3 +175,204 @@ fn the_manifest_must_list_each_held_document_in_order() {
         Some("rulings.jsonl holds TR 2026/2 after the last document manifest.json lists".into())
     );
 }
+
+#[test]
+fn search_helpers_cover_edge_branches() {
+    assert!(!ends_name("section 1 and !bad", 9, |_| None));
+    let (places, err) = structure(&[Json::obj([("heading", Json::Int(1.into()))])], "# H\n");
+    assert!(places.is_empty() && err.is_some());
+    let lone = Json::obj([("heading", Json::Str(PyStr::Lone(vec![0xD800])))]);
+    assert_eq!(structure(&[lone], "# H\n").0, vec![(None, None)]);
+    let big = format!("{{\"text\":\"x\",\"n\":{}}}", "1".repeat(4301));
+    assert!(matches!(load_row(&big, "p"), Err(Exc::Value { .. })));
+    assert!(matches!(
+        load_row(&"[".repeat(2 * pyjson::MAX_DEPTH), "p"),
+        Err(Exc::Recursion(_))
+    ));
+    assert!(check_row_values("p", LICENCE_BASES[0], "BAD", "2026-01-01").is_err());
+    assert_eq!(to_json(Sql::Real(1.5)), Json::Float(1.5));
+    assert_eq!(to_json(Sql::Blob(b"hi".to_vec())), Json::str("b'hi'"));
+    assert_eq!(sql_value(&Json::Int(7.into())), Sql::Integer(7));
+    assert_eq!(json_usize(&Json::Null), 0);
+    let mut null_v = Json::Null;
+    drop_source_fields(&mut null_v);
+    assert_eq!(entries_mut(&mut null_v, "x").count(), 0);
+    let mut obj_v = Json::obj([("x", Json::Null)]);
+    assert_eq!(entries_mut(&mut obj_v, "x").count(), 0);
+    let dated = Dated {
+        date: "2026-01-01".into(),
+        titles: vec![],
+    };
+    assert_eq!(dated.standing("MISSING"), Json::Null);
+    let empty_ns = crate::argparse::Namespace::default();
+    assert!(list(&empty_ns, "missing").is_empty());
+    let mut caps = Caps::of(&empty_ns).unwrap();
+    assert_eq!(caps.report(Json::Null).0, Json::Null);
+    assert!(quotations_of(&Json::Null).is_empty());
+    assert!(describe_reference(&Json::obj([])).contains("not in this index"));
+}
+
+#[test]
+fn search_printers_cover_edge_branches() {
+    let mut r = Run::default();
+    print_quotation(
+        &Json::obj([
+            ("grade", Json::str("exact")),
+            ("distinct", Json::Bool(true)),
+            ("other_rows", Json::Int(0.into())),
+            ("quote", Json::str("a b")),
+        ]),
+        &mut r,
+    );
+    print_quote_summary(
+        "R1",
+        &Json::obj([
+            ("version_is_current", Json::Bool(false)),
+            ("grade", Json::str("miss")),
+            ("quote", Json::str("q")),
+        ]),
+        &mut r,
+    );
+    print_terms(
+        &Json::obj([(
+            "terms",
+            Json::Array(vec![Json::obj([("definitions", Json::Null)])]),
+        )]),
+        &mut r,
+    );
+    print_refs_lines(
+        &Json::obj([
+            ("row_id", Json::str("R1")),
+            ("heading", Json::str("H")),
+            ("cites", Json::Null),
+            ("cited_by", Json::Null),
+        ]),
+        &mut r,
+    );
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(out.contains("R1") && out.contains("exact"));
+}
+
+#[test]
+fn search_read_corpus_and_build_cover_error_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("corpus");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("sources.json"), "[".repeat(2 * pyjson::MAX_DEPTH)).unwrap();
+    assert!(matches!(
+        read_corpus(root.to_str().unwrap()),
+        Err(Exc::Recursion(_))
+    ));
+    let argv = vec![
+        "build".into(),
+        root.to_str().unwrap().into(),
+        "--out".into(),
+        dir.path().join("i.db").to_str().unwrap().into(),
+    ];
+    assert_eq!(main(&argv, &mut Run::default()).unwrap(), 1);
+    std::fs::write(root.join("sources.json"), "{bad").unwrap();
+    assert!(read_corpus(root.to_str().unwrap()).is_err());
+    std::fs::write(root.join("sources.json"), r#"{"titles":[]}"#).unwrap();
+    let bad_md = root.join("markdown");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir(&bad_md).unwrap();
+        std::fs::set_permissions(&bad_md, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let err = read_corpus(root.to_str().unwrap());
+        std::fs::set_permissions(&bad_md, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(err, Err(Exc::Os(_))));
+    }
+    std::fs::create_dir_all(bad_md.join("C2099A00001")).unwrap();
+    std::fs::write(bad_md.join("C2099A00001/C2099A00001.md"), "# H\n").unwrap();
+    std::fs::write(
+        bad_md.join("C2099A00001/sections.jsonl"),
+        "{\"register_id\":\"C2099A00001\",\"row_id\":\"C2099A00001:0001:-\",\"authorised\":false,\"heading\":1,\"text\":\"t\"}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("sources.json"),
+        r#"{"titles":[{"register_id":"C2099A00001","name":[],"jsonl_rows":1}]}"#,
+    )
+    .unwrap();
+    let out_u = dir.path().join("u.db");
+    assert!(matches!(
+        build_with_rulings(root.to_str().unwrap(), out_u.to_str().unwrap(), &[]),
+        Err(Exc::Type(_))
+    ));
+}
+
+#[test]
+fn search_build_and_publish_cover_error_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("corpus");
+    std::fs::create_dir_all(root.join("markdown/C2099A00001")).unwrap();
+    std::fs::write(root.join("markdown/C2099A00001/C2099A00001.md"), "# H\n").unwrap();
+    std::fs::write(
+        root.join("markdown/C2099A00001/sections.jsonl"),
+        "{\"register_id\":\"C2099A00001\",\"row_id\":\"C2099A00001:0001:-\",\"authorised\":false,\"heading\":1,\"text\":\"t\"}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("sources.json"),
+        r#"{"titles":[{"register_id":"C2099A00001","name":"Act","jsonl_rows":1}]}"#,
+    )
+    .unwrap();
+    let out_e = dir.path().join("e.db");
+    assert!(matches!(
+        build_with_rulings(root.to_str().unwrap(), out_e.to_str().unwrap(), &[]),
+        Err(Exc::Type(_))
+    ));
+    let existing = dir.path().join("exists.db");
+    std::fs::write(&existing, "x").unwrap();
+    assert!(matches!(
+        publish(&PyPath::new(existing.to_str().unwrap()), |p| {
+            std::fs::write(p, "y").unwrap();
+            Ok(Counts::default())
+        }),
+        Err(Exc::Os(_))
+    ));
+}
+
+#[test]
+fn search_rulings_meta_and_citations_cover_edge_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let rdir = dir.path().join("rrun");
+    std::fs::create_dir(&rdir).unwrap();
+    std::fs::write(
+        rdir.join("LICENCE-NOTICE.md"),
+        super::super::rulings::NOTICE,
+    )
+    .unwrap();
+    std::fs::write(rdir.join("rulings.jsonl"), "\n").unwrap();
+    std::fs::write(
+        rdir.join("manifest.json"),
+        r#"{"stage":"rulings","rows":0,"fetched_on":"2026-01-01","documents":[],"excluded":[]}"#,
+    )
+    .unwrap();
+    assert!(read_rulings_run(rdir.to_str().unwrap()).is_ok());
+    let db = dir.path().join("meta.db");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)", [])
+        .unwrap();
+    drop(conn);
+    assert!(open_index(db.to_str().unwrap()).is_err());
+    let conn = Connection::open(&db).unwrap();
+    conn.execute("INSERT INTO meta VALUES ('source', 'unknown')", [])
+        .unwrap();
+    assert!(index_source(&conn).is_err());
+    conn.execute("DELETE FROM meta", []).unwrap();
+    let mut r = Run::default();
+    print_citations(
+        &[Json::obj([
+            ("line", Json::Int(1.into())),
+            ("outcome", Json::str("ambiguous")),
+            ("citation", Json::str("s 1")),
+            ("rows", Json::Null),
+        ])],
+        &conn,
+        &mut r,
+    )
+    .unwrap();
+    assert!(String::from_utf8_lossy(&r.stdout).contains("ambiguous"));
+}

@@ -344,33 +344,11 @@ fn iso_timestamp(value: &Json, field: &str) -> Result<String> {
     Ok(text)
 }
 
-/// `urlsplit(url).port`'s validation: `Err` where Python raises ValueError.
-fn check_port(netloc: &str) -> std::result::Result<(), ()> {
-    let hostinfo = netloc.rsplit_once('@').map_or(netloc, |(_, h)| h);
-    let port = match hostinfo.split_once('[') {
-        Some((_, bracketed)) => bracketed
-            .split_once(']')
-            .map_or("", |(_, rest)| rest.split_once(':').map_or("", |(_, p)| p)),
-        None => hostinfo.split_once(':').map_or("", |(_, p)| p),
-    };
-    if port.is_empty() {
-        return Ok(());
-    }
-    if !port.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(());
-    }
-    let digits = port.trim_start_matches('0');
-    if digits.len() > 5 || digits.parse::<u32>().unwrap_or(0) > 65_535 {
-        return Err(());
-    }
-    Ok(())
-}
-
 fn https_url(value: &Json, field: &str) -> Result<String> {
     let text = non_empty(value, field)?;
     let refuse = || Error::monitor(format!("{field} must be an https URL."));
     let parsed = pyurl::urlsplit(&text).map_err(|_| refuse())?;
-    check_port(&parsed.netloc).map_err(|()| refuse())?;
+    pyurl::port(&parsed.netloc).map_err(|_| refuse())?;
     let invalid_authority = pyurl::hostname(&parsed.netloc).is_none()
         || parsed.netloc.contains('@')
         || parsed.netloc.contains('\\')
@@ -1217,7 +1195,12 @@ fn validate_candidates(value: &Json, item_index: usize) -> Result<usize> {
     Ok(candidates.len())
 }
 
-fn validate_queue_evidence(queue: &Json) -> Result<(BTreeSet<String>, String)> {
+fn validate_queue_evidence(queue: &Json) -> Result<(BTreeSet<String>, String, &[(PyStr, Json)])> {
+    let Json::Object(pairs) = queue else {
+        return Err(Error::monitor(
+            "Queue or decision schema version is unsupported.",
+        ));
+    };
     if !is_text(queue.at("schema_version"), "au-tax-impact-queue.v2") {
         return Err(Error::monitor(
             "Queue or decision schema version is unsupported.",
@@ -1379,7 +1362,7 @@ fn validate_queue_evidence(queue: &Json) -> Result<(BTreeSet<String>, String)> {
             "Impact queue run_status does not match its items.",
         ));
     }
-    Ok((open_items, observed_at))
+    Ok((open_items, observed_at, pairs))
 }
 
 /// Validate a loaded queue completely and return its open items and observation time.
@@ -1388,7 +1371,7 @@ fn validate_queue_evidence(queue: &Json) -> Result<(BTreeSet<String>, String)> {
 /// digest are recomputed, so an edited item cannot keep the digest of the
 /// queue it came from.
 pub fn verify_queue_integrity(queue: &Json) -> Result<(BTreeSet<String>, String)> {
-    let (open_items, observed_at) = validate_queue_evidence(queue)?;
+    let (open_items, observed_at, pairs) = validate_queue_evidence(queue)?;
     let digests = queue.at("source_digests");
     let raw = |name: &str| {
         let text = digests.at(name).as_str().unwrap_or_default();
@@ -1407,9 +1390,6 @@ pub fn verify_queue_integrity(queue: &Json) -> Result<(BTreeSet<String>, String)
             "Impact queue run_id does not match its exact source digests.",
         ));
     }
-    let Json::Object(pairs) = queue else {
-        unreachable!("validated as an object")
-    };
     let payload = Json::Object(
         pairs
             .iter()
@@ -1549,4 +1529,30 @@ pub fn validate_review(queue_path: &PyPath, decision_path: &PyPath) -> Result<Js
             ),
         ),
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_timestamp_and_render_markdown_edge_cases() {
+        assert!(parse_timestamp("2026-10-15T12:34:56.123Z").is_some());
+        for bad in [
+            "2026-01-01T00:00:00.Z",
+            "2026-01-01T00:00:00.1234567Z",
+            "2026-01-01T00:00:00+0a:00",
+            "2026-20-01T00:00:00Z",
+            "2026-01-40T00:00:00Z",
+            "2026-01-01T30:00:00Z",
+            "2026-01-01T00:00:60Z",
+            "2026-01-01T00:00:00+24:00",
+        ] {
+            assert!(parse_timestamp(bad).is_none(), "{bad}");
+        }
+        assert!(render_markdown(&Json::obj([])).contains("**Run status: None**"));
+        let one = Json::obj([("items", Json::Array(vec![Json::obj([])]))]);
+        assert!(render_markdown(&one).contains("### None: None"));
+        assert!(verify_queue_integrity(&Json::Null).is_err());
+    }
 }

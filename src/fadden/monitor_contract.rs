@@ -80,14 +80,6 @@ fn pts(text: &str) -> P {
     text.chars().map(u32::from).collect()
 }
 
-/// The text of a `str` value, its code points kept.
-fn points(value: &Json) -> Option<P> {
-    match value {
-        Json::Str(s) => Some(s.code_points()),
-        _ => None,
-    }
-}
-
 /// `_non_empty(value, field)`: the stripped text of a non-empty `str`
 /// without control characters.
 fn non_empty(value: &Json, field: &str) -> Result<P, Exc> {
@@ -203,6 +195,103 @@ fn load_json(path: &str, label: &str) -> Result<Json, Exc> {
 /// `project_baseline(sources)`: the monitor's exact baseline from a corpus
 /// `sources.json`.
 pub fn project_baseline(sources: &Json) -> Result<Json, Exc> {
+    Ok(project_baseline_parts(sources)?.0)
+}
+
+fn check_baseline_fields(index: usize, title: &[(PyStr, Json)]) -> Result<(), Exc> {
+    let present = names(title);
+    let mut missing: Vec<&str> = BASELINE_FIELDS
+        .iter()
+        .copied()
+        .filter(|f| !present.contains(&pts(f)))
+        .collect();
+    if !missing.is_empty() {
+        missing.sort_unstable();
+        return Err(contract_error(format!(
+            "sources title {index} is missing required field(s): {}.",
+            missing.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn project_baseline_title(
+    index: usize,
+    raw: &Json,
+    seen: &mut BTreeSet<P>,
+) -> Result<(P, P, Json), Exc> {
+    let title = object(raw, &format!("sources title {index}"))?;
+    check_baseline_fields(index, title)?;
+    let field = |name: &str| member(title, name).expect("checked above");
+    let label = |name: &str| format!("sources title {index} {name}");
+    let register_id = non_empty(field("register_id"), &label("register_id"))?;
+    if !seen.insert(register_id.clone()) {
+        return Err(contract_error(
+            "sources contains duplicate register_id values.",
+        ));
+    }
+    let collection = non_empty(field("collection"), &label("collection"))?;
+    if !COLLECTIONS.iter().any(|c| pts(c) == collection) {
+        return Err(contract_error(format!(
+            "sources title {index} collection is unsupported."
+        )));
+    }
+    let Json::Bool(current) = field("version_is_current") else {
+        return Err(contract_error(format!(
+            "sources title {index} version_is_current must be a boolean."
+        )));
+    };
+    let current_start = date(
+        field("current_version_start"),
+        &label("current_version_start"),
+        true,
+    )?;
+    if !current && current_start.is_none() {
+        return Err(contract_error(format!(
+            "sources title {index} current_version_start is required when version_is_current is false."
+        )));
+    }
+    let projected = build_projected_title(
+        &register_id,
+        &collection,
+        *current,
+        current_start,
+        field,
+        label,
+    )?;
+    Ok((register_id, collection, projected))
+}
+
+fn build_projected_title<'a>(
+    register_id: &P,
+    collection: &P,
+    current: bool,
+    current_start: Option<P>,
+    field: impl Fn(&str) -> &'a Json,
+    label: impl Fn(&str) -> String,
+) -> Result<Json, Exc> {
+    let pair = |k: &str, v: Json| (PyStr::Text(k.into()), v);
+    let text_f = |k: &str| Ok::<_, Exc>(pair(k, text_json(non_empty(field(k), &label(k))?)));
+    let date_f = |k: &str| Ok::<_, Exc>(pair(k, text_json(required_date(field(k), &label(k))?)));
+    let url_f = |k: &str| Ok::<_, Exc>(pair(k, text_json(https_url(field(k), &label(k))?)));
+    Ok(Json::Object(vec![
+        pair("register_id", text_json(register_id.clone())),
+        text_f("name")?,
+        pair("collection", text_json(collection.clone())),
+        text_f("compilation_number")?,
+        date_f("compilation_date")?,
+        pair("version_is_current", Json::Bool(current)),
+        pair(
+            "current_version_start",
+            current_start.map_or(Json::Null, text_json),
+        ),
+        date_f("retrieved")?,
+        url_f("source_url")?,
+        url_f("register_page")?,
+    ]))
+}
+
+fn project_baseline_parts(sources: &Json) -> Result<(Json, Vec<(P, P)>), Exc> {
     let source = object(sources, "sources")?;
     for field in ["corpus", "retrieved", "source", "source_api", "titles"] {
         if member(source, field).is_none() {
@@ -228,102 +317,14 @@ pub fn project_baseline(sources: &Json) -> Result<Json, Exc> {
     let mut titles: Vec<(P, P, Json)> = Vec::new();
     let mut seen: BTreeSet<P> = BTreeSet::new();
     for (index, raw) in raw_titles.iter().enumerate() {
-        let index = index + 1;
-        let title = object(raw, &format!("sources title {index}"))?;
-        let present = names(title);
-        let mut missing: Vec<&str> = BASELINE_FIELDS
-            .iter()
-            .copied()
-            .filter(|f| !present.contains(&pts(f)))
-            .collect();
-        if !missing.is_empty() {
-            missing.sort_unstable();
-            return Err(contract_error(format!(
-                "sources title {index} is missing required field(s): {}.",
-                missing.join(", ")
-            )));
-        }
-        let field = |name: &str| member(title, name).expect("checked above");
-        let label = |name: &str| format!("sources title {index} {name}");
-        let register_id = non_empty(field("register_id"), &label("register_id"))?;
-        if !seen.insert(register_id.clone()) {
-            return Err(contract_error(
-                "sources contains duplicate register_id values.",
-            ));
-        }
-        let collection = non_empty(field("collection"), &label("collection"))?;
-        if !COLLECTIONS.iter().any(|c| pts(c) == collection) {
-            return Err(contract_error(format!(
-                "sources title {index} collection is unsupported."
-            )));
-        }
-        let Json::Bool(current) = field("version_is_current") else {
-            return Err(contract_error(format!(
-                "sources title {index} version_is_current must be a boolean."
-            )));
-        };
-        let current_start = date(
-            field("current_version_start"),
-            &label("current_version_start"),
-            true,
-        )?;
-        if !current && current_start.is_none() {
-            return Err(contract_error(format!(
-                "sources title {index} current_version_start is required when version_is_current is false."
-            )));
-        }
-        let projected = Json::Object(vec![
-            (
-                PyStr::Text("register_id".into()),
-                text_json(register_id.clone()),
-            ),
-            (
-                PyStr::Text("name".into()),
-                text_json(non_empty(field("name"), &label("name"))?),
-            ),
-            (
-                PyStr::Text("collection".into()),
-                text_json(collection.clone()),
-            ),
-            (
-                PyStr::Text("compilation_number".into()),
-                text_json(non_empty(
-                    field("compilation_number"),
-                    &label("compilation_number"),
-                )?),
-            ),
-            (
-                PyStr::Text("compilation_date".into()),
-                text_json(required_date(
-                    field("compilation_date"),
-                    &label("compilation_date"),
-                )?),
-            ),
-            (
-                PyStr::Text("version_is_current".into()),
-                Json::Bool(*current),
-            ),
-            (
-                PyStr::Text("current_version_start".into()),
-                current_start.map_or(Json::Null, text_json),
-            ),
-            (
-                PyStr::Text("retrieved".into()),
-                text_json(required_date(field("retrieved"), &label("retrieved"))?),
-            ),
-            (
-                PyStr::Text("source_url".into()),
-                text_json(https_url(field("source_url"), &label("source_url"))?),
-            ),
-            (
-                PyStr::Text("register_page".into()),
-                text_json(https_url(field("register_page"), &label("register_page"))?),
-            ),
-        ]);
-        titles.push((register_id, collection, projected));
+        titles.push(project_baseline_title(index + 1, raw, &mut seen)?);
     }
     titles.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
-    Ok(Json::Object(vec![
+    let expected: Vec<(P, P)> = titles
+        .iter()
+        .map(|(id, col, _)| (id.clone(), col.clone()))
+        .collect();
+    let baseline = Json::Object(vec![
         (PyStr::Text("corpus".into()), text_json(corpus)),
         (PyStr::Text("retrieved".into()), text_json(retrieved)),
         (
@@ -335,7 +336,8 @@ pub fn project_baseline(sources: &Json) -> Result<Json, Exc> {
             PyStr::Text("titles".into()),
             Json::Array(titles.into_iter().map(|t| t.2).collect()),
         ),
-    ]))
+    ]);
+    Ok((baseline, expected))
 }
 
 /// One observation facts schema: its fields and what the observation carries.
@@ -412,7 +414,7 @@ fn in_set(value: &[u32], set: &[&str]) -> bool {
 /// `project_observation(baseline, facts)`: validate structured facts and
 /// produce the monitor's exact observation.
 pub fn project_observation(baseline: &Json, facts: &Json) -> Result<Json, Exc> {
-    let projected_baseline = project_baseline(baseline)?;
+    let (_, expected) = project_baseline_parts(baseline)?;
     let raw = object(facts, "observation facts")?;
     let Some(version) = member(raw, "schema_version") else {
         return Err(contract_error(
@@ -440,19 +442,6 @@ pub fn project_observation(baseline: &Json, facts: &Json) -> Result<Json, Exc> {
             "observation facts complete/observations fields are invalid.",
         ));
     };
-    let Json::Object(baseline_pairs) = &projected_baseline else {
-        unreachable!("project_baseline returns an object")
-    };
-    let Some(Json::Array(baseline_titles)) = member(baseline_pairs, "titles") else {
-        unreachable!("project_baseline returns titles")
-    };
-    let expected: Vec<(P, P)> = baseline_titles
-        .iter()
-        .map(|t| {
-            let field = |n: &str| t.get(n).and_then(points).unwrap_or_default();
-            (field("register_id"), field("collection"))
-        })
-        .collect();
     let mut item_fields: Vec<&str> = OBSERVATION_FIELDS.to_vec();
     if schema.evidence_id {
         item_fields.push("evidence_id");
@@ -805,13 +794,19 @@ impl std::io::Write for StagedFile<'_> {
 // ------------------------------------------------------------ publishing
 
 /// `path.unlink()`, a missing file ignored.
-fn remove(path: &str) -> Result<(), Exc> {
-    fault(Step::Unlink(path))?;
+fn remove_os(path: &str) -> Result<(), OsError> {
+    if let Some(error) = injected(Step::Unlink(path)) {
+        return Err(error);
+    }
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(Exc::Os(OsError::new(&e, Some(path), Style::Native))),
+        Err(e) => Err(OsError::new(&e, Some(path), Style::Native)),
     }
+}
+
+fn remove(path: &str) -> Result<(), Exc> {
+    remove_os(path).map_err(Exc::Os)
 }
 
 /// A `finally` that removes `paths`: the first removal error replaces the
@@ -914,7 +909,7 @@ fn write_staged(path: &str, value: &Json) -> Result<String, Exc> {
 /// directory.
 struct OutputLock {
     path: String,
-    token: Option<Vec<u8>>,
+    token: Vec<u8>,
     recovery_required: bool,
 }
 
@@ -945,7 +940,7 @@ impl OutputLock {
                     }
                     return Ok(OutputLock {
                         path,
-                        token: Some(token),
+                        token,
                         recovery_required: false,
                     });
                 }
@@ -969,17 +964,11 @@ impl OutputLock {
         if self.recovery_required {
             return outcome;
         }
-        let Some(token) = &self.token else {
-            return outcome;
-        };
         let cleanup = std::fs::read(&self.path)
             .map_err(|e| OsError::new(&e, Some(&self.path), Style::Errno))
             .and_then(|held| {
-                if held == *token {
-                    remove(&self.path).map_err(|e| match e {
-                        Exc::Os(error) => error,
-                        _ => unreachable!("remove raises OSError"),
-                    })
+                if held == self.token {
+                    remove_os(&self.path)
                 } else {
                     Ok(())
                 }
@@ -1162,5 +1151,185 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
             message,
         }) => Err(parser.error(&message)),
         Err(error) => Ok(run.uncaught(&error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_sources(current_start: Json) -> Json {
+        Json::obj([
+            ("corpus", Json::str("au-tax")),
+            ("retrieved", Json::str("2026-01-01")),
+            ("source", Json::str("Federal Register of Legislation")),
+            (
+                "source_api",
+                Json::str("https://api.prod.legislation.gov.au/v1"),
+            ),
+            (
+                "titles",
+                Json::Array(vec![Json::obj([
+                    ("register_id", Json::str("C2099A00001")),
+                    ("name", Json::str("Tax Act")),
+                    ("collection", Json::str("Acts")),
+                    ("compilation_number", Json::str("C1")),
+                    ("compilation_date", Json::str("2025-01-01")),
+                    ("version_is_current", Json::Bool(true)),
+                    ("current_version_start", current_start),
+                    ("retrieved", Json::str("2026-01-01")),
+                    (
+                        "source_url",
+                        Json::str("https://www.legislation.gov.au/C2099A00001/latest/text"),
+                    ),
+                    (
+                        "register_page",
+                        Json::str("https://www.legislation.gov.au/C2099A00001/latest/text"),
+                    ),
+                ])]),
+            ),
+        ])
+    }
+
+    #[test]
+    fn helpers_load_json_and_baseline_validation_cover_edges() {
+        assert_eq!(dump_chunks(&Json::Int(7.into())), vec![pts("7")]);
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.json");
+        std::fs::write(&bad, "{bad").unwrap();
+        assert!(load_json(bad.to_str().unwrap(), "x").is_err());
+        let deep = dir.path().join("deep.json");
+        std::fs::write(&deep, "[".repeat(2 * pyjson::MAX_DEPTH)).unwrap();
+        assert!(matches!(
+            load_json(deep.to_str().unwrap(), "x"),
+            Err(Exc::Recursion(_))
+        ));
+        assert!(project_baseline(&sample_sources(Json::str("bad-date"))).is_err());
+        let staged_path = dir.path().join("s.tmp");
+        let file = std::fs::File::create(&staged_path).unwrap();
+        let mut staged = StagedFile {
+            file,
+            path: staged_path.to_str().unwrap(),
+        };
+        std::io::Write::flush(&mut staged).unwrap();
+        assert!(matches!(
+            remove(dir.path().to_str().unwrap()),
+            Err(Exc::Os(_))
+        ));
+    }
+
+    fn sample_obs_v1(
+        state: &str,
+        comp_num: Json,
+        comp_date: Json,
+        doc_id: Json,
+        start: Json,
+        err_cat: Json,
+    ) -> Json {
+        Json::obj([
+            (
+                "schema_version",
+                Json::str("au-tax-register-observation-facts.v1"),
+            ),
+            ("observed_at", Json::str("2026-02-01T00:00:00Z")),
+            ("complete", Json::Bool(true)),
+            (
+                "observations",
+                Json::Array(vec![Json::obj([
+                    ("register_id", Json::str("C2099A00001")),
+                    ("collection", Json::str("Acts")),
+                    ("state", Json::str(state)),
+                    (
+                        "evidence_url",
+                        Json::str("https://www.legislation.gov.au/C2099A00001"),
+                    ),
+                    ("checked_at", Json::str("2026-02-01T00:00:00Z")),
+                    ("observed_compilation_number", comp_num),
+                    ("observed_compilation_date", comp_date),
+                    ("observed_register_document_id", doc_id),
+                    ("current_version_start", start),
+                    ("error_category", err_cat),
+                ])]),
+            ),
+        ])
+    }
+
+    #[test]
+    fn observation_validation_covers_unsupported_schema_and_state_fields() {
+        let base = sample_sources(Json::Null);
+        let bad_ver = Json::obj([(
+            "schema_version",
+            Json::str("au-tax-register-observation-facts.v99"),
+        )]);
+        assert!(project_observation(&base, &bad_ver).is_err());
+        let bad_sup = sample_obs_v1(
+            "SUPERSEDED",
+            Json::str("C2"),
+            Json::str("bad"),
+            Json::str("C2099C00002"),
+            Json::Null,
+            Json::Null,
+        );
+        assert!(project_observation(&base, &bad_sup).is_err());
+        let cur_no_pub = sample_obs_v1(
+            "CURRENT_NO_PUBLISHED_COMPILATION",
+            Json::Null,
+            Json::Null,
+            Json::Null,
+            Json::str("bad"),
+            Json::Null,
+        );
+        assert!(project_observation(&base, &cur_no_pub).is_err());
+        let failed = sample_obs_v1(
+            "LOOKUP_FAILED",
+            Json::Null,
+            Json::Null,
+            Json::Null,
+            Json::Null,
+            Json::str(""),
+        );
+        assert!(project_observation(&base, &failed).is_err());
+    }
+
+    #[test]
+    fn lock_and_publish_rollback_cover_foreign_token_and_fresh_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert!(matches!(
+            OutputLock::acquire(missing.to_str().unwrap()),
+            Err(Exc::Os(_))
+        ));
+        let lock = OutputLock::acquire(dir.path().to_str().unwrap()).unwrap();
+        std::fs::write(&lock.path, b"foreign").unwrap();
+        lock.release(Ok(())).unwrap();
+        std::fs::remove_file(dir.path().join(PUBLISH_LOCK_FILENAME)).unwrap();
+        let s1 = dir.path().join("s1.tmp");
+        let s2 = dir.path().join("s2.tmp");
+        std::fs::write(&s1, "{}\n").unwrap();
+        std::fs::write(&s2, "{}\n").unwrap();
+        let d1 = dir.path().join("monitor-baseline.json");
+        let d2 = dir.path().join("register-observation.json");
+        let d2_str = d2.to_str().unwrap().to_string();
+        set_fault_hook(move |step| match step {
+            Step::Replace(_, dst) if dst == d2_str => Some(OsError::new(
+                &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                Some(dst),
+                Style::Native,
+            )),
+            _ => None,
+        });
+        let res = publish(
+            &[
+                ("baseline", s1.to_str().unwrap().into()),
+                ("observation", s2.to_str().unwrap().into()),
+            ],
+            &[
+                ("baseline", d1.to_str().unwrap().into()),
+                ("observation", d2.to_str().unwrap().into()),
+            ],
+        );
+        FAULT_HOOK.with(|h| *h.borrow_mut() = None);
+        assert!(matches!(res, Err(Exc::Os(_))));
+        assert!(!d1.exists() && !d2.exists());
     }
 }

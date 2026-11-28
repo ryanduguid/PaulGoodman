@@ -951,6 +951,17 @@ fn markdown(
     Ok(text)
 }
 
+fn fold_heading(value: &Json) -> Result<Json, Exc> {
+    match value {
+        h if !h.truthy() => Ok(Json::Null),
+        Json::Str(s) => Ok(pstr(fold(&s.code_points()))),
+        other => Err(Exc::Attribute(format!(
+            "'{}' object has no attribute 'replace'",
+            type_name(other)
+        ))),
+    }
+}
+
 fn execute(run: &mut Run) -> Result<(), Exc> {
     let directory = script_dir("rates.py")?;
     let root = corpus_root(&directory);
@@ -987,16 +998,7 @@ fn execute(run: &mut Run) -> Result<(), Exc> {
     // finds nothing; each row also carries an ASCII-folded copy.
     for r in &mut records {
         let content = pstr(fold(&r.content));
-        let heading = match r.get("heading") {
-            h if !h.truthy() => Json::Null,
-            Json::Str(s) => pstr(fold(&s.code_points())),
-            other => {
-                return Err(Exc::Attribute(format!(
-                    "'{}' object has no attribute 'replace'",
-                    type_name(other)
-                )));
-            }
-        };
+        let heading = fold_heading(r.get("heading"))?;
         r.fields.push(("content_ascii", content));
         r.fields.push(("heading_ascii", heading));
     }
@@ -1066,4 +1068,71 @@ pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
         Ok(()) => 0,
         Err(error) => run.uncaught(&error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_and_heading_helpers_handle_edge_values() {
+        assert_eq!(casefold(&[0xD800]), vec![0xD800]);
+        assert_eq!(
+            fold(&[0x00A0, 0x2011]),
+            vec![u32::from(' '), u32::from('-')]
+        );
+        assert_eq!(thousands(1_000_000), "1,000,000");
+        assert!(row_text(None).unwrap().is_empty());
+        assert!(row_text(Some(&Json::Bool(false))).unwrap().is_empty());
+        assert!(matches!(
+            row_text(Some(&Json::obj([("a", Json::Int(1.into()))]))),
+            Err(Exc::Key(k)) if k == "0"
+        ));
+        assert!(matches!(
+            row_text(Some(&Json::Array(vec![Json::Int(1.into())]))),
+            Err(Exc::Type(m)) if m.contains("got 'list'")
+        ));
+        assert!(matches!(
+            row_text(Some(&Json::Int(1.into()))),
+            Err(Exc::Type(m)) if m.contains("has no len()")
+        ));
+        assert!(matches!(
+            fold_heading(&Json::Int(1.into())),
+            Err(Exc::Attribute(m)) if m.contains("'int'")
+        ));
+    }
+
+    #[test]
+    fn numeric_and_array_comparisons_match_python() {
+        assert_eq!(
+            number_cmp(&Json::Float(1.5), &Json::Float(2.5)),
+            Some(Some(Ordering::Less))
+        );
+        assert_eq!(
+            number_cmp(&Json::Float(f64::NAN), &Json::Int(1.into())),
+            Some(None)
+        );
+        assert_eq!(
+            number_cmp(&Json::Int(1.into()), &Json::Float(f64::INFINITY)),
+            Some(Some(Ordering::Less))
+        );
+        assert_eq!(
+            number_cmp(&Json::Int(1.into()), &Json::Float(f64::NEG_INFINITY)),
+            Some(Some(Ordering::Greater))
+        );
+        assert_eq!(
+            number_cmp(&Json::Int(1.into()), &Json::Float(1.5)),
+            Some(Some(Ordering::Less))
+        );
+        assert_eq!(
+            number_cmp(&Json::Float(2.5), &Json::Int(1.into())),
+            Some(Some(Ordering::Greater))
+        );
+        let a = Json::Array(vec![Json::Int(1.into())]);
+        let b = Json::Array(vec![Json::Int(1.into()), Json::Int(2.into())]);
+        let c = Json::Array(vec![Json::Int(2.into())]);
+        assert!(py_lt(&a, &b).unwrap());
+        assert!(py_lt(&a, &c).unwrap());
+        assert!(!py_lt(&c, &a).unwrap());
+    }
 }

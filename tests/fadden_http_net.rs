@@ -635,3 +635,202 @@ fn a_streamed_download_stops_one_byte_past_its_budget() {
     );
     assert_eq!(written, b"to the end");
 }
+
+#[derive(Debug)]
+struct AcceptAnyCert;
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
+    fn verify_server_cert(
+        &self,
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &[rustls::pki_types::CertificateDer<'_>],
+        _: &rustls::pki_types::ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![rustls::SignatureScheme::ED25519]
+    }
+}
+
+#[derive(Debug)]
+struct DummySigner;
+
+impl rustls::sign::Signer for DummySigner {
+    fn sign(&self, _: &[u8]) -> Result<Vec<u8>, rustls::Error> {
+        Ok(vec![0u8; 64])
+    }
+    fn scheme(&self) -> rustls::SignatureScheme {
+        rustls::SignatureScheme::ED25519
+    }
+}
+
+#[derive(Debug)]
+struct DummyKey;
+
+impl rustls::sign::SigningKey for DummyKey {
+    fn choose_scheme(
+        &self,
+        offered: &[rustls::SignatureScheme],
+    ) -> Option<Box<dyn rustls::sign::Signer>> {
+        offered
+            .contains(&rustls::SignatureScheme::ED25519)
+            .then(|| Box::new(DummySigner) as Box<dyn rustls::sign::Signer>)
+    }
+    fn algorithm(&self) -> rustls::SignatureAlgorithm {
+        rustls::SignatureAlgorithm::ED25519
+    }
+}
+
+#[derive(Debug)]
+struct DummyResolver(std::sync::Arc<rustls::sign::CertifiedKey>);
+
+impl rustls::server::ResolvesServerCert for DummyResolver {
+    fn resolve(
+        &self,
+        _: rustls::server::ClientHello<'_>,
+    ) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {
+        Some(self.0.clone())
+    }
+}
+
+fn tls_pair(
+    version: &'static rustls::SupportedProtocolVersion,
+) -> (
+    std::sync::Arc<rustls::ClientConfig>,
+    std::sync::Arc<rustls::ServerConfig>,
+) {
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let client = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[version])
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAnyCert))
+        .with_no_client_auth();
+    let cert = rustls::pki_types::CertificateDer::from(vec![0x30, 0x03, 0x02, 0x01, 0x00]);
+    let key = std::sync::Arc::new(rustls::sign::CertifiedKey::new(
+        vec![cert],
+        std::sync::Arc::new(DummyKey),
+    ));
+    let server = rustls::ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[version])
+        .unwrap()
+        .with_no_client_auth()
+        .with_cert_resolver(std::sync::Arc::new(DummyResolver(key)));
+    (std::sync::Arc::new(client), std::sync::Arc::new(server))
+}
+
+fn serve_tls_replies(
+    replies: Vec<(std::sync::Arc<rustls::ServerConfig>, Vec<u8>, bool)>,
+) -> (std::net::SocketAddr, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        for (cfg, reply, notify) in replies {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut conn = rustls::ServerConnection::new(cfg).unwrap();
+            let mut tls = rustls::Stream::new(&mut conn, &mut sock);
+            let mut buf = [0u8; 512];
+            let _ = tls.read(&mut buf);
+            let _ = tls.write_all(&reply);
+            let _ = tls.flush();
+            if notify {
+                conn.send_close_notify();
+                let _ = conn.write_tls(&mut sock);
+            }
+        }
+    });
+    (addr, handle)
+}
+
+#[test]
+fn tls_stream_get_eof_and_https_only_redirect_work() {
+    let (client_cfg, server_cfg) = tls_pair(&rustls::version::TLS13);
+    let (addr, handle) = serve_tls_replies(vec![
+        (
+            server_cfg.clone(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec(),
+            true,
+        ),
+        (
+            server_cfg.clone(),
+            b"HTTP/1.1 200 OK\r\n\r\nhi".to_vec(),
+            false,
+        ),
+        (
+            server_cfg,
+            b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/plain\r\n\r\n".to_vec(),
+            true,
+        ),
+    ]);
+    let mut n = http::connect_tls(client_cfg);
+    let base = format!("https://{addr}");
+    assert_eq!(
+        n.get(&format!("{base}/ok"), None, &mut Request::default())
+            .unwrap()
+            .body,
+        b"ok"
+    );
+    assert_eq!(
+        n.get(&format!("{base}/eof"), None, &mut Request::default())
+            .unwrap()
+            .body,
+        b"hi"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("x.part");
+    let err = n
+        .download(
+            &format!("{base}/r"),
+            part.to_str().unwrap(),
+            100,
+            Some(0),
+            true,
+            &mut Request::default(),
+        )
+        .unwrap_err();
+    assert_eq!(err, failure("HTTPSRequired"));
+    handle.join().unwrap();
+}
+
+#[test]
+fn tls12_and_zero_timeout_handshake_work() {
+    let (client12, server12) = tls_pair(&rustls::version::TLS12);
+    let (addr, handle) = serve_tls_replies(vec![(
+        server12,
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n12".to_vec(),
+        true,
+    )]);
+    let mut n = http::connect_tls(client12.clone());
+    assert_eq!(
+        n.get(&format!("https://{addr}/12"), None, &mut Request::default())
+            .unwrap()
+            .body,
+        b"12"
+    );
+    handle.join().unwrap();
+    let l2 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let sock = TcpStream::connect(l2.local_addr().unwrap()).unwrap();
+    assert_eq!(
+        http::handshake_tls_err(sock, client12, "127.0.0.1", std::time::Duration::ZERO),
+        Some(failure("URLError"))
+    );
+}

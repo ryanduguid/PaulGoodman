@@ -577,3 +577,25 @@ fn exposure_aggregate_budgets_block_the_complete_report() {
         r"^Exposure exceeds 200000 profile matches; split the profiles file\.$",
     );
 }
+
+#[test]
+fn exposure_profile_shape_and_markdown_fallbacks() {
+    let dir = tempdir().unwrap();
+    let queue = default_queue(dir.path());
+    for (doc, pattern) in [
+        (json!({}), "must contain exactly"),
+        (
+            json!({"schema_version": "au-tax-client-profiles.v1", "profiles_version": 123, "profiles": [{"profile_id": "A", "skill_refs": ["s"]}]}),
+            "profiles_version must be a non-empty string",
+        ),
+        (
+            json!({"schema_version": "au-tax-client-profiles.v1", "profiles_version": "v1", "profiles": [{"profile_id": "A", "skill_refs": [123]}]}),
+            "skill reference 1 must be a skill reference",
+        ),
+    ] {
+        let p = write(&dir.path().join("bad.json"), &doc);
+        refused(report(&queue, &p), pattern);
+    }
+    let rendered = exposure::render_exposure_markdown(&tax_radar_au::pyjson::Json::obj([]));
+    assert!(rendered.contains("The queue holds no items"));
+}

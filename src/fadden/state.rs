@@ -453,14 +453,10 @@ fn write_corpus(
         write_new(&out.join(&format!("raw/{id}.xml")), raw)?;
         let dir = out.join(&format!("markdown/{id}"));
         mkdir(&dir)?;
-        write_new(
-            &dir.join("sections.jsonl"),
-            &jsonl(source, parsed, retrieved),
-        )?;
-        write_new(
-            &dir.join(&format!("{id}.md")),
-            markdown(source, parsed, retrieved).as_bytes(),
-        )?;
+        let rows_path = dir.join("sections.jsonl");
+        write_new(&rows_path, &jsonl(source, parsed, retrieved))?;
+        let md_path = dir.join(&format!("{id}.md"));
+        write_new(&md_path, markdown(source, parsed, retrieved).as_bytes())?;
         total += parsed.rows.len();
         titles.push(title_entry(source, parsed, raw, retrieved));
     }
@@ -526,20 +522,165 @@ fn parser() -> Parser {
         )
 }
 
-pub fn main(argv: &[String], run_state: &mut Run) -> Result<i32, Exit> {
-    let args = parser().parse(argv)?;
-    let code = args.str("source").unwrap_or_default();
-    let out = PyPath::new(&args.str("out").unwrap_or_default());
-    let Some(source) = source(&code) else {
-        return Ok(2);
-    };
-    let mut http = http::connect_as(AGENT);
-    Ok(match run(http.as_mut(), source, &out, run_state) {
+fn report_outcome(outcome: Result<i32, Exc>, run_state: &mut Run) -> i32 {
+    match outcome {
         Ok(code) => code,
         Err(error @ (Exc::Value { .. } | Exc::Os(_))) => {
             run_state.eprint(&format!("state: {error}"));
             1
         }
         Err(error) => run_state.uncaught(&error),
-    })
+    }
+}
+
+pub fn main(argv: &[String], run_state: &mut Run) -> Result<i32, Exit> {
+    let args = parser().parse(argv)?;
+    let code = args.str("source").unwrap_or_default();
+    let out = PyPath::new(&args.str("out").unwrap_or_default());
+    let source = source(&code).expect("parser checked --source choices");
+    let mut http = http::connect_as(AGENT);
+    Ok(report_outcome(
+        run(http.as_mut(), source, &out, run_state),
+        run_state,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Script(Vec<Result<http::Response, Failure>>);
+    impl Http for Script {
+        fn get(
+            &mut self,
+            _: &str,
+            _: Option<usize>,
+            _: &mut http::Request,
+        ) -> Result<http::Response, Failure> {
+            self.0.remove(0)
+        }
+        fn sleep(&mut self, _: f64) {}
+        fn today(&mut self) -> String {
+            "2026-01-01".into()
+        }
+    }
+
+    #[test]
+    fn get_checked_jsonl_mkdir_and_pii_refusal_cover_edges() {
+        let src = source("qld").unwrap();
+        let mut h = Script(vec![
+            Err(Failure::Status(500)),
+            Err(Failure::Transport("TimeoutError".into())),
+            Err(Failure::Uncaught {
+                class: "ValueError",
+                message: "bad".into(),
+            }),
+        ]);
+        assert!(matches!(
+            get(&mut h, "https://www.legislation.qld.gov.au/x", 10),
+            Err(Exc::Value { .. })
+        ));
+        let wrong = http::Response {
+            url: "https://other.invalid/x".into(),
+            content_type: String::new(),
+            body: vec![],
+        };
+        assert!(checked(src, "https://www.legislation.qld.gov.au/x", wrong, 10).is_err());
+        let big = http::Response {
+            url: "https://www.legislation.qld.gov.au/x".into(),
+            content_type: String::new(),
+            body: vec![0; 11],
+        };
+        assert!(checked(src, "https://www.legislation.qld.gov.au/x", big, 10).is_err());
+        let parsed = Parsed {
+            id: "act-1".into(),
+            name: "Act".into(),
+            collection: "Acts",
+            as_at: "2026-01-01".into(),
+            in_force: "2026-01-01".into(),
+            disclaimer: None,
+            items: vec![],
+            rows: vec![Row {
+                kind: "section",
+                section: Some("1".into()),
+                anchor: None,
+                container: None,
+                heading: "s 1".into(),
+                text: "body".into(),
+            }],
+        };
+        let rows_out = String::from_utf8(jsonl(src, &parsed, "2026-01-01")).unwrap();
+        assert!(rows_out.contains(&src.title_page("act-1")));
+        let dir = tempfile::tempdir().unwrap();
+        let bad_dir = PyPath::new(dir.path().join("nope/sub").to_str().unwrap());
+        assert!(matches!(mkdir(&bad_dir), Err(Exc::Os(_))));
+    }
+
+    fn parse_pii(_: &str, id: &str, name: &str) -> Result<Parsed, Exc> {
+        Ok(Parsed {
+            id: id.into(),
+            name: name.into(),
+            collection: "Acts",
+            as_at: "2026-01-01".into(),
+            in_force: "2026-01-01".into(),
+            disclaimer: None,
+            items: vec![],
+            rows: vec![Row {
+                kind: "section",
+                section: Some("1".into()),
+                anchor: None,
+                container: None,
+                heading: "Contact".into(),
+                text: "Email person@example.com".into(),
+            }],
+        })
+    }
+
+    #[test]
+    fn fetch_title_pii_run_guards_and_main_cli_cover_edges() {
+        let custom = Source {
+            parse: parse_pii,
+            ..QLD
+        };
+        let url = custom.xml_url("act-1");
+        let mut h = Script(vec![Ok(http::Response {
+            url,
+            content_type: String::new(),
+            body: b"<x/>".to_vec(),
+        })]);
+        let err = fetch_title(&mut h, &custom, &Robots::default(), 0.0, "act-1", "Act")
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("personal data patterns"));
+        let dir = tempfile::tempdir().unwrap();
+        let mut r = Run::default();
+        assert!(
+            run(
+                &mut h,
+                &custom,
+                &PyPath::new(dir.path().to_str().unwrap()),
+                &mut r
+            )
+            .is_err()
+        );
+        let missing = dir.path().join("absent/out");
+        assert!(
+            run(
+                &mut h,
+                &custom,
+                &PyPath::new(missing.to_str().unwrap()),
+                &mut r
+            )
+            .is_err()
+        );
+        let argv = vec![
+            "--source".into(),
+            "tas".into(),
+            "--out".into(),
+            dir.path().to_str().unwrap().into(),
+        ];
+        assert_eq!(main(&argv, &mut r).unwrap(), 1);
+        assert_eq!(report_outcome(Ok(0), &mut r), 0);
+        assert_eq!(report_outcome(Err(Exc::Runtime("boom".into())), &mut r), 1);
+    }
 }

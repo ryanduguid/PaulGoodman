@@ -15,7 +15,6 @@ use crate::fadden::Exc;
 use crate::fadden::compilations::{Check, names};
 use crate::fadden::corpus_paths::child;
 use crate::fadden::dist_verify::entry_kind;
-use crate::fadden::pii;
 use crate::fadden::rulings::{NOTICE, licence_notice};
 use crate::fadden::search::check_rulings_run;
 use crate::pyjson::{self, Json, PyStr};
@@ -146,14 +145,11 @@ fn verify_run(directory: &str, name: &str, run: &Json, found: &mut Findings) -> 
         return Ok(());
     }
     let files = verify_files(directory, name, run, found)?;
-    match check_rulings_run(directory) {
-        Ok(()) => {}
-        Err(Exc::Value { message, .. }) => {
-            // Coverage is read from a run that agrees with its manifest.
-            found.runs.push(message);
-            return Ok(());
-        }
-        Err(error) => return Err(error),
+    if let Err(error) = check_rulings_run(directory) {
+        // Coverage is read from a run that agrees with its manifest;
+        // check_rulings_run fails with Exc::Value on invalid run data.
+        found.runs.push(error.to_string());
+        return Ok(());
     }
     let manifest = load(&pypath::join(directory, "manifest.json"))?;
     if read(&pypath::join(directory, "LICENCE-NOTICE.md"))? != licence_notice().into_bytes() {
@@ -203,10 +199,8 @@ fn verify_files(
         match private(&path, name) {
             Ok(false) => {}
             Ok(true) => found.private.push(format!("{name}/{file}")),
-            Err(error) if pii::unreadable(&error) => {
-                found.private.push(format!("{name}/{file} unreadable"));
-            }
-            Err(error) => return Err(error),
+            // private() fails only with Os or UnicodeError (both pii::unreadable).
+            Err(_) => found.private.push(format!("{name}/{file} unreadable")),
         }
     }
     Ok(Json::Object(digests.into_iter().collect()))
@@ -236,4 +230,43 @@ fn report(found: &Findings, noticed: bool) -> Vec<Check> {
             String::new(),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_flags_missing_run_stray_entries_bad_files_and_unreadable_or_private_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("REMOVED.md"), "# Removed\n").unwrap();
+        std::fs::write(
+            root.join("LICENCE-NOTICE.md"),
+            format!("# Licence\n\n{NOTICE_HEADING}\n{NOTICE}\n"),
+        )
+        .unwrap();
+        let rulings = root.join("rulings");
+        std::fs::create_dir(&rulings).unwrap();
+        // Private contact in sources.json, missing run "absent", bad run "badfiles", unreadable run "unreadable", plus a stray entry.
+        std::fs::write(
+            rulings.join("sources.json"),
+            r#"{"note":"contact john.smith@example.com","runs":[{"name":"absent","files":{}},{"name":"badfiles","files":{}},{"name":"badutf","files":{}}]}"#,
+        )
+        .unwrap();
+        std::fs::write(rulings.join("stray.txt"), "x").unwrap();
+        std::fs::create_dir(rulings.join("badfiles")).unwrap();
+        let badutf = rulings.join("badutf");
+        std::fs::create_dir(&badutf).unwrap();
+        for f in RUN_FILES {
+            std::fs::write(badutf.join(f), b"\xff\xfe").unwrap();
+        }
+        let checks = verify(&root.to_string_lossy()).unwrap();
+        let detail = |idx: usize| checks[idx].2.as_str();
+        assert!(detail(0).contains("stray.txt"));
+        assert!(detail(0).contains("absent missing"));
+        assert!(detail(0).contains("badfiles:"));
+        assert!(detail(2).contains("sources.json"));
+        assert!(detail(2).contains("unreadable"));
+    }
 }

@@ -605,4 +605,54 @@ mod tests {
             assert_eq!(both_scans(dir.path(), file, text), (true, false), "{text}");
         }
     }
+
+    #[test]
+    fn rulings_dist_error_and_fallback_paths() {
+        assert!(machine_paths("other.txt").is_empty());
+        assert!(iterate_or_empty(&Json::Null).is_empty());
+        assert!(leave_out(&mut Json::Null, &[], "", &mut Published::default()).is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        let mixed = dir.path().join("mixed.jsonl");
+        std::fs::write(&mixed, "{bad\n{\"a\":\"alice\\u0040example.org\"}\n").unwrap();
+        assert!(private(&mixed.to_string_lossy(), "run").unwrap());
+
+        let plain = dir.path().join("plain");
+        std::fs::write(&plain, "x").unwrap();
+        assert!(absent(&format!("{}/child", plain.display())).is_err());
+
+        // rulings as a file instead of a directory
+        let root1 = dir.path().join("r1");
+        std::fs::create_dir(&root1).unwrap();
+        std::fs::write(root1.join("rulings"), "not-a-dir").unwrap();
+        assert!(
+            copy(
+                &root1.to_string_lossy(),
+                &dir.path().join("s1").to_string_lossy()
+            )
+            .is_err()
+        );
+
+        // empty rulings directory
+        let root2 = dir.path().join("r2");
+        let s2 = dir.path().join("s2");
+        std::fs::create_dir_all(root2.join("rulings")).unwrap();
+        std::fs::create_dir(&s2).unwrap();
+        assert!(copy(&root2.to_string_lossy(), &s2.to_string_lossy()).is_err());
+
+        // stray file inside a run directory
+        let run_dir = root2.join("rulings/run1");
+        std::fs::create_dir(&run_dir).unwrap();
+        std::fs::write(run_dir.join("stray.txt"), "x").unwrap();
+        let mut pubd = Published::default();
+        assert!(
+            copy_run(
+                &run_dir.to_string_lossy(),
+                &s2.join("out").to_string_lossy(),
+                "run1",
+                &mut pubd
+            )
+            .is_err()
+        );
+    }
 }

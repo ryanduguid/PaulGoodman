@@ -89,3 +89,30 @@ pub fn discard_snapshots(snapshots: &[Snapshot]) -> Vec<String> {
     }
     leftovers
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_cleans_up_on_copy_error_and_discard_reports_leftovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("a.epub");
+        let d2 = dir.path().join("sub");
+        std::fs::write(&f1, b"ok").unwrap();
+        std::fs::create_dir(&d2).unwrap();
+        let (p1, p2) = (
+            f1.to_string_lossy().into_owned(),
+            d2.to_string_lossy().into_owned(),
+        );
+        assert!(snapshot_paths(&[&p1, &p2]).is_err());
+        assert!(!Path::new(&format!("{p1}.rollback")).exists());
+
+        let snap = snapshot_paths(&[&p1]).unwrap();
+        let backup = format!("{p1}.rollback");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        std::fs::write(Path::new(&backup).join("keep"), b"x").unwrap();
+        assert_eq!(discard_snapshots(&[snap]), vec![backup]);
+    }
+}

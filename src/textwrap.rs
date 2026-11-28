@@ -151,5 +151,7 @@ mod tests {
             wrap("a-b-c-d well-known re-enter", 7),
             ["a-b-c-d", "well-", "known", "re-", "enter"]
         );
+        // textwrap.wrap("a-bbbbbbbbbbb", 8): long chunk breaks after the hyphen.
+        assert_eq!(wrap("a-bbbbbbbbbbb", 8), ["a-", "bbbbbbbb", "bbb"]);
     }
 }

@@ -366,3 +366,32 @@ pub fn head(value: &Json, n: usize) -> Result<Json, Exc> {
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn python_helpers_cover_containers_rounding_and_duplicate_json_error() {
+        assert_eq!(
+            json_error(crate::pyjson::DecodeError::Duplicate).to_string(),
+            "duplicate JSON member"
+        );
+        assert_eq!(
+            iterate(&Json::str("ab")).unwrap(),
+            vec![Json::str("a"), Json::str("b")]
+        );
+        assert!(iterate(&Json::Int(1.into())).is_err());
+        assert!(getitem(&Json::Array(vec![]), "k").is_err());
+        assert!(getitem(&Json::str("a"), "k").is_err());
+        assert_eq!(round_half_even(1.7), 2);
+        assert_eq!(round_half_even(2.5), 2);
+        assert_eq!(round_half_even(3.5), 4);
+        assert_eq!(
+            head(&Json::Array(vec![Json::Null, Json::Bool(true)]), 1).unwrap(),
+            Json::Array(vec![Json::Null])
+        );
+        assert!(head(&Json::obj([]), 1).is_err());
+        assert!(head(&Json::Int(1.into()), 1).is_err());
+    }
+}

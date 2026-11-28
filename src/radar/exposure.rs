@@ -212,35 +212,39 @@ pub fn exposure(queue_path: &PyPath, profiles_path: &PyPath) -> Result<Json> {
     let mut matched_profiles: HashSet<&str> = HashSet::new();
     let mut match_count = 0usize;
     let mut work = 0usize;
-    let queue_items = match queue.at("items") {
-        Json::Array(items) => items.as_slice(),
-        _ => &[],
+    let queue_items = if let Json::Array(items) = queue.at("items") {
+        items.as_slice()
+    } else {
+        &[]
     };
     for item in queue_items {
         let mut found: HashMap<&str, (BTreeSet<String>, BTreeSet<String>)> = HashMap::new();
-        if let Json::Array(candidates) = item.at("impact_candidates") {
-            for candidate in candidates {
-                let skill = candidate.at("skill_ref").as_str().unwrap_or_default();
-                let mapping_id = candidate.at("mapping_id").as_str().unwrap_or_default();
-                for &id in by_skill.get(skill).map_or(&[][..], Vec::as_slice) {
-                    work += 1;
-                    if work > MAX_MATCH_WORK {
+        let candidates = if let Json::Array(c) = item.at("impact_candidates") {
+            c.as_slice()
+        } else {
+            &[]
+        };
+        for candidate in candidates {
+            let skill = candidate.at("skill_ref").as_str().unwrap_or_default();
+            let mapping_id = candidate.at("mapping_id").as_str().unwrap_or_default();
+            for &id in by_skill.get(skill).map_or(&[][..], Vec::as_slice) {
+                work += 1;
+                if work > MAX_MATCH_WORK {
+                    return Err(Error::monitor(format!(
+                        "Exposure exceeds {MAX_MATCH_WORK} candidate/profile visits; split the inputs."
+                    )));
+                }
+                if !found.contains_key(id) {
+                    match_count += 1;
+                    if match_count > MAX_MATCHES {
                         return Err(Error::monitor(format!(
-                            "Exposure exceeds {MAX_MATCH_WORK} candidate/profile visits; split the inputs."
+                            "Exposure exceeds {MAX_MATCHES} profile matches; split the profiles file."
                         )));
                     }
-                    if !found.contains_key(id) {
-                        match_count += 1;
-                        if match_count > MAX_MATCHES {
-                            return Err(Error::monitor(format!(
-                                "Exposure exceeds {MAX_MATCHES} profile matches; split the profiles file."
-                            )));
-                        }
-                    }
-                    let (skills, mappings) = found.entry(id).or_default();
-                    skills.insert(skill.to_string());
-                    mappings.insert(mapping_id.to_string());
                 }
+                let (skills, mappings) = found.entry(id).or_default();
+                skills.insert(skill.to_string());
+                mappings.insert(mapping_id.to_string());
             }
         }
         matched_profiles.extend(found.keys().copied());

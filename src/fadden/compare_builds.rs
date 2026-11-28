@@ -44,10 +44,8 @@ pub fn titles(root: &str) -> Result<BTreeSet<String>, Exc> {
 /// surrogate anywhere in its compilation number or date, or giving another
 /// compilation than the first row is refused.
 pub fn load_rows(root: &str, rid: &str) -> Result<Vec<Json>, Exc> {
-    let path = child(
-        root,
-        &["markdown", &register_id_str(rid)?, "sections.jsonl"],
-    )?;
+    let id = register_id_str(rid)?;
+    let path = child(root, &["markdown", &id, "sections.jsonl"])?;
     let mut lines = Lines::open(&path)?;
     let mut rows = Vec::new();
     let mut number = 0;
@@ -297,24 +295,24 @@ fn collect(args: &crate::argparse::Namespace) -> Result<Reports, Exc> {
 
 pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     let args = parser().parse(argv)?;
-    let (old_titles, new_titles, reports) = match collect(&args) {
-        Ok(found) => found,
+    let outcome = collect(&args).and_then(|(old_titles, new_titles, reports)| {
+        report(run, &args, &old_titles, &new_titles, &reports)
+    });
+    match outcome {
+        Ok(()) => Ok(0),
         Err(error @ (Exc::Os(_) | Exc::Value { .. })) => {
             run.eprint(&format!("error: {error}"));
-            return Ok(1);
+            Ok(1)
         }
-        Err(error) => return Ok(run.uncaught(&error)),
-    };
-    match report(run, &args, &old_titles, &new_titles, &reports) {
-        Ok(()) => Ok(0),
         Err(error) => Ok(run.uncaught(&error)),
     }
 }
 
 fn list_len(value: &Json) -> usize {
-    match value {
-        Json::Array(items) => items.len(),
-        _ => 0,
+    if let Json::Array(items) = value {
+        items.len()
+    } else {
+        0
     }
 }
 
@@ -329,8 +327,10 @@ fn report(
     let only_new: Vec<&String> = new_titles.difference(old_titles).collect();
     if args.flag("json") {
         for (rid, report) in reports {
-            let Json::Object(pairs) = report else {
-                unreachable!()
+            let pairs = if let Json::Object(pairs) = report {
+                pairs.as_slice()
+            } else {
+                &[]
             };
             let mut all = vec![(
                 crate::pyjson::PyStr::Text("register_id".into()),
@@ -410,4 +410,53 @@ fn report(
          before relying on a change.",
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compare_builds_surrogates_describe_and_report_edges() {
+        assert!(has_lone_surrogate(&Json::Array(vec![Json::Str(
+            PyStr::Lone(vec![0xd800])
+        )])));
+        assert!(describe(&Json::obj([("container", Json::Int(1.into()))])).is_err());
+        let args = parser().parse(&["old".into(), "new".into()]).unwrap();
+        let place = Json::obj([
+            ("section_key", Json::str("1")),
+            ("change", Json::str("text")),
+        ]);
+        let r1 = Json::obj([("changed", Json::Array(vec![place.clone()]))]);
+        let r2 = Json::obj([("added", Json::Array(vec![place]))]);
+        let mut r = Run::default();
+        report(
+            &mut r,
+            &args,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &[("A".into(), r1), ("B".into(), r2)],
+        )
+        .unwrap();
+        assert!(String::from_utf8_lossy(&r.stdout).contains("compilation None"));
+    }
+
+    #[test]
+    fn compare_builds_main_reports_recursion_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::create_dir_all(a.join("markdown/C2004A05138")).unwrap();
+        std::fs::create_dir_all(b.join("markdown/C2004A05138")).unwrap();
+        std::fs::write(
+            a.join("markdown/C2004A05138/sections.jsonl"),
+            "[".repeat(2 * pyjson::MAX_DEPTH),
+        )
+        .unwrap();
+        std::fs::write(b.join("markdown/C2004A05138/sections.jsonl"), "").unwrap();
+        let argv = vec![a.to_string_lossy().into(), b.to_string_lossy().into()];
+        let mut r = Run::default();
+        assert_eq!(main(&argv, &mut r).unwrap(), 1);
+        assert!(String::from_utf8_lossy(&r.stderr).contains("RecursionError"));
+    }
 }

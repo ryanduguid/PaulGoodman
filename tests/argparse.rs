@@ -237,3 +237,25 @@ fn a_sub_command_after_dashes_is_still_parsed() {
         )
     );
 }
+
+#[test]
+fn help_honours_colour_and_columns_environment_variables() {
+    let run = |envs: &[(&str, &str)]| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tax-radar-au"));
+        cmd.arg("--help").env_clear();
+        for (k, v) in envs {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert!(run(&[("PYTHON_COLORS", "1")]).contains("\x1b[1;34m"));
+    assert!(!run(&[("PYTHON_COLORS", "0")]).contains("\x1b["));
+    assert!(!run(&[("NO_COLOR", "1"), ("FORCE_COLOR", "1")]).contains("\x1b["));
+    assert!(run(&[("FORCE_COLOR", "1")]).contains("\x1b[1;34m"));
+    assert!(!run(&[("TERM", "dumb")]).contains("\x1b["));
+    let narrow = run(&[("COLUMNS", "40")]);
+    let wide = run(&[("COLUMNS", "120")]);
+    assert!(narrow.lines().count() > wide.lines().count());
+}

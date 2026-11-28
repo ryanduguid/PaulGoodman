@@ -269,3 +269,65 @@ pub(super) fn add_compilations(
     check_windows(&rows)?;
     finish(staging, &folder, omissions)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct OkRunner;
+    impl Runner for OkRunner {
+        fn stage(&mut self, _: &str, _: &[&str], _: bool) -> Result<String, Exc> {
+            Ok(String::new())
+        }
+        fn download(&mut self, _: &str, _: &str) -> Result<(), Exc> {
+            Ok(())
+        }
+        fn retry13(&mut self, _: &str, _: &str) -> Result<(), Exc> {
+            Ok(())
+        }
+        fn print(&mut self, _: &str) {}
+    }
+
+    #[test]
+    fn dated_validation_and_empty_folder_cleanup() {
+        let bad_end = vec![Json::obj([
+            ("id", Json::str("A")),
+            ("compilation_date", Json::str("2025-01-01")),
+            ("current_version_start", Json::Int(1.into())),
+        ])];
+        assert!(check_windows(&bad_end).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().to_string_lossy().into_owned();
+        std::fs::write(dir.path().join("dated_resolution.json"), "{}").unwrap();
+        assert!(read_report(&scratch, "2025-01-01", &BTreeSet::new()).is_err());
+        let report = Report {
+            resolved: Vec::new(),
+            current: vec![Json::obj([
+                ("id", Json::str("A")),
+                ("versionStart", Json::str("2026-01-01")),
+                ("compilationNumber", Json::str("C1")),
+            ])],
+            skipped: Vec::new(),
+        };
+        assert!(check_current_held(&report, "2025-01-01", &HashSet::new()).is_err());
+        let build_dir = dir.path().join("d");
+        std::fs::create_dir_all(build_dir.join("build")).unwrap();
+        std::fs::write(build_dir.join("build").join("manifest_md.json"), "[]").unwrap();
+        let mut runner = OkRunner;
+        let wanted = vec![Json::obj([("id", Json::str("A"))])];
+        assert!(
+            fetch_dated(
+                &mut runner,
+                &build_dir.to_string_lossy(),
+                "2025-01-01",
+                wanted
+            )
+            .is_err()
+        );
+        let comp = dir.path().join("compilations");
+        std::fs::create_dir(&comp).unwrap();
+        std::fs::write(dir.path().join("sources.json"), "{}").unwrap();
+        finish(&scratch, &comp.to_string_lossy(), vec![]).unwrap();
+        assert!(!comp.exists());
+    }
+}

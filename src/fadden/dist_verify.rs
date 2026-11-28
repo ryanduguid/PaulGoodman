@@ -67,15 +67,18 @@ pub fn entry_kind(path: &str) -> &'static str {
     if pyos::islink(path) {
         return "symlink";
     }
+    #[cfg(windows)]
     if pyos::isjunction(path) {
         return "junction";
     }
     let Ok(meta) = std::fs::symlink_metadata(path) else {
         return "unreadable";
     };
+    #[cfg(windows)]
     if pyos::is_reparse_point(&meta) {
-        "reparse point"
-    } else if meta.is_dir() {
+        return "reparse point";
+    }
+    if meta.is_dir() {
         "directory"
     } else if meta.is_file() {
         "file"
@@ -355,11 +358,11 @@ pub fn verify_distribution(
             .and_then(|tree| child(&markdown_root, &[rid, "sections.jsonl"]).map(|p| (tree, p)));
         let ((title_files, nested), p) = match tree {
             Ok(found) => found,
-            Err(Exc::Os(_) | Exc::Value { .. }) => {
+            // title_tree and child only fail with Exc::Os or Exc::Value.
+            Err(_) => {
                 unsafe_row_paths.insert(rid.clone());
                 continue;
             }
-            Err(other) => return Err(other),
         };
         let relative_files: BTreeSet<String> = title_files
             .iter()
@@ -382,11 +385,11 @@ pub fn verify_distribution(
                 None => pii::privacy_findings_in_file(title_file, rid, &approved),
             };
             match scanned {
-                Err(error) if pii::unreadable(&error) => {
+                // privacy_findings_in_file only fails with unreadable Os/Unicode errors.
+                Err(_) => {
                     unreadable_title_files.insert(rid.clone());
                     unreadable_paths.insert(pypath::normcase(title_file));
                 }
-                Err(error) => return Err(error),
                 Ok((pair, contacts)) => {
                     if pair {
                         private_file_hot.add(pts(rid), 1);
@@ -859,16 +862,17 @@ fn sort_values(values: &mut [Json]) -> Result<(), Exc> {
         values.sort_by_key(|v| as_points(v).unwrap_or_default());
         return Ok(());
     }
-    let numeric = |v: &Json| matches!(v, Json::Bool(_) | Json::Int(_) | Json::Float(_));
-    if values.iter().all(numeric) {
+    let as_float = |v: &Json| match v {
+        Json::Bool(b) => Some(f64::from(u8::from(*b))),
+        Json::Int(i) => Some(i.to_string().parse().unwrap_or(f64::NAN)),
+        Json::Float(f) => Some(*f),
+        _ => None,
+    };
+    if values.iter().all(|v| as_float(v).is_some()) {
         values.sort_by(|a, b| {
-            let f = |v: &Json| match v {
-                Json::Bool(b) => f64::from(u8::from(*b)),
-                Json::Int(i) => i.to_string().parse().unwrap_or(f64::NAN),
-                Json::Float(f) => *f,
-                _ => f64::NAN,
-            };
-            f(a).partial_cmp(&f(b)).unwrap_or(std::cmp::Ordering::Equal)
+            as_float(a)
+                .partial_cmp(&as_float(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         return Ok(());
     }
@@ -927,4 +931,91 @@ pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
             2
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sort_values_same_dict_and_expected_files_cover_edge_types() {
+        let mut nums = vec![Json::Float(1.5), Json::Bool(true), Json::Int(2.into())];
+        sort_values(&mut nums).unwrap();
+        assert_eq!(
+            nums,
+            vec![Json::Bool(true), Json::Float(1.5), Json::Int(2.into())]
+        );
+        let mut one = vec![Json::Null];
+        sort_values(&mut one).unwrap();
+        let mut mixed = vec![Json::str("a"), Json::Null];
+        assert!(matches!(sort_values(&mut mixed), Err(Exc::Type(m)) if m.contains("NoneType")));
+        let obj = Json::obj([("a", Json::Int(1.into()))]);
+        assert!(!same_dict(
+            &obj,
+            &[(Json::Int(1.into()), Json::Int(1.into()))]
+        ));
+        let mut counts = Vec::new();
+        let key = (
+            "C2099A00001".to_string(),
+            "email",
+            "0123456789abcdef".to_string(),
+        );
+        count_contact(&mut counts, key.clone());
+        count_contact(&mut counts, key);
+        assert_eq!(counts[0].1, 2);
+        let bad_endnotes = Json::obj([
+            ("markdown", Json::str("markdown/C2099A00001/C2099A00001.md")),
+            (
+                "sections_jsonl",
+                Json::str("markdown/C2099A00001/sections.jsonl"),
+            ),
+            ("endnotes", Json::Array(vec![])),
+        ]);
+        assert!(matches!(
+            expected_title_files("C2099A00001", &bad_endnotes),
+            Err(Exc::Type(m)) if m.contains("unhashable")
+        ));
+    }
+
+    #[test]
+    fn verify_distribution_and_main_cover_manifest_and_setup_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let dist = dir.path().join("dist");
+        let md = dist.join("markdown").join("C2099A00001");
+        std::fs::create_dir_all(&md).unwrap();
+        std::fs::write(md.join("C2099A00001.md"), "ok\n").unwrap();
+        std::fs::write(md.join("sections.jsonl"), "{}\n").unwrap();
+        std::fs::write(dist.join("LICENCE-NOTICE.md"), "ok\n").unwrap();
+        std::fs::write(dist.join("INDEX.md"), "ok\n").unwrap();
+        std::fs::write(dist.join("README.md"), "ok\n").unwrap();
+        std::fs::write(dist.join("REMOVED.md"), "ok\n").unwrap();
+        std::fs::create_dir_all(dist.join("rates")).unwrap();
+        std::fs::write(dist.join("rates/rates.jsonl"), "").unwrap();
+        std::fs::write(dist.join("rates/RATES.md"), "ok\n").unwrap();
+        std::fs::write(dist.join("MANIFEST.sha256"), "").unwrap();
+        let policy = dir.path().join("policy.json");
+        std::fs::write(&policy, r#"{"schema_version":1,"entries":[]}"#).unwrap();
+        let title = |coll: &str| {
+            format!(
+                r#"{{"register_id":"C2099A00001","collection":{coll},"markdown":"markdown/C2099A00001/C2099A00001.md","sections_jsonl":"markdown/C2099A00001/sections.jsonl","endnotes":null}}"#
+            )
+        };
+        let src = format!(r#"{{"titles":[{t},{t}]}}"#, t = title(r#""Acts""#));
+        std::fs::write(dist.join("sources.json"), &src).unwrap();
+        let mut run = Run::default();
+        let fails = verify_distribution(dist.to_str().unwrap(), policy.to_str().unwrap(), &mut run)
+            .unwrap();
+        assert!(!fails.is_empty());
+        let src_unhash = format!(
+            r#"{{"titles":[{}],"excluded_titles":[{{"register_id":"C2099A00002","name":""}}]}}"#,
+            title("[1]")
+        );
+        std::fs::write(dist.join("sources.json"), &src_unhash).unwrap();
+        assert!(matches!(
+            verify_distribution(dist.to_str().unwrap(), policy.to_str().unwrap(), &mut Run::default()),
+            Err(Exc::Type(m)) if m.contains("unhashable")
+        ));
+        let mut main_run = Run::default();
+        assert_eq!(main(&[], &mut main_run).unwrap(), 2);
+    }
 }

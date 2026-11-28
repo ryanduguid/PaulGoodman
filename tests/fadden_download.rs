@@ -1168,3 +1168,67 @@ fn fetch_removes_dangling_part_symlink_before_and_after_transfer() {
     assert!(err.contains("IncompleteRead"), "{err}");
     assert!(std::fs::symlink_metadata(&part).is_err());
 }
+
+#[cfg(feature = "fake-http")]
+#[test]
+fn fake_http_script_handles_empty_responses() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty_path = dir.path().join("empty.json");
+    std::fs::write(&empty_path, r#"{"today":"2026-01-01"}"#).unwrap();
+    let mut empty = tax_radar_au::fadden::http::connect_script(empty_path.to_str().unwrap());
+    let mut req = Request::default();
+    assert_eq!(
+        empty.get("https://x/", None, &mut req).unwrap_err(),
+        Failure::Transport("URLError".into())
+    );
+    assert_eq!(
+        empty.exchange("https://x/", 10, &mut req).unwrap_err(),
+        Failure::Transport("URLError".into())
+    );
+}
+
+#[cfg(feature = "fake-http")]
+#[test]
+fn fake_http_script_handles_default_and_error_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut req = Request::default();
+    let script_path = dir.path().join("script.json");
+    std::fs::write(
+        &script_path,
+        r#"{"responses":[
+            {"status":"bad","body":123},
+            {"status":"bad","headers":[[123,"v"],["only_one"]],"body":"ok"},
+            {"status":200,"headers":null,"read_error":true},
+            {"error":"TimeoutError"}
+        ]}"#,
+    )
+    .unwrap();
+    let mut http = tax_radar_au::fadden::http::connect_script(script_path.to_str().unwrap());
+    assert!(
+        http.get("https://x/", None, &mut req)
+            .unwrap()
+            .body
+            .is_empty()
+    );
+    let ex = http.exchange("https://x/", 10, &mut req).unwrap();
+    assert_eq!(
+        (ex.status, ex.headers, ex.body),
+        (200, vec![("".into(), "v".into())], Some(b"ok".to_vec()))
+    );
+    assert_eq!(
+        http.exchange("https://x/", 10, &mut req).unwrap_err(),
+        Failure::Transport("IncompleteRead".into())
+    );
+    let part = dir.path().join("x.part");
+    let p = part.to_str().unwrap();
+    assert_eq!(
+        http.download("http://x/", p, 10, None, true, &mut req)
+            .unwrap_err(),
+        Failure::Transport("HTTPSRequired".into())
+    );
+    assert_eq!(
+        http.download("https://x/", p, 10, None, true, &mut req)
+            .unwrap_err(),
+        Failure::Transport("TimeoutError".into())
+    );
+}

@@ -632,13 +632,15 @@ mod tests {
 
     /// The ValueError a document raises, as its message.
     fn value_error(doc: &mut Doc, html: &str) -> String {
-        match doc.run(html) {
-            Err(Exc::Value {
+        let err = doc.run(html).unwrap_err();
+        assert!(matches!(
+            err,
+            Exc::Value {
                 class: "ValueError",
-                message,
-            }) => message,
-            other => panic!("{html:?}: expected a ValueError, got {other:?}"),
-        }
+                ..
+            }
+        ));
+        err.to_string()
     }
 
     fn refusal(html: &str) -> String {
@@ -651,11 +653,14 @@ mod tests {
         blocks(html)
             .unwrap()
             .into_iter()
-            .find_map(|b| match b {
-                Block::Table { rows } => Some(rows),
-                _ => None,
+            .find_map(|b| {
+                if let Block::Table { rows } = b {
+                    Some(rows)
+                } else {
+                    None
+                }
             })
-            .unwrap_or_else(|| panic!("{html:?} has no table"))
+            .unwrap()
     }
 
     fn table(rows: &[&[&str]]) -> Vec<Vec<String>> {
@@ -959,13 +964,16 @@ mod tests {
         // reads the constant, so this is a 1,000-wide, 1,001-row table.
         let mut rows = vec![vec!["A".to_string(); 1000]];
         rows.extend((0..1000).map(|_| vec!["B".to_string()]));
-        match md_table(&rows) {
-            Err(Exc::Value {
+        let err = md_table(&rows).unwrap_err();
+        assert!(matches!(
+            err,
+            Exc::Value {
                 class: "ValueError",
-                message,
-            }) => assert!(message.contains("rectangular"), "{message}"),
-            other => panic!("expected a ValueError, got {other:?}"),
-        }
+                ..
+            }
+        ));
+        let message = err.to_string();
+        assert!(message.contains("rectangular"), "{message}");
         let message = value_error(
             &mut Doc::new(&sizes, budget(4)),
             "<table><tr><td colspan=\"3\">A</td></tr><tr><td>B</td></tr></table>",
@@ -995,9 +1003,12 @@ mod tests {
         let images: Vec<&str> = doc
             .blocks
             .iter()
-            .filter_map(|b| match b {
-                Block::Img { alt } => Some(alt.as_str()),
-                _ => None,
+            .filter_map(|b| {
+                if let Block::Img { alt } = b {
+                    Some(alt.as_str())
+                } else {
+                    None
+                }
             })
             .collect();
         assert_eq!(
@@ -1019,14 +1030,41 @@ mod tests {
         )
         .unwrap()
         .into_iter()
-        .filter_map(|b| match b {
-            Block::P { cls, sectno, .. } => Some((cls, sectno)),
-            _ => None,
+        .filter_map(|b| {
+            if let Block::P { cls, sectno, .. } = b {
+                Some((cls, sectno))
+            } else {
+                None
+            }
         })
         .collect();
         assert_eq!(
             paragraphs,
             [(String::new(), false), ("ActHead5".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn px_without_digits_and_span_budget_refusals() {
+        assert_eq!(
+            px(&[("width".into(), Some("abc".into()))], "width"),
+            BigInt::from(0)
+        );
+        let long = "1".repeat(33);
+        assert!(
+            refusal(&format!(
+                "<table><tr><td colspan=\"{long}\">a</td></tr></table>"
+            ))
+            .contains("colspan")
+        );
+        assert!(
+            refusal("<table><tr><td colspan=\"99999\">a</td></tr></table>").contains("colspan")
+        );
+        assert!(
+            refusal(&format!(
+                "<table><tr><td rowspan=\"{long}\">a</td></tr></table>"
+            ))
+            .contains("rowspan")
         );
     }
 }

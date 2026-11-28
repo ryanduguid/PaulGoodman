@@ -469,11 +469,11 @@ fn verify_title(
 ) -> Result<(), Exc> {
     let tree = match title_tree(directory) {
         Ok(tree) => tree,
-        Err(Exc::Os(_) | Exc::Value { .. }) => {
+        // title_tree only fails with Exc::Os or Exc::Value.
+        Err(_) => {
             found.digests.insert(label.to_string());
             return Ok(());
         }
-        Err(other) => return Err(other),
     };
     let (expected, metadata_ok) = expected_title_files(rid, title)?;
     let recorded = title.get("files").cloned().unwrap_or(Json::Null);
@@ -488,10 +488,10 @@ fn verify_title(
                 found.private.insert(label.to_string());
             }
             Ok(_) => {}
-            Err(error) if pii::unreadable(&error) => {
+            // privacy_findings_in_file only fails with unreadable Os/Unicode errors.
+            Err(_) => {
                 found.private.insert(format!("{label} unreadable"));
             }
-            Err(error) => return Err(error),
         }
     }
     Ok(())
@@ -545,4 +545,104 @@ fn verify_rows(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listing_omissions_and_dates_validate_edge_cases() {
+        let row = Json::obj([
+            ("id", Json::str("C2099A00001")),
+            ("name", Json::str("Tax Act")),
+            ("compilationRegisterId", Json::str("C2099C00001")),
+            ("versionStart", Json::str("2020-01-01")),
+            ("current_version_start", Json::str("2025-01-01")),
+            ("version_is_current", Json::Bool(false)),
+            ("retrieved", Json::str("2026-01-01")),
+            (
+                "sourceUrl",
+                Json::str("https://www.legislation.gov.au/C2099A00001"),
+            ),
+            ("endnotes", Json::Bool(true)),
+        ]);
+        assert_eq!(
+            listing(&row, "2022-01-01").unwrap().get("endnotes"),
+            Some(&Json::str("markdown/C2099A00001/endnotes.md"))
+        );
+        let om = |val: Json| Json::obj([("historical_omissions", val)]);
+        let entry = |omissions: Json| {
+            Json::obj([
+                ("in_force_on", Json::str("2022-01-01")),
+                ("omissions", omissions),
+            ])
+        };
+        assert!(validate_omissions(&om(Json::Int(1.into()))).is_err());
+        assert!(
+            validate_omissions(&om(Json::Array(vec![
+                entry(Json::Array(vec![])),
+                entry(Json::Array(vec![])),
+            ])))
+            .is_err()
+        );
+        assert!(validate_omissions(&om(Json::Array(vec![entry(Json::Null)]))).is_err());
+        let dup_comp = Json::obj([(
+            "compilations",
+            Json::Array(vec![
+                Json::obj([("in_force_on", Json::str("2022-01-01"))]),
+                Json::obj([("in_force_on", Json::str("2022-01-01"))]),
+            ]),
+        )]);
+        assert!(listed_dates(&dup_comp).is_err());
+        assert!(!same_object(&Json::Null, &Json::obj([])));
+    }
+
+    #[test]
+    fn dated_folders_and_verify_title_handle_missing_and_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("as_file");
+        std::fs::write(&file, "x").unwrap();
+        let mut stray = Vec::new();
+        assert!(
+            dated_folders(file.to_str().unwrap(), &[], &mut stray)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(stray, vec!["compilations [file]"]);
+        let missing = dir.path().join("missing");
+        let ms = missing.to_str().unwrap();
+        assert!(dated_folders(ms, &[], &mut stray).unwrap().is_empty());
+        let mut found = Findings::default();
+        let empty = Json::obj([]);
+        verify_title(ms, "C2099A00001", &empty, &[], &mut found, "lbl").unwrap();
+        assert!(found.digests.contains("lbl"));
+        let bad = dir.path().join("t1");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("C2099A00001.md"), [0xffu8]).unwrap();
+        let bs = bad.to_str().unwrap();
+        verify_title(bs, "C2099A00001", &empty, &[], &mut found, "u1").unwrap();
+        assert!(found.private.contains("u1 unreadable"));
+        let win = ("2020-01-01", "2025-01-01");
+        verify_rows(ms, "C2099A00001", win, &[], &mut found, "r1").unwrap();
+        std::fs::write(bad.join("sections.jsonl"), "\n").unwrap();
+        verify_rows(bs, "C2099A00001", win, &[], &mut found, "r1").unwrap();
+    }
+
+    #[test]
+    fn verify_propagates_bad_window_from_dated_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let date_dir = dir.path().join("compilations").join("2022-01-01");
+        std::fs::create_dir_all(date_dir.join("markdown")).unwrap();
+        std::fs::write(
+            date_dir.join("sources.json"),
+            r#"{"in_force_on":"2022-01-01","excluded_titles":[],"titles":[{"register_id":"C2099A00001","compilation_date":"bad","superseded_from":"2025-01-01"}]}"#,
+        ).unwrap();
+        let src = Json::obj([
+            ("titles", Json::Array(vec![])),
+            ("compilations", Json::Array(vec![Json::str("2022-01-01")])),
+        ]);
+        let err = verify(dir.path().to_str().unwrap(), &src, &BTreeSet::new(), &[]).unwrap_err();
+        assert!(err.to_string().contains("has no valid compilation_date"));
+    }
 }

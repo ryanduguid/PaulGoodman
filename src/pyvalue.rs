@@ -578,4 +578,29 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn types_escapes_and_surrogate_runs_match_cpython() {
+        assert_eq!(type_name(&j("1.5")), "float");
+        assert_eq!(
+            repr_points(&['\\' as u32, '\'' as u32, '"' as u32, 0xd800]),
+            r#"'\\\'"\ud800'"#
+        );
+        assert_eq!(key(&j("null")), Ok(Key::None));
+        assert_eq!(key(&j("1.5")), key(&j("1.5")));
+        assert!(py_eq(&j("1.5"), &j("1.5")));
+        let escaped: String = dumps_line(&j("\"\\r\\b\\f\""), true)
+            .into_iter()
+            .filter_map(char::from_u32)
+            .collect();
+        assert_eq!(escaped, r#""\r\b\f""#);
+        assert_eq!(
+            encode_print(&[0xd800, 0xd801]).unwrap_err(),
+            "'utf-8' codec can't encode characters in position 0-1: surrogates not allowed"
+        );
+        assert_eq!(
+            utf8_strict_error(&[0xd800, 0xd801]).as_deref(),
+            Some("'utf-8' codec can't encode characters in position 0-1: surrogates not allowed")
+        );
+    }
 }

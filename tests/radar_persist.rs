@@ -903,3 +903,81 @@ fn hooks_are_per_thread_and_cleared() {
     pair(&dir.path().join("pair"), "c\n", "d\n").unwrap();
     assert_eq!(calls.borrow().len(), before);
 }
+
+#[test]
+fn monitor_validation_edge_paths() {
+    let dir = tempdir().unwrap();
+    let mut base_ok = payload("baseline", "sample-sources.json");
+    base_ok["titles"][0]["current_version_start"] = json!("2026-01-01");
+    assert!(compare_fixtures(dir.path(), Some(&base_ok), None, None).is_ok());
+
+    let mut base_bad = base_ok;
+    base_bad["titles"][0]["current_version_start"] = json!("not-a-date");
+    assert!(
+        message_of(compare_fixtures(dir.path(), Some(&base_bad), None, None))
+            .contains("current_version_start must be an ISO date")
+    );
+
+    let mut obs_pub = payload("observations", "sample-register-observation.json");
+    obs_pub["observations"][0]["observed_compilation_date"] = json!("not-a-date");
+    assert!(
+        message_of(compare_fixtures(dir.path(), None, Some(&obs_pub), None))
+            .contains("observed_compilation_date must be an ISO date")
+    );
+
+    let mut obs_cur = payload("observations", "sample-register-observation.json");
+    obs_cur["observations"][0]["state"] = json!("CURRENT_NO_PUBLISHED_COMPILATION");
+    obs_cur["observations"][0]["observed_compilation_number"] = json!(null);
+    obs_cur["observations"][0]["observed_compilation_date"] = json!(null);
+    obs_cur["observations"][0]["observed_register_document_id"] = json!(null);
+    obs_cur["observations"][0]["current_version_start"] = json!("not-a-date");
+    assert!(
+        message_of(compare_fixtures(dir.path(), None, Some(&obs_cur), None))
+            .contains("current_version_start must be an ISO date")
+    );
+}
+
+#[test]
+fn mapping_queue_and_util_validation_edge_paths() {
+    let dir = tempdir().unwrap();
+    for (doc, expected) in [
+        (json!({}), "source-to-skill map must contain exactly"),
+        (
+            json!({"schema_version": "au-tax-source-skill-map.v1", "mapping_version": "1", "entries": "nope"}),
+            "unsupported schema",
+        ),
+        (
+            json!({"schema_version": "au-tax-source-skill-map.v1", "mapping_version": "1", "entries": ["nope"]}),
+            "Mapping entry 1 has an invalid shape",
+        ),
+    ] {
+        assert!(
+            message_of(compare_fixtures(dir.path(), None, None, Some(&doc))).contains(expected)
+        );
+    }
+    let mut q1 = queue();
+    q1["source_digests"]["baseline"] = json!("bad");
+    assert!(monitor::verify_queue_integrity(&radar_json(&q1)).is_err());
+    let mut q2 = queue();
+    q2["items"][0]["item_id"] = json!("   ");
+    assert!(monitor::verify_queue_integrity(&radar_json(&q2)).is_err());
+
+    let bad_json = dir.path().join("bad.json");
+    std::fs::write(&bad_json, "{bad").unwrap();
+    let snap = tax_radar_au::radar::util::SourceSnapshot::capture(
+        &tax_radar_au::pypath::PyPath::new(bad_json.to_str().unwrap()),
+        "bad",
+        1024,
+    )
+    .unwrap();
+    assert!(tax_radar_au::radar::util::load_json(&snap, "bad").is_err());
+    #[cfg(target_os = "linux")]
+    assert!(
+        tax_radar_au::radar::util::SourceSnapshot::capture(
+            &tax_radar_au::pypath::PyPath::new("/proc/self/mem"),
+            "mem",
+            1024,
+        )
+        .is_err()
+    );
+}

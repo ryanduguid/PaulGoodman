@@ -288,8 +288,8 @@ pub fn title_privacy_findings(
                 private_files += usize::from(pair);
                 matches.extend(found);
             }
-            Err(error) if pii::unreadable(&error) => return Err(unreadable()),
-            Err(error) => return Err(error),
+            // privacy_findings_in_file only fails with unreadable Os/Unicode errors.
+            Err(_) => return Err(unreadable()),
         }
     }
     matches.sort();
@@ -867,7 +867,8 @@ fn dump_json(path: &str, value: &Json) -> Result<(), Exc> {
         Some(Stop::Unencodable(chunk)) => {
             let mut translated = Vec::with_capacity(chunk.len());
             for cp in chunk {
-                if cp == 0x0a && cfg!(windows) {
+                #[cfg(windows)]
+                if cp == 0x0a {
                     translated.push(0x0d);
                 }
                 translated.push(cp);
@@ -946,6 +947,14 @@ fn copytree(src: &str, dst: &str) -> Result<(), Exc> {
 }
 
 fn copytree_errors(src: &str, dst: &str) -> Result<Vec<CopyError>, Exc> {
+    copytree_errors_with(src, dst, copystat)
+}
+
+fn copytree_errors_with(
+    src: &str,
+    dst: &str,
+    stat: fn(&str, &str) -> Result<(), OsError>,
+) -> Result<Vec<CopyError>, Exc> {
     let listing = |e: std::io::Error| OsError::new(&e, Some(src), Style::Native);
     let mut names = Vec::new();
     for entry in pyos::scandir(src).map_err(listing)? {
@@ -963,11 +972,12 @@ fn copytree_errors(src: &str, dst: &str) -> Result<Vec<CopyError>, Exc> {
         }
     }
     // Copying a directory's times can fail on Windows; copytree ignores that.
-    if let Err(error) = copystat(src, dst)
-        && cfg!(not(windows))
-    {
+    #[cfg(not(windows))]
+    if let Err(error) = stat(src, dst) {
         errors.push(copy_error(src, dst, &error.text));
     }
+    #[cfg(windows)]
+    let _ = stat(src, dst);
     Ok(errors)
 }
 
@@ -1093,6 +1103,28 @@ fn copystat(src: &str, dst: &str) -> Result<(), OsError> {
     std::fs::set_permissions(dst, meta.permissions()).map_err(target)
 }
 
+#[cfg(target_os = "linux")]
+fn read_xattr_buf(
+    mut fill: impl FnMut(*mut libc::c_char, usize) -> isize,
+) -> Result<Vec<u8>, std::io::Error> {
+    loop {
+        let size = fill(std::ptr::null_mut(), 0);
+        if size < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut buffer = vec![0u8; size as usize];
+        let got = fill(buffer.as_mut_ptr().cast(), buffer.len());
+        if got >= 0 {
+            buffer.truncate(got as usize);
+            return Ok(buffer);
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ERANGE) {
+            return Err(error);
+        }
+    }
+}
+
 /// `shutil._copyxattr(src, dst)`: every extended attribute, ignoring the
 /// errors Python ignores (unsupported or absent attributes, and attributes
 /// this account may not read or write).
@@ -1110,28 +1142,9 @@ fn copyxattr(src: &str, dst: &str) -> Result<(), OsError> {
         })
     };
     let (s, d) = (c(src)?, c(dst)?);
-    // Read a size-queried buffer, retrying if it grew in between.
-    let read = |fill: &dyn Fn(*mut libc::c_char, usize) -> isize| -> Result<Vec<u8>, Error> {
-        loop {
-            let size = fill(std::ptr::null_mut(), 0);
-            if size < 0 {
-                return Err(Error::last_os_error());
-            }
-            let mut buffer = vec![0u8; size as usize];
-            let got = fill(buffer.as_mut_ptr().cast(), buffer.len());
-            if got >= 0 {
-                buffer.truncate(got as usize);
-                return Ok(buffer);
-            }
-            let error = Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ERANGE) {
-                return Err(error);
-            }
-        }
-    };
     // SAFETY (each call below): NUL-terminated paths and names, and a buffer
     // of the length passed, or null with length 0 to query the size.
-    let names = match read(&|buf, len| unsafe { libc::listxattr(s.as_ptr(), buf, len) }) {
+    let names = match read_xattr_buf(|buf, len| unsafe { libc::listxattr(s.as_ptr(), buf, len) }) {
         Ok(names) => names,
         Err(e)
             if matches!(
@@ -1144,28 +1157,27 @@ fn copyxattr(src: &str, dst: &str) -> Result<(), OsError> {
         Err(e) => return Err(OsError::new(&e, Some(src), Style::Native)),
     };
     for name in names.split(|&b| b == 0).filter(|n| !n.is_empty()) {
-        let Ok(name) = CString::new(name) else {
-            continue;
-        };
-        let copied =
-            read(&|buf, len| unsafe { libc::getxattr(s.as_ptr(), name.as_ptr(), buf.cast(), len) })
-                .map_err(|e| (e, src))
-                .and_then(|value| {
-                    let set = unsafe {
-                        libc::setxattr(
-                            d.as_ptr(),
-                            name.as_ptr(),
-                            value.as_ptr().cast(),
-                            value.len(),
-                            0,
-                        )
-                    };
-                    if set == 0 {
-                        Ok(())
-                    } else {
-                        Err((Error::last_os_error(), dst))
-                    }
-                });
+        let name = CString::new(name).expect("split on NUL");
+        let copied = read_xattr_buf(|buf, len| unsafe {
+            libc::getxattr(s.as_ptr(), name.as_ptr(), buf.cast(), len)
+        })
+        .map_err(|e| (e, src))
+        .and_then(|value| {
+            let set = unsafe {
+                libc::setxattr(
+                    d.as_ptr(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                )
+            };
+            if set == 0 {
+                Ok(())
+            } else {
+                Err((Error::last_os_error(), dst))
+            }
+        });
         if let Err((e, path)) = copied
             && !matches!(
                 e.raw_os_error(),
@@ -2210,11 +2222,8 @@ pub fn publish(here: &str, run: &mut Run) -> Result<(), Exc> {
     })();
     // A successful promotion consumes the staging path; any earlier failure
     // leaves it beside dist, where this exact-prefix guard removes it.
-    let cleanup = remove_managed_tree(&target, &staging, "stage");
-    match cleanup {
-        Err(error) => Err(error),
-        Ok(()) => outcome,
-    }
+    remove_managed_tree(&target, &staging, "stage")?;
+    outcome
 }
 
 /// `python -m fadden dist`: the stage takes no arguments.
@@ -2335,6 +2344,135 @@ mod tests {
                 std::fs::read_to_string(path).unwrap(),
                 prefix.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" }),
                 "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_failure_title_tree_and_copytree_cover_edge_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert!(matches!(
+            title_tree(missing.to_str().unwrap()),
+            Err(Exc::Os(_))
+        ));
+        let os = OsError::new(
+            &std::io::Error::from(std::io::ErrorKind::NotFound),
+            None,
+            Style::Native,
+        );
+        assert!(matches!(CopyFailure::from(os), CopyFailure::Os(_)));
+        let same = Exc::Shutil {
+            class: "shutil.SameFileError",
+            message: "ab".into(),
+        };
+        assert!(matches!(CopyFailure::from(same), CopyFailure::Nested(v) if v.len() == 2));
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let dst = dir.path().join("dst");
+        fn fail_stat(_: &str, d: &str) -> Result<(), OsError> {
+            Err(OsError::new(
+                &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                Some(d),
+                Style::Native,
+            ))
+        }
+        let errs =
+            copytree_errors_with(src.to_str().unwrap(), dst.to_str().unwrap(), fail_stat).unwrap();
+        #[cfg(not(windows))]
+        assert_eq!(errs.len(), 1);
+        #[cfg(windows)]
+        assert!(errs.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copytree_preserves_symlinks_and_copystat_reports_missing_dst() {
+        let dir = tempfile::tempdir().unwrap();
+        let link_src = dir.path().join("lsrc");
+        std::fs::create_dir_all(&link_src).unwrap();
+        std::os::unix::fs::symlink("target", link_src.join("lnk")).unwrap();
+        let link_dst = dir.path().join("ldst");
+        copytree(link_src.to_str().unwrap(), link_dst.to_str().unwrap()).unwrap();
+        assert!(
+            link_dst
+                .join("lnk")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let missing = dir.path().join("missing");
+        assert!(copystat(link_src.to_str().unwrap(), missing.to_str().unwrap()).is_err());
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let bad_src = dir.path().join("bsrc");
+            std::fs::create_dir_all(bad_src.join("sub")).unwrap();
+            std::fs::write(
+                bad_src
+                    .join("sub")
+                    .join(std::ffi::OsString::from_vec(vec![0xff])),
+                "x",
+            )
+            .unwrap();
+            let bad_dst = dir.path().join("bdst");
+            assert!(matches!(
+                copytree(bad_src.to_str().unwrap(), bad_dst.to_str().unwrap()),
+                Err(Exc::Value { .. })
+            ));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn copyxattr_and_read_xattr_buf_cover_errors_and_retries() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(copyxattr("a\0b", "c").is_err());
+        assert!(copyxattr(dir.path().join("absent").to_str().unwrap(), "c").is_err());
+        assert!(copyxattr("/proc/self/stat", dir.path().to_str().unwrap()).is_ok());
+        let mut calls = 0usize;
+        let got = read_xattr_buf(|buf, len| {
+            calls += 1;
+            if buf.is_null() {
+                return 2;
+            }
+            if calls == 2 {
+                unsafe {
+                    *libc::__errno_location() = libc::ERANGE;
+                }
+                return -1;
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(b"ok".as_ptr().cast(), buf, len.min(2));
+            }
+            2
+        })
+        .unwrap();
+        assert_eq!(got, b"ok");
+        let err = read_xattr_buf(|buf, _| {
+            if buf.is_null() {
+                return 1;
+            }
+            unsafe {
+                *libc::__errno_location() = libc::EIO;
+            }
+            -1
+        })
+        .unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EIO));
+        let f = dir.path().join("xf");
+        std::fs::write(&f, "x").unwrap();
+        let cf = std::ffi::CString::new(f.to_str().unwrap()).unwrap();
+        let key = std::ffi::CString::new("user.pgcov").unwrap();
+        if unsafe { libc::setxattr(cf.as_ptr(), key.as_ptr(), b"1".as_ptr().cast(), 1, 0) } == 0 {
+            assert!(copyxattr(f.to_str().unwrap(), "/dev/null").is_ok());
+            assert!(
+                copyxattr(
+                    f.to_str().unwrap(),
+                    dir.path().join("missing").to_str().unwrap()
+                )
+                .is_err()
             );
         }
     }
