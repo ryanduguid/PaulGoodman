@@ -8,7 +8,6 @@
 
 use std::fmt::Write as _;
 use std::io;
-use std::path::Path;
 
 use num_bigint::BigInt;
 
@@ -57,11 +56,6 @@ pub fn decimal_value(c: char) -> Option<u32> {
     let index = tables::DECIMAL_ZERO.partition_point(|&zero| zero <= cp);
     let zero = tables::DECIMAL_ZERO[index.checked_sub(1)?];
     (cp - zero < 10).then_some(cp - zero)
-}
-
-/// Python's `\w` for one character in a `str` pattern.
-pub fn is_word(c: char) -> bool {
-    in_table(c as u32, tables::WORD)
 }
 
 /// Whether Python's `\w` and the regex crate's `\w` disagree about one character.
@@ -558,20 +552,6 @@ pub fn universal_newlines(text: &str) -> String {
     }
 }
 
-/// Why a text read failed.
-#[derive(Debug)]
-pub enum ReadError {
-    Os(io::Error),
-    Decode(DecodeError),
-}
-
-/// `Path.read_text(encoding="utf-8")`.
-pub fn read_text(path: &Path) -> Result<String, ReadError> {
-    let bytes = std::fs::read(path).map_err(ReadError::Os)?;
-    let text = decode_utf8(&bytes).map_err(ReadError::Decode)?;
-    Ok(universal_newlines(&text))
-}
-
 /// How the platform reported an `OSError`, which decides how Python renders it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OsStyle {
@@ -923,5 +903,33 @@ mod tests {
         assert_eq!(parse_float("1.e+5").unwrap(), 100000.0);
         assert_eq!(parse_float("1_0.5").unwrap(), 10.5);
         assert!(parse_float("1._5").is_err());
+        assert_eq!(repr_str("\u{e0001}"), "'\\U000e0001'");
+        assert_eq!(repr_bytes(b"a\\\"'\t\n\r"), r#"b'a\\"\'\t\n\r'"#);
+        assert_eq!(
+            int_repr(&BigInt::from(10u8).pow(4300)).unwrap_err(),
+            "Exceeds the limit (4300 digits) for integer string conversion; use \
+                    sys.set_int_max_str_digits() to increase the limit"
+        );
+        assert!(parse_int("\u{e9}", 10).is_err());
+        assert_eq!(parse_int("0o77", 8).unwrap(), BigInt::from(63));
+        assert_eq!(parse_float("-1.5").unwrap(), -1.5);
+        assert_eq!(parse_float("+1.5").unwrap(), 1.5);
+        assert!(parse_float("inf").unwrap().is_infinite());
+        assert!(parse_float("-nan").unwrap().is_nan());
+        assert_eq!(parse_float("1.").unwrap(), 1.0);
+        assert_eq!(parse_float(".5").unwrap(), 0.5);
+        assert!(parse_float(".").is_err());
+        assert!(parse_float("1e+").is_err());
+        assert_eq!(strip_os_suffix("plain error"), "plain error");
+        assert_eq!(ord_to_ymd(0), (0, 12, 30));
+        for bad in [
+            "2026-W01x1",
+            "2026-01x01",
+            "0000-W01-1",
+            "2025-W53-1",
+            "2026-W01-8",
+        ] {
+            assert_eq!(Date::fromisoformat(bad), None, "{bad}");
+        }
     }
 }

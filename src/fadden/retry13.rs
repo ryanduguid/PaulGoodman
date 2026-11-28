@@ -318,3 +318,123 @@ pub fn main(_argv: &[String], run: &mut Run) -> Result<i32, Exit> {
         Err(error) => run.uncaught(&error),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_text_non_string_and_commit_retained_warning() {
+        assert!(id_text(&Json::Int(1.into())).is_err());
+        let manifest = vec![Json::obj([("id", Json::Int(1.into()))])];
+        assert!(retryable(&manifest, &HashMap::new()).unwrap().is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("m.json");
+        std::fs::write(&target, "[]").unwrap();
+        let p = target.to_string_lossy().into_owned();
+        let snap = snapshot_paths(&[&p]).unwrap();
+        let backup = format!("{p}.rollback");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        std::fs::write(std::path::Path::new(&backup).join("x"), b"1").unwrap();
+
+        struct NoopHttp;
+        impl Http for NoopHttp {
+            fn get(
+                &mut self,
+                _: &str,
+                _: Option<usize>,
+                _: &mut http::Request,
+            ) -> Result<http::Response, http::Failure> {
+                Err(http::Failure::Transport("unused".into()))
+            }
+            fn sleep(&mut self, _: f64) {}
+            fn today(&mut self) -> String {
+                "2026-01-01".into()
+            }
+        }
+        let mut http = NoopHttp;
+        let mut run = Run::default();
+        let retry = Retry {
+            http: &mut http,
+            scratch: &dir.path().to_string_lossy(),
+            epub_dir: &dir.path().to_string_lossy(),
+            manifest_path: &p,
+            probe: HashMap::new(),
+            delay: 0.0,
+            run: &mut run,
+            patches: Vec::new(),
+            snapshots: vec![snap],
+        };
+        retry.commit(1, 0);
+        assert!(String::from_utf8_lossy(&run.stdout).contains("WARNING retained 1 rollback"));
+    }
+
+    struct SabotageHttp(String);
+    impl Http for SabotageHttp {
+        fn get(
+            &mut self,
+            _: &str,
+            _: Option<usize>,
+            _: &mut http::Request,
+        ) -> Result<http::Response, http::Failure> {
+            Err(http::Failure::Transport("unused".into()))
+        }
+        fn sleep(&mut self, _: f64) {}
+        fn today(&mut self) -> String {
+            "2026-01-01".into()
+        }
+        fn download(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: u64,
+            _: Option<u64>,
+            _: bool,
+            _: &mut http::Request,
+        ) -> Result<http::Transfer, http::Failure> {
+            if let Ok(entries) = std::fs::read_dir(&self.0) {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().contains(".rollback") {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+            Err(http::Failure::Uncaught {
+                class: "RuntimeError",
+                message: "boom".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn rollback_failure_during_run_reports_incomplete_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().to_string_lossy().into_owned();
+        let epub_dir = dir.path().join("epub");
+        std::fs::create_dir(&epub_dir).unwrap();
+        std::fs::write(epub_dir.join("C2099A00001.epub"), b"old").unwrap();
+        std::fs::write(
+            dir.path().join("probe13.json"),
+            r#"[{"id":"C2099A00001","latest_doc":{"registerId":"C2099C00001","start":"2025-01-01"}}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("manifest_raw.json"),
+            r#"[{"id":"C2099A00001","name":"Act A","epub":null,"versionStart":"2026-01-01"}]"#,
+        )
+        .unwrap();
+        let mut http = SabotageHttp(epub_dir.to_string_lossy().into_owned());
+        let mut run = Run::default();
+        let err = super::run(
+            &mut http,
+            &scratch,
+            &epub_dir.to_string_lossy(),
+            0.0,
+            &mut run,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("rollback was incomplete"));
+    }
+}

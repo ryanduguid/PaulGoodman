@@ -692,9 +692,12 @@ pub fn load_targets(path: &str) -> Result<Vec<String>, TargetsError> {
     let items: Vec<Vec<u32>> = match &data {
         Json::Array(items) if items.iter().all(|i| matches!(i, Json::Str(_))) => items
             .iter()
-            .map(|i| match i {
-                Json::Str(s) => strip_points(&s.code_points()).to_vec(),
-                _ => unreachable!("every item is a str"),
+            .filter_map(|i| {
+                if let Json::Str(s) = i {
+                    Some(strip_points(&s.code_points()).to_vec())
+                } else {
+                    None
+                }
             })
             .collect(),
         _ => {
@@ -874,22 +877,19 @@ pub fn run(
 
     // `out.mkdir(parents=True)`: only a missing parent is created; any other
     // failure, such as a parent that is a file on POSIX, is the output's own.
-    let mkdir_out = || {
-        std::fs::create_dir(out.fs()).map_err(|e| {
-            crate::pyos::OsError::new(&e, Some(&out.display()), crate::pyos::Style::Native)
+    let mkdir = |p: &PyPath| {
+        std::fs::create_dir(p.fs()).map_err(|e| {
+            crate::pyos::OsError::new(&e, Some(&p.display()), crate::pyos::Style::Native)
         })
     };
-    if let Err(error) = mkdir_out() {
+    if let Err(error) = mkdir(out) {
         if error.kind != std::io::ErrorKind::NotFound {
             return Err(error.into());
         }
         crate::pyos::makedirs(&out.parent())?;
-        mkdir_out()?;
+        mkdir(out)?;
     }
-    let raw_dir = out.join("raw");
-    std::fs::create_dir(raw_dir.fs()).map_err(|e| {
-        crate::pyos::OsError::new(&e, Some(&raw_dir.display()), crate::pyos::Style::Native)
-    })?;
+    mkdir(&out.join("raw"))?;
     for (name, raw) in &raw_files {
         write_new(&out.join(name), raw)?;
     }
@@ -1008,4 +1008,69 @@ pub fn main(argv: &[String], run_state: &mut Run) -> Result<i32, Exit> {
         }
         Err(error) => run_state.uncaught(&error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UncaughtHttp;
+    impl Http for UncaughtHttp {
+        fn get(
+            &mut self,
+            _: &str,
+            _: Option<usize>,
+            _: &mut http::Request,
+        ) -> Result<http::Response, http::Failure> {
+            Err(http::Failure::Uncaught {
+                class: "RuntimeError",
+                message: "boom".into(),
+            })
+        }
+        fn sleep(&mut self, _: f64) {}
+        fn today(&mut self) -> String {
+            "2026-01-01".into()
+        }
+    }
+
+    #[test]
+    fn rulings_edge_cases_and_nested_output_mkdir() {
+        assert_eq!(canonical(&[0xd800]), vec![0xd800]);
+        assert!(!is_ato_rights_link("https://[::1"));
+        let doc = parse_document(
+            b"<html><head><meta name=\"DC.Title\" content=\"A\"><meta name=\"dc.title\" content=\"B\"></head><body><p>hi</p></body></html>",
+            "TXR/TR20241/NAT/ATO/00001",
+        );
+        assert!(doc.is_err());
+        let mut h = UncaughtHttp;
+        assert!(get(&mut h, "https://www.ato.gov.au/x").is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let file_parent = dir.path().join("f");
+        std::fs::write(&file_parent, "x").unwrap();
+        let mut r = Run::default();
+        let argv = vec![
+            dir.path().to_string_lossy().into(),
+            "--out".into(),
+            dir.path().join("o").to_string_lossy().into(),
+        ];
+        assert_eq!(main(&argv, &mut r).unwrap(), 1);
+        assert!(
+            run(
+                &mut h,
+                &[],
+                &PyPath::new(&dir.path().join("a/b").to_string_lossy()),
+                &mut r
+            )
+            .is_ok()
+        );
+        assert!(
+            run(
+                &mut h,
+                &[],
+                &PyPath::new(&file_parent.join("sub").to_string_lossy()),
+                &mut r
+            )
+            .is_err()
+        );
+    }
 }

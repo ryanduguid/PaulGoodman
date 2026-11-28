@@ -1,0 +1,96 @@
+{"kind": "datetime", "text": "2026-11-28", "ok": [2026, 11, 28, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "20261128", "ok": [2026, 11, 28, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-W48", "ok": [2026, 11, 23, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026W48", "ok": [2026, 11, 23, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-W48-6", "ok": [2026, 11, 28, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026W486", "ok": [2026, 11, 28, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-W53", "ok": [2026, 12, 28, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2020-W53-1", "ok": [2020, 12, 28, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2015-W53-1", "ok": [2015, 12, 28, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2021-W53", "error": "Invalid isoformat string: '2021-W53'"}
+{"kind": "datetime", "text": "2026-W00", "error": "Invalid isoformat string: '2026-W00'"}
+{"kind": "datetime", "text": "2026-W48-8", "error": "Invalid isoformat string: '2026-W48-8'"}
+{"kind": "datetime", "text": "2026-W48-0", "error": "Invalid isoformat string: '2026-W48-0'"}
+{"kind": "datetime", "text": "2026-W4", "error": "Invalid isoformat string: '2026-W4'"}
+{"kind": "datetime", "text": "2026-W48-", "error": "Invalid isoformat string: '2026-W48-'"}
+{"kind": "datetime", "text": "2026-W48X6", "error": "Invalid isoformat string: '2026-W48X6'"}
+{"kind": "datetime", "text": "0000-W01-1", "error": "Invalid isoformat string: '0000-W01-1'"}
+{"kind": "datetime", "text": "2026-1-01", "error": "Invalid isoformat string: '2026-1-01'"}
+{"kind": "datetime", "text": "2026-11X28", "error": "Invalid isoformat string: '2026-11X28'"}
+{"kind": "datetime", "text": "2026-W4X", "error": "Invalid isoformat string: '2026-W4X'"}
+{"kind": "datetime", "text": "2026-Wxx", "error": "Invalid isoformat string: '2026-Wxx'"}
+{"kind": "datetime", "text": "2026W4x", "error": "Invalid isoformat string: '2026W4x'"}
+{"kind": "datetime", "text": "2026-W481", "error": "Invalid isoformat string: '2026-W481'"}
+{"kind": "datetime", "text": "2026W48T12", "ok": [2026, 11, 23, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026W486T12", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-W48T12", "ok": [2026, 11, 23, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-W48-6T12", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026W4812", "error": "Invalid isoformat string: '2026W4812'"}
+{"kind": "datetime", "text": "2026W48123", "ok": [2026, 11, 23, 23, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-W48-6T1", "error": "Invalid isoformat string: '2026-W48-6T1'"}
+{"kind": "datetime", "text": "2026-1101", "error": "Invalid isoformat string: '2026-1101'"}
+{"kind": "datetime", "text": "2026-111", "error": "Invalid isoformat string: '2026-111'"}
+{"kind": "datetime", "text": "202611-28", "error": "Invalid isoformat string: '202611-28'"}
+{"kind": "datetime", "text": "2026-11-28T12", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28T1230", "ok": [2026, 11, 28, 12, 30, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28T12:30", "ok": [2026, 11, 28, 12, 30, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45", "ok": [2026, 11, 28, 12, 30, 45, 0, null]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45.123", "ok": [2026, 11, 28, 12, 30, 45, 123000, null]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45,123456789", "ok": [2026, 11, 28, 12, 30, 45, 123456, null]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45.", "error": "Invalid isoformat string: '2026-11-28T12:30:45.'"}
+{"kind": "datetime", "text": "2026-11-28T12.5", "error": "Invalid isoformat string: '2026-11-28T12.5'"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45:1", "error": "Invalid isoformat string: '2026-11-28T12:30:45:1'"}
+{"kind": "datetime", "text": "2026-11-28T12:3", "error": "Invalid isoformat string: '2026-11-28T12:3'"}
+{"kind": "datetime", "text": "2026-11-28T12:30x", "error": "Invalid isoformat string: '2026-11-28T12:30x'"}
+{"kind": "datetime", "text": "2026-11-28T123045.5", "ok": [2026, 11, 28, 12, 30, 45, 500000, null]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45Z", "ok": [2026, 11, 28, 12, 30, 45, 0, 0]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45Zx", "error": "Invalid isoformat string: '2026-11-28T12:30:45Zx'"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45+10:00", "ok": [2026, 11, 28, 12, 30, 45, 0, 36000000000]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45-0530", "ok": [2026, 11, 28, 12, 30, 45, 0, -19800000000]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45+24:00", "error": "hour must be in 0..23, not 24"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45+10:61", "error": "minute must be in 0..59, not 61"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45+10:00:60", "error": "second must be in 0..59, not 60"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45+10:00:01.5", "ok": [2026, 11, 28, 12, 30, 45, 0, 36001500000]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45+10:00x", "error": "Invalid isoformat string: '2026-11-28T12:30:45+10:00x'"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45+1", "error": "Invalid isoformat string: '2026-11-28T12:30:45+1'"}
+{"kind": "datetime", "text": "2026-11-28T12:30+", "error": "Invalid isoformat string: '2026-11-28T12:30+'"}
+{"kind": "datetime", "text": "2026-11-28T24:00", "ok": [2026, 11, 29, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-12-31T24:00", "ok": [2027, 1, 1, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-30T24:00", "ok": [2026, 12, 1, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-02-28T24:00", "ok": [2026, 3, 1, 0, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28T24:00:01", "error": "minute, second, and microsecond must be 0 when hour is 24"}
+{"kind": "datetime", "text": "2026-11-28T25:00", "error": "hour must be in 0..23, not 25"}
+{"kind": "datetime", "text": "2026-11-28T12:60", "error": "minute must be in 0..59, not 60"}
+{"kind": "datetime", "text": "2026-11-28T12:30:60", "error": "second must be in 0..59, not 60"}
+{"kind": "datetime", "text": "2026-02-30", "error": "day 30 must be in range 1..28 for month 2 in year 2026"}
+{"kind": "datetime", "text": "2026-13-01T24:00", "error": "month must be in 1..12, not 13"}
+{"kind": "datetime", "text": "2026-11-28 12:00", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28\u00e912:00", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28\u080012:00", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28\ud83d\ude0012:00", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-11-28T12:30:45.1234567", "ok": [2026, 11, 28, 12, 30, 45, 123456, null]}
+{"kind": "datetime", "text": "2026-11-28T1", "error": "Invalid isoformat string: '2026-11-28T1'"}
+{"kind": "datetime", "text": "2026-11-28T", "error": "Invalid isoformat string: '2026-11-28T'"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45.123+05", "ok": [2026, 11, 28, 12, 30, 45, 123000, 18000000000]}
+{"kind": "datetime", "text": "2026-11-28T12,5", "error": "Invalid isoformat string: '2026-11-28T12,5'"}
+{"kind": "datetime", "text": "2026-11-28T12:30.5", "error": "Invalid isoformat string: '2026-11-28T12:30.5'"}
+{"kind": "datetime", "text": "2026-11-28\ud80012:00", "ok": [2026, 11, 28, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026-W48\ud80012", "ok": [2026, 11, 23, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "2026W48\ud80012", "ok": [2026, 11, 23, 12, 0, 0, 0, null]}
+{"kind": "datetime", "text": "20\ud80026-11-28", "error": "Invalid isoformat string: '20\\ud80026-11-28'"}
+{"kind": "datetime", "text": "2026", "error": "Invalid isoformat string: '2026'"}
+{"kind": "datetime", "text": "2026-1", "error": "Invalid isoformat string: '2026-1'"}
+{"kind": "datetime", "text": "2026-11-2x", "error": "Invalid isoformat string: '2026-11-2x'"}
+{"kind": "datetime", "text": "2026-11-28T12:30x5", "error": "Invalid isoformat string: '2026-11-28T12:30x5'"}
+{"kind": "datetime", "text": "2026-11-28T12:30:45.1x", "error": "Invalid isoformat string: '2026-11-28T12:30:45.1x'"}
+{"kind": "datetime", "text": "2026-W48-1230", "ok": [2026, 11, 23, 12, 30, 0, 0, null]}
+{"kind": "datetime", "text": "2026-02-30T24:00", "error": "day 30 must be in range 1..28 for month 2 in year 2026"}
+{"kind": "date", "text": "2026-11-28", "ok": [2026, 11, 28]}
+{"kind": "date", "text": "20261128", "ok": [2026, 11, 28]}
+{"kind": "date", "text": "2026-W48", "ok": [2026, 11, 23]}
+{"kind": "date", "text": "2026W486", "ok": [2026, 11, 28]}
+{"kind": "date", "text": "2026-11", "error": "Invalid isoformat string: '2026-11'"}
+{"kind": "date", "text": "2026-W48-6", "ok": [2026, 11, 28]}
+{"kind": "date", "text": "2026-02-30", "error": "day 30 must be in range 1..28 for month 2 in year 2026"}
+{"kind": "date", "text": "x", "error": "Invalid isoformat string: 'x'"}
+{"kind": "date", "text": "2026-W48X6", "error": "Invalid isoformat string: '2026-W48X6'"}

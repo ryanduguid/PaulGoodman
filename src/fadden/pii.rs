@@ -385,6 +385,13 @@ pub fn load_contact_allowlist(path: &str) -> Result<Vec<Approved>, Exc> {
     Ok(approved)
 }
 
+fn expect_engines_agree(agree: bool, pattern: &str, text: &str) -> Result<(), String> {
+    if !agree {
+        return Err(format!("{pattern:?} differs between engines on {text:?}"));
+    }
+    Ok(())
+}
+
 /// The `pattern_engines` fuzz target's invariant for one input: wherever a
 /// detector's pattern runs on the regex crate, it finds the same groups at
 /// the same places as `fancy_regex`. The unit tests replay seeds through this.
@@ -405,9 +412,11 @@ pub fn check_engines(data: &[u8]) -> Result<(), String> {
         (STATUTORY, pyre::I),
     ];
     for (pattern, flags) in patterns {
-        if !pyre::re(pattern, flags).engines_agree(&text) {
-            return Err(format!("{pattern:?} differs between engines on {text:?}"));
-        }
+        expect_engines_agree(
+            pyre::re(pattern, flags).engines_agree(&text),
+            pattern,
+            &text,
+        )?;
     }
     Ok(())
 }
@@ -558,4 +567,28 @@ pub fn refuse_controls(text: &str) -> Result<(), Exc> {
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allowlist_reason_unreadable_os_and_engine_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("allow.json");
+        std::fs::write(
+            &path,
+            r#"{"entries":[{"register_id":"A","kind":"email","sha256":"0000000000000000000000000000000000000000000000000000000000000000","reason":123}]}"#,
+        )
+        .unwrap();
+        assert!(load_contact_allowlist(&path.to_string_lossy()).is_err());
+        assert!(expect_engines_agree(false, "p", "t").is_err());
+        let os = crate::pyos::OsError::new(
+            &std::io::Error::other("io"),
+            None,
+            crate::pyos::Style::Errno,
+        );
+        assert!(unreadable(&Exc::Os(os)));
+    }
 }

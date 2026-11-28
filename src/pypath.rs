@@ -125,13 +125,16 @@ pub fn split(p: &str) -> (String, String) {
 }
 
 /// `os.path.isabs(p)`.
+#[cfg(windows)]
 pub fn isabs(p: &str) -> bool {
-    if cfg!(windows) {
-        let start: String = p.chars().take(3).collect::<String>().replace('/', "\\");
-        start.get(1..).is_some_and(|s| s.starts_with(":\\")) || start.starts_with("\\\\")
-    } else {
-        p.starts_with('/')
-    }
+    let start: String = p.chars().take(3).collect::<String>().replace('/', "\\");
+    start.get(1..).is_some_and(|s| s.starts_with(":\\")) || start.starts_with("\\\\")
+}
+
+/// `os.path.isabs(p)`.
+#[cfg(not(windows))]
+pub fn isabs(p: &str) -> bool {
+    p.starts_with('/')
 }
 
 /// `os.path.normpath(p)` (Windows).
@@ -196,19 +199,19 @@ impl PyPath {
                 tail: Vec::new(),
             };
         }
-        let text = if cfg!(windows) {
-            text.replace('/', "\\")
-        } else {
-            text.to_string()
-        };
-        let (drv, mut root, rel) = splitroot(&text);
+        #[cfg(windows)]
+        let text = text.replace('/', "\\");
+        #[cfg(not(windows))]
+        let text = text.to_string();
+        let (drv, root, rel) = splitroot(&text);
         let sep = SEP.chars().next().unwrap_or('/');
+        #[allow(unused_mut)]
         let mut root_owned = root.to_string();
+        #[cfg(windows)]
         if root.is_empty() && drv.starts_with(sep) && !drv.ends_with(sep) {
             let drv_parts: Vec<&str> = drv.split(sep).collect();
             if drv_parts.len() == 4 && !"?.".contains(drv_parts[2]) || drv_parts.len() == 6 {
-                root = SEP;
-                root_owned = root.to_string();
+                root_owned = SEP.to_string();
             }
         }
         PyPath {
@@ -227,8 +230,8 @@ impl PyPath {
         if !self.drv.is_empty() || !self.root.is_empty() {
             return format!("{}{}{}", self.drv, self.root, self.tail.join(SEP));
         }
-        if cfg!(windows)
-            && let Some(first) = self.tail.first()
+        #[cfg(windows)]
+        if let Some(first) = self.tail.first()
             && !splitroot(first).0.is_empty()
         {
             return format!(".{SEP}{}", self.tail.join(SEP));
@@ -278,11 +281,10 @@ impl PyPath {
 
     /// `repr(path)`.
     pub fn repr(&self) -> String {
-        let class = if cfg!(windows) {
-            "WindowsPath"
-        } else {
-            "PosixPath"
-        };
+        #[cfg(windows)]
+        let class = "WindowsPath";
+        #[cfg(not(windows))]
+        let class = "PosixPath";
         format!("{class}({})", crate::py::repr_str(&self.display()))
     }
 
@@ -290,12 +292,14 @@ impl PyPath {
         isabs(&self.display())
     }
 
+    #[cfg(windows)]
     fn normcase(&self) -> String {
-        if cfg!(windows) {
-            self.display().to_lowercase()
-        } else {
-            self.display()
-        }
+        self.display().to_lowercase()
+    }
+
+    #[cfg(not(windows))]
+    fn normcase(&self) -> String {
+        self.display()
     }
 
     /// `self == other`.
@@ -558,12 +562,15 @@ pub fn abspath(path: &str) -> String {
 }
 
 /// `os.path.normcase(path)`: on Windows lower case with backslashes; elsewhere unchanged.
+#[cfg(windows)]
 pub fn normcase(path: &str) -> String {
-    if cfg!(windows) {
-        path.replace('/', "\\").to_lowercase()
-    } else {
-        path.to_string()
-    }
+    path.replace('/', "\\").to_lowercase()
+}
+
+/// `os.path.normcase(path)`: on Windows lower case with backslashes; elsewhere unchanged.
+#[cfg(not(windows))]
+pub fn normcase(path: &str) -> String {
+    path.to_string()
 }
 
 #[cfg(test)]
@@ -594,6 +601,35 @@ mod tests {
         assert!(PyPath::new("/").with_suffix(".md").is_err());
         assert!(PyPath::new("a/b/c").is_relative_to(&PyPath::new("a")));
         assert!(!PyPath::new("ab/c").is_relative_to(&PyPath::new("a")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_paths_follow_posixpath() {
+        use std::os::unix::fs::symlink;
+        assert_eq!(splitroot("//a/b"), ("", "//", "a/b"));
+        assert_eq!(join("", "b"), "b");
+        assert_eq!(join("a", "/b"), "/b");
+        assert_eq!(join("a/", "b"), "a/b");
+        assert_eq!(normpath("a/b/../c"), "a/c");
+        assert_eq!(normpath("//a/b"), "//a/b");
+        assert_eq!(realpath("/..").unwrap(), "/");
+        let dir = tempfile::tempdir().unwrap();
+        let root = realpath(&dir.path().to_string_lossy()).unwrap();
+        let target = format!("{root}/real");
+        std::fs::create_dir(&target).unwrap();
+        let link = format!("{root}/lnk");
+        symlink(&target, &link).unwrap();
+        // Second visit to `lnk` hits the resolved symlink cache.
+        assert_eq!(realpath(&format!("{link}/../lnk")).unwrap(), target);
+        // Symlink loop hits the in-progress cycle entry in `seen`.
+        let a = format!("{root}/a");
+        let b = format!("{root}/b");
+        symlink(&b, &a).unwrap();
+        symlink(&a, &b).unwrap();
+        assert_eq!(realpath(&a).unwrap(), a);
+        #[cfg(target_os = "linux")]
+        assert_eq!(realpath("/proc/1/exe").unwrap(), "/proc/1/exe");
     }
 
     #[cfg(windows)]

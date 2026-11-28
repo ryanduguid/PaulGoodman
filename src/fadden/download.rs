@@ -195,16 +195,19 @@ pub fn fetch(
 }
 
 fn append_log_line(log: &mut File, line: &str) -> Result<(), Exc> {
-    if cfg!(windows) {
+    #[cfg(windows)]
+    let written = {
         let normalised = line.replace("\r\n", "\n").replace('\n', "\r\n");
         log.write_all(normalised.as_bytes())
             .and_then(|()| log.write_all(b"\r\n"))
-    } else {
-        log.write_all(line.as_bytes())
-            .and_then(|()| log.write_all(b"\n"))
-    }
-    .and_then(|()| log.flush())
-    .map_err(|e| OsError::new(&e, None, Style::Errno).into())
+    };
+    #[cfg(not(windows))]
+    let written = log
+        .write_all(line.as_bytes())
+        .and_then(|()| log.write_all(b"\n"));
+    written
+        .and_then(|()| log.flush())
+        .map_err(|e| OsError::new(&e, None, Style::Errno).into())
 }
 
 fn str_field(obj: &Json, key: &str) -> Result<String, Exc> {
@@ -538,10 +541,74 @@ mod tests {
         append_log_line(&mut file, "a\r\nb\nc").unwrap();
         drop(file);
         let bytes = std::fs::read(&path).unwrap();
-        if cfg!(windows) {
-            assert_eq!(bytes, b"\r\nDONE ok=1\r\na\r\nb\r\nc\r\n");
-        } else {
-            assert_eq!(bytes, b"\nDONE ok=1\na\r\nb\nc\n");
-        }
+        #[cfg(windows)]
+        assert_eq!(bytes, b"\r\nDONE ok=1\r\na\r\nb\r\nc\r\n");
+        #[cfg(not(windows))]
+        assert_eq!(bytes, b"\nDONE ok=1\na\r\nb\nc\n");
+    }
+
+    #[test]
+    fn sniff_settle_and_str_field_edge_cases() {
+        use super::*;
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty.part");
+        std::fs::write(&empty, b"").unwrap();
+        assert_eq!(sniff(&empty.to_string_lossy()), None);
+        assert!(
+            settle(
+                "p",
+                "d",
+                Err(Failure::Uncaught {
+                    class: "RuntimeError",
+                    message: "x".into(),
+                }),
+                100,
+            )
+            .is_err()
+        );
+        let http_err = settle("p", "d", Err(Failure::Status(404)), 100)
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(http_err.1, "HTTP 404");
+        let obj = Json::Object(vec![
+            (
+                PyStr::Text("lone".into()),
+                Json::Str(PyStr::Lone(vec![0xd800])),
+            ),
+            (PyStr::Text("num".into()), Json::Int(7.into())),
+        ]);
+        assert_eq!(str_field(&obj, "lone").unwrap(), "'\\ud800'");
+        assert_eq!(str_field(&obj, "num").unwrap(), "7");
+    }
+
+    #[test]
+    fn finish_reports_incomplete_rollback_and_retained_backups() {
+        use super::*;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("t.epub");
+        std::fs::write(&target, b"old").unwrap();
+        let tp = target.to_string_lossy().into_owned();
+        let snap = snapshot_paths(&[&tp]).unwrap();
+        let backup = format!("{tp}.rollback");
+        std::fs::remove_file(&backup).unwrap();
+        let mut log = std::fs::File::create(dir.path().join("l.txt")).unwrap();
+        let mut run = Run::default();
+        let err = finish(
+            Err(Exc::Runtime("boom".into())),
+            std::slice::from_ref(&snap),
+            &mut log,
+            "DONE".into(),
+            &mut run,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("rollback was incomplete"));
+        std::fs::create_dir(&backup).unwrap();
+        std::fs::write(std::path::Path::new(&backup).join("x"), b"1").unwrap();
+        finish(Ok(()), &[snap], &mut log, "DONE".into(), &mut run).unwrap();
+        assert!(
+            std::fs::read_to_string(dir.path().join("l.txt"))
+                .unwrap()
+                .contains("WARNING retained 1 rollback")
+        );
     }
 }

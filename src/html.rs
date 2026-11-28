@@ -6,18 +6,6 @@ mod entities {
     include!("html_entities.rs");
 }
 
-pub fn escape(text: &str, quote: bool) -> String {
-    let text = text
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    if quote {
-        text.replace('"', "&quot;").replace('\'', "&#x27;")
-    } else {
-        text
-    }
-}
-
 /// `name in html.entities.html5`: a name with or without its semicolon.
 pub fn is_html5_entity(name: &str) -> bool {
     entities::HTML5

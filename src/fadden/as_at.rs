@@ -234,3 +234,39 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     run.print(CAPTURED_MEANS);
     Ok(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn main_handles_uncaught_recursion_and_lone_surrogate_json_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let deep = dir.path().join("deep.json");
+        std::fs::write(&deep, "[".repeat(2 * pyjson::MAX_DEPTH)).unwrap();
+        let mut run = Run::default();
+        let argv = vec![
+            "2026-01-01".into(),
+            "--manifest".into(),
+            deep.to_string_lossy().into(),
+        ];
+        assert_eq!(main(&argv, &mut run).unwrap(), 1);
+        assert!(String::from_utf8_lossy(&run.stderr).contains("RecursionError"));
+
+        let lone = dir.path().join("lone.json");
+        std::fs::write(
+            &lone,
+            r#"[{"id":"A","name":"\ud800","versionStart":"2025-01-01","retrieved":"2026-01-01","version_is_current":true}]"#,
+        )
+        .unwrap();
+        let mut run = Run::default();
+        let argv = vec![
+            "2026-01-01".into(),
+            "--manifest".into(),
+            lone.to_string_lossy().into(),
+            "--json".into(),
+        ];
+        assert_eq!(main(&argv, &mut run).unwrap(), 1);
+        assert!(String::from_utf8_lossy(&run.stderr).contains("UnicodeEncodeError"));
+    }
+}

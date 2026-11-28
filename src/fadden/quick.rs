@@ -119,11 +119,8 @@ pub fn prepare(module: &str, out: &str) -> Result<String, Exc> {
         )));
     }
     std::fs::create_dir(&staging).map_err(|e| OsError::new(&e, Some(&staging), Style::Errno))?;
-    lay_out(
-        module,
-        &pypath::join(&staging, "build"),
-        &Json::Array(titles),
-    )?;
+    let build_dir = pypath::join(&staging, "build");
+    lay_out(module, &build_dir, &Json::Array(titles))?;
     Ok(staging)
 }
 
@@ -151,13 +148,13 @@ impl<'a> RealRunner<'a> {
     fn run_inprocess(&mut self, stage: &str, scratch: &str, args: &[&str]) -> Result<(), Exc> {
         let mut child_run = Run::default();
         let argv: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
-        let exit = match stage {
-            "versions" => versions::run_cli(self.http, scratch, &argv, &mut child_run),
-            "probe13" => match probe13::run(self.http, scratch, &mut child_run) {
+        let exit = if stage == "versions" {
+            versions::run_cli(self.http, scratch, &argv, &mut child_run)
+        } else {
+            match probe13::run(self.http, scratch, &mut child_run) {
                 Ok(()) => Ok(0),
                 Err(err) => Ok(child_run.uncaught(&err)),
-            },
-            _ => unreachable!(),
+            }
         };
         let stdout = String::from_utf8_lossy(&child_run.stdout).replace("\r\n", "\n");
         let stderr = String::from_utf8_lossy(&child_run.stderr).replace("\r\n", "\n");
@@ -463,10 +460,7 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     // this program; nothing is trusted because of it.
     // nosemgrep: rust.lang.security.current-exe.current-exe
     let own = std::env::current_exe();
-    let binary = own.map_or_else(
-        |_| "fadden".to_string(),
-        |p| p.to_string_lossy().into_owned(),
-    );
+    let binary = own.map_or_else(|_| "fadden".into(), |p| p.to_string_lossy().into_owned());
     let mut http = http::connect();
     let mut runner_run = Run::default();
     let code = {
@@ -480,4 +474,65 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     run.stdout.splice(0..0, runner_run.stdout);
     run.stderr.splice(0..0, runner_run.stderr);
     code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TypeErrRunner;
+    impl Runner for TypeErrRunner {
+        fn stage(&mut self, _: &str, _: &[&str], _: bool) -> Result<String, Exc> {
+            Err(Exc::Type("boom".into()))
+        }
+        fn download(&mut self, _: &str, _: &str) -> Result<(), Exc> {
+            Ok(())
+        }
+        fn retry13(&mut self, _: &str, _: &str) -> Result<(), Exc> {
+            Ok(())
+        }
+        fn print(&mut self, _: &str) {}
+    }
+
+    struct NoopHttp;
+    impl Http for NoopHttp {
+        fn get(
+            &mut self,
+            _: &str,
+            _: Option<usize>,
+            _: &mut http::Request,
+        ) -> Result<http::Response, http::Failure> {
+            Err(http::Failure::Transport("unused".into()))
+        }
+        fn sleep(&mut self, _: f64) {}
+        fn today(&mut self) -> String {
+            "2026-01-01".into()
+        }
+    }
+
+    #[test]
+    fn quick_runner_inprocess_and_unwrapped_error_paths() {
+        let mut tr = TypeErrRunner;
+        assert_eq!(tr.monotonic(), 0.0);
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        let mut r = Run::default();
+        let argv = vec!["--out".into(), out.to_string_lossy().into()];
+        assert_eq!(run_cli(&mut tr, &module_dir(), &argv, &mut r).unwrap(), 1);
+        assert!(String::from_utf8_lossy(&r.stderr).contains("TypeError"));
+        let mut http = NoopHttp;
+        let mut rr_run = Run::default();
+        let mut rr = RealRunner {
+            binary: "fadden".into(),
+            http: &mut http,
+            run: &mut rr_run,
+        };
+        let s = dir.path().to_string_lossy().into_owned();
+        rr.run_inprocess("versions", &s, &["--help"]).unwrap();
+        assert!(
+            rr.run_inprocess("versions", &s, &["--no-such-flag"])
+                .is_err()
+        );
+        assert!(rr.run_inprocess("probe13", &s, &[]).is_err());
+    }
 }

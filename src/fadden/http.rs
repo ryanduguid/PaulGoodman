@@ -209,6 +209,38 @@ pub fn net_download(
     net.download(url, part, max_bytes, range_start, https_only, &mut request)
 }
 
+/// The network with `proxies` in place of the environment's, for loopback
+/// integration tests: `(scheme, proxy URL)` pairs, `no` for `no_proxy`.
+#[doc(hidden)]
+pub fn connect_via(proxies: &[(&str, &str)]) -> Box<dyn Http> {
+    let mut net = Net::new(UA);
+    net.proxies = proxies
+        .iter()
+        .map(|&(scheme, proxy)| (scheme.to_owned(), proxy.to_owned()))
+        .collect();
+    Box::new(net)
+}
+
+/// The network with a custom TLS client configuration, for loopback integration tests.
+#[doc(hidden)]
+pub fn connect_tls(tls: Arc<rustls::ClientConfig>) -> Box<dyn Http> {
+    let mut net = Net::new(UA);
+    net.proxies.clear();
+    net.tls = Some(tls);
+    Box::new(net)
+}
+
+/// Run `handshake_tls` with an explicit timeout, for loopback integration tests.
+#[doc(hidden)]
+pub fn handshake_tls_err(
+    socket: TcpStream,
+    config: Arc<rustls::ClientConfig>,
+    server_name: &str,
+    timeout: Duration,
+) -> Option<Failure> {
+    handshake_tls(socket, config, server_name, timeout).err()
+}
+
 /// `http_fetch.attempts()`: attempt numbers 1..=tries, waiting `delay` before
 /// each attempt after the first.
 pub fn attempt(http: &mut dyn Http, number: u32) {
@@ -673,34 +705,7 @@ impl Net {
         }
         let config = self.tls_config()?;
         let server_name = tunnel.map_or(host, |t| t.host.as_str());
-        let name = rustls::pki_types::ServerName::try_from(server_name)
-            .map_err(|_| url_error())?
-            .to_owned();
-        let mut session = rustls::ClientConnection::new(config, name).map_err(|_| url_error())?;
-        // wrap_socket's handshake has one 90-second deadline: each blocking
-        // read or write may take only what is left of it.
-        let deadline = Instant::now() + TIMEOUT;
-        while session.is_handshaking() || session.wants_write() {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() || set_timeouts(&socket, left).is_err() {
-                return Err(url_error());
-            }
-            if session.wants_write() {
-                session.write_tls(&mut socket).map_err(|_| url_error())?;
-            } else if !session.wants_read()
-                || session.read_tls(&mut socket).map_err(|_| url_error())? == 0
-            {
-                return Err(url_error());
-            } else if session.process_new_packets().is_err() {
-                // Send the alert rustls queued, as the handshake's failure does.
-                let _ = session.write_tls(&mut socket);
-                return Err(url_error());
-            }
-        }
-        set_timeouts(&socket, TIMEOUT).map_err(|_| url_error())?;
-        Ok(Stream::Tls(Box::new(rustls::StreamOwned::new(
-            session, socket,
-        ))))
+        handshake_tls(socket, config, server_name, TIMEOUT)
     }
 
     fn tls_config(&mut self) -> Result<Arc<rustls::ClientConfig>, Failure> {
@@ -722,23 +727,58 @@ impl Net {
     }
 }
 
+fn handshake_tls(
+    mut socket: TcpStream,
+    config: Arc<rustls::ClientConfig>,
+    server_name: &str,
+    timeout: Duration,
+) -> Result<Stream, Failure> {
+    let name = rustls::pki_types::ServerName::try_from(server_name)
+        .map_err(|_| url_error())?
+        .to_owned();
+    let mut session = rustls::ClientConnection::new(config, name).map_err(|_| url_error())?;
+    // wrap_socket's handshake has one 90-second deadline: each blocking
+    // read or write may take only what is left of it.
+    let deadline = Instant::now() + timeout;
+    while session.is_handshaking() || session.wants_write() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || set_timeouts(&socket, left).is_err() {
+            return Err(url_error());
+        }
+        if session.wants_write() {
+            session.write_tls(&mut socket).map_err(|_| url_error())?;
+        } else if !session.wants_read()
+            || session.read_tls(&mut socket).map_err(|_| url_error())? == 0
+        {
+            return Err(url_error());
+        } else if session.process_new_packets().is_err() {
+            // Send the alert rustls queued, as the handshake's failure does.
+            let _ = session.write_tls(&mut socket);
+            return Err(url_error());
+        }
+    }
+    set_timeouts(&socket, TIMEOUT).map_err(|_| url_error())?;
+    Ok(Stream::Tls(Box::new(rustls::StreamOwned::new(
+        session, socket,
+    ))))
+}
+
 /// `getproxies_environment()`: `<scheme>_proxy` variables, any case, with a
 /// lowercase name winning; `HTTP_PROXY` is ignored under CGI. Windows
 /// environment names are upper case, as Python's `os.environ` gives them.
 fn environment_proxies() -> HashMap<String, String> {
-    let environ: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-        .map(|(name, value)| {
-            if cfg!(windows) {
-                (name.to_uppercase(), value)
-            } else {
-                (name, value)
-            }
-        })
-        .collect();
+    let environ = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
+    #[cfg(windows)]
+    let environ = environ.map(|(name, value)| (name.to_uppercase(), value));
+    proxies_from(&environ.collect::<Vec<_>>())
+}
+
+/// `getproxies_environment()` of the variables in `environ`.
+fn proxies_from(environ: &[(String, String)]) -> HashMap<String, String> {
     let mut proxies = HashMap::new();
     let mut matched = Vec::new();
-    for (name, value) in &environ {
+    for (name, value) in environ {
         let chars: Vec<char> = name.chars().collect();
         let n = chars.len();
         if n > 5
@@ -1118,13 +1158,13 @@ fn resumes_at(headers: &[(String, String)], offset: u64) -> bool {
 }
 
 /// An `HTTPResponse`'s unread body and its framing.
-struct Body {
-    wire: BufReader<Stream>,
+struct Body<R = Stream> {
+    wire: BufReader<R>,
     chunked: bool,
     length: Option<u64>,
 }
 
-impl Body {
+impl<R: Read> Body<R> {
     /// `HTTPResponse.read(amt)`. A bounded read of a body shorter than its
     /// Content-Length returns what arrived; an unbounded one is
     /// `IncompleteRead`.
@@ -1254,10 +1294,6 @@ impl Body {
         let mut buf = [0u8; 65_536];
         while left > 0 {
             let room = sink.room();
-            if room == 0 {
-                sink.out.flush()?;
-                return Ok(Some((true, None)));
-            }
             let want = usize::try_from(left.min(u128::from(room)).min(65_536)).unwrap();
             match self.wire.read(&mut buf[..want]) {
                 Ok(0) => return Ok(Some(sink.failed("IncompleteRead".into()))),
@@ -1279,10 +1315,6 @@ impl Body {
         let mut wire_read = 0u64;
         loop {
             let room = sink.room();
-            if room == 0 {
-                sink.out.flush()?;
-                return Ok((true, None));
-            }
             let want = match self.length {
                 Some(len) => {
                     let rem = len.saturating_sub(wire_read);
@@ -1326,11 +1358,12 @@ struct Sink<'a, W: Write> {
 }
 
 impl<W: Write> Sink<'_, W> {
-    /// Bytes still accepted before the budget is exceeded by one.
+    /// Bytes still accepted before the budget is exceeded by one; at least 1,
+    /// as `write` ends the stream once `written` passes `max_bytes`.
     fn room(&self) -> u64 {
         self.max_bytes
-            .saturating_add(1)
             .saturating_sub(self.written)
+            .saturating_add(1)
     }
 
     /// Write `bytes`; true once more than the budget has been written (flushed).
@@ -1857,6 +1890,9 @@ pub fn local_today() -> String {
 }
 
 #[cfg(test)]
+mod opener_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1919,33 +1955,41 @@ mod tests {
         assert_eq!(title("proxy-authorization"), "Proxy-Authorization");
     }
 
-    fn refusal(result: Result<impl std::fmt::Debug, Failure>) -> (&'static str, String) {
-        match result {
-            Err(Failure::Uncaught { class, message }) => (class, message),
-            other => panic!("not refused: {other:?}"),
-        }
-    }
-
     #[test]
     fn requests_encode_and_refuse_as_http_client_does() {
         // The messages are CPython 3.15's.
         assert_eq!(encode("café", "latin-1", 256).unwrap(), b"caf\xe9");
-        let unicode = |text, codec, limit| refusal(encode(text, codec, limit)).1;
+        let uncaught = |class, message: &str| Failure::Uncaught {
+            class,
+            message: message.into(),
+        };
         assert_eq!(
-            unicode("a€b", "latin-1", 256),
-            r"'latin-1' codec can't encode character '\u20ac' in position 1: ordinal not in range(256)"
+            encode("a€b", "latin-1", 256).unwrap_err(),
+            uncaught(
+                "UnicodeEncodeError",
+                r"'latin-1' codec can't encode character '\u20ac' in position 1: ordinal not in range(256)"
+            )
         );
         assert_eq!(
-            unicode("a€€b", "latin-1", 256),
-            "'latin-1' codec can't encode characters in position 1-2: ordinal not in range(256)"
+            encode("a€€b", "latin-1", 256).unwrap_err(),
+            uncaught(
+                "UnicodeEncodeError",
+                "'latin-1' codec can't encode characters in position 1-2: ordinal not in range(256)"
+            )
         );
         assert_eq!(
-            unicode("x\u{1f600}", "latin-1", 256),
-            r"'latin-1' codec can't encode character '\U0001f600' in position 1: ordinal not in range(256)"
+            encode("x\u{1f600}", "latin-1", 256).unwrap_err(),
+            uncaught(
+                "UnicodeEncodeError",
+                r"'latin-1' codec can't encode character '\U0001f600' in position 1: ordinal not in range(256)"
+            )
         );
         assert_eq!(
-            unicode("GET /café HTTP/1.1", "ascii", 128),
-            r"'ascii' codec can't encode character '\xe9' in position 8: ordinal not in range(128)"
+            encode("GET /café HTTP/1.1", "ascii", 128).unwrap_err(),
+            uncaught(
+                "UnicodeEncodeError",
+                r"'ascii' codec can't encode character '\xe9' in position 8: ordinal not in range(128)"
+            )
         );
         let mut out = Vec::new();
         for value in ["a\r\n b", "a\n\tb", "é"] {
@@ -1958,15 +2002,24 @@ mod tests {
             ("a\r", r"b'a\r'"),
         ] {
             assert_eq!(
-                refusal(put_header(&mut out, "X", value)),
-                ("ValueError", format!("Invalid header value {repr}"))
+                put_header(&mut out, "X", value).unwrap_err(),
+                uncaught("ValueError", &format!("Invalid header value {repr}"))
             );
         }
-        assert_eq!(
-            refusal(put_header(&mut out, "X", "€")).0,
-            "UnicodeEncodeError"
-        );
+        assert!(matches!(
+            put_header(&mut out, "X", "€"),
+            Err(Failure::Uncaught {
+                class: "UnicodeEncodeError",
+                ..
+            })
+        ));
     }
+}
+
+#[cfg(feature = "fake-http")]
+#[doc(hidden)]
+pub fn connect_script(path: &str) -> Box<dyn Http> {
+    Box::new(fake::Script::load(path))
 }
 
 #[cfg(feature = "fake-http")]

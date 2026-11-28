@@ -381,18 +381,10 @@ pub fn run(
     // Stage then replace, so a crash part way through never truncates the
     // list versions reads as its authoritative input.
     let principal_json = Json::Array(principal.clone());
-    write_json_atomic(
-        &pypath::join(scratch, "titles_all.json"),
-        &Json::Array(all_rows),
-        Some(1),
-        TITLES_DEPTH,
-    )?;
-    write_json_atomic(
-        &pypath::join(scratch, "titles_principal.json"),
-        &principal_json,
-        Some(1),
-        TITLES_DEPTH,
-    )?;
+    let all_path = pypath::join(scratch, "titles_all.json");
+    write_json_atomic(&all_path, &Json::Array(all_rows), Some(1), TITLES_DEPTH)?;
+    let principal_path = pypath::join(scratch, "titles_principal.json");
+    write_json_atomic(&principal_path, &principal_json, Some(1), TITLES_DEPTH)?;
 
     print_sample(&principal, run)
 }
@@ -441,5 +433,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn earlier_titles_reports_stat_syntax_and_recursion_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("plain");
+        std::fs::write(&file, "x").unwrap();
+        assert!(super::earlier_titles(&format!("{}/child", file.display())).is_err());
+
+        let bad = dir.path().join("bad.json");
+        std::fs::write(&bad, "{bad").unwrap();
+        assert!(super::earlier_titles(&bad.to_string_lossy()).is_err());
+
+        let deep = dir.path().join("deep.json");
+        std::fs::write(&deep, format!("{}{}", "[".repeat(600), "]".repeat(600))).unwrap();
+        assert!(super::earlier_titles(&deep.to_string_lossy()).is_err());
     }
 }

@@ -406,11 +406,10 @@ fn py_sum(items: impl IntoIterator<Item = Json>) -> Result<Num, Exc> {
         Float(f64, f64),
         Any(Num),
     }
-    let long = if cfg!(windows) {
-        i64::from(i32::MIN)..=i64::from(i32::MAX)
-    } else {
-        i64::MIN..=i64::MAX
-    };
+    #[cfg(windows)]
+    let long = i64::from(i32::MIN)..=i64::from(i32::MAX);
+    #[cfg(not(windows))]
+    let long = i64::MIN..=i64::MAX;
     let mut state = State::Long(0);
     for item in items {
         state = match state {
@@ -538,10 +537,8 @@ fn py_int(value: &Json) -> Result<BigInt, Exc> {
             "int() argument must be a string, a bytes-like object or a real number, not '{}'",
             type_name(value)
         ))),
-        other => Ok(match Num::of(other) {
-            Some(Num::Int(i)) => i,
-            _ => BigInt::from(0),
-        }),
+        Json::Bool(b) => Ok(BigInt::from(u8::from(*b))),
+        Json::Int(i) => Ok(i.clone()),
     }
 }
 
@@ -1528,6 +1525,19 @@ fn digest_json(digest: &Digest) -> [(&'static str, Json); 2] {
 /// bytes it read and the checker it shipped. What the binary cannot know (the
 /// source revision it was built from, its lockfile) is null with a reason.
 // "Write the vision, and make it plain upon tables" (Habakkuk 2:2, KJV).
+fn exe_sha256_fields(exe: Option<std::path::PathBuf>) -> Vec<(&'static str, Json)> {
+    match exe.and_then(|p| std::fs::read(p).ok()) {
+        Some(bytes) => vec![("sha256", Json::str(&Digest::of(&bytes).hex()))],
+        None => vec![
+            ("sha256", Json::Null),
+            (
+                "sha256_reason",
+                Json::str("the running program could not be read"),
+            ),
+        ],
+    }
+}
+
 fn build_record(mut inputs: Vec<Input>, tools: &[(String, Digest)]) -> Json {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1542,16 +1552,7 @@ fn build_record(mut inputs: Vec<Input>, tools: &[(String, Digest)]) -> Json {
         ("program", program),
         ("version", Json::str(env!("CARGO_PKG_VERSION"))),
     ];
-    match exe.and_then(|p| std::fs::read(p).ok()) {
-        Some(bytes) => implementation.push(("sha256", Json::str(&Digest::of(&bytes).hex()))),
-        None => {
-            implementation.push(("sha256", Json::Null));
-            implementation.push((
-                "sha256_reason",
-                Json::str("the running program could not be read"),
-            ));
-        }
-    }
+    implementation.extend(exe_sha256_fields(exe));
     implementation.push(("cargo_lock_sha256", Json::Null));
     implementation.push((
         "cargo_lock_reason",
@@ -1708,7 +1709,7 @@ mod tests {
         // CPython 3.15.0's sum() of each list, on 64-bit Windows and Linux.
         let float = |items: Vec<Json>| match py_sum(items).unwrap() {
             Num::Float(f) => f,
-            Num::Int(i) => panic!("int {i}"),
+            _ => f64::NAN,
         };
         let ints = |values: &[&str]| values.iter().map(|v| int_json(v)).collect::<Vec<_>>();
         let then_floats = |mut items: Vec<Json>| {
@@ -1865,5 +1866,81 @@ mod tests {
                 ": ", "{}", "\n", "}"
             ]
         );
+    }
+
+    #[test]
+    fn numeric_formatting_and_json_helpers_cover_error_branches() {
+        assert!(Num::of(&Json::Null).is_none());
+        assert_eq!(Num::Int(1.into()).type_name(), "int");
+        assert_eq!(Num::Float(1.0).type_name(), "float");
+        assert!(matches!(
+            add(&Num::Int(1.into()), &Json::str("a"), "+"),
+            Err(Exc::Type(_))
+        ));
+        assert!(
+            matches!(py_sum(vec![Json::Float(1.0), Json::Bool(true)]).unwrap(), Num::Float(f) if f == 2.0)
+        );
+        assert!(matches!(comma(&Json::str("x")), Err(Exc::Value { .. })));
+        assert!(matches!(comma(&Json::Null), Err(Exc::Type(_))));
+        assert!(matches!(
+            percent_d(&Num::Float(f64::NAN)),
+            Err(Exc::Value { .. })
+        ));
+        assert!(matches!(
+            percent_d(&Num::Float(f64::INFINITY)),
+            Err(Exc::Overflow(_))
+        ));
+        assert!(matches!(
+            py_int(&Json::Float(f64::INFINITY)),
+            Err(Exc::Overflow(_))
+        ));
+        assert!(matches!(py_int(&Json::Null), Err(Exc::Type(_))));
+        assert_eq!(py_len(&Json::str("abc")).unwrap(), 3);
+        assert!(matches!(py_len(&Json::Int(1.into())), Err(Exc::Type(_))));
+        assert_eq!(json_key(&Json::Int(7.into())), PyStr::Text("7".into()));
+        let mut chunks = Vec::new();
+        encode(&Json::Int(7.into()), 0, &mut chunks).unwrap();
+        assert_eq!(chunks, vec![points("7")]);
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                let mut deep_val = Json::Null;
+                for _ in 0..=SOURCES_DEPTH {
+                    deep_val = Json::Array(vec![deep_val]);
+                }
+                let deep = Json::obj([("k", deep_val)]);
+                let err = encode(&deep, 0, &mut Vec::new()).unwrap_err();
+                assert!(
+                    err.to_string().contains("when serializing dict item"),
+                    "{err}"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn document_copy_discard_and_build_record_cover_edge_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc = dir.path().join("README.md");
+        let doc_str = doc.to_str().unwrap();
+        assert!(matches!(
+            write_document(doc_str, Err(Exc::Runtime("boom".into()))),
+            Err(Exc::Runtime(_))
+        ));
+        std::fs::write(&doc, "hi").unwrap();
+        assert_eq!(copy_if_different(doc_str, doc_str).unwrap(), doc_str);
+        assert_eq!(exe_sha256_fields(None)[0], ("sha256", Json::Null));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = dir.path().join("locked");
+            std::fs::create_dir(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let err = discard_record(locked.join("record.json").to_str().unwrap());
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(matches!(err, Err(Exc::Os(_))));
+        }
     }
 }

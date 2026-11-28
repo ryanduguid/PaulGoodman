@@ -533,7 +533,10 @@ fn refused(message: impl Into<String>) -> Exc {
 
 fn sqlite_error(error: &rusqlite::Error) -> Exc {
     let message = match error {
-        rusqlite::Error::SqliteFailure(_, Some(message)) => message.clone(),
+        // A statement that fails to prepare: sqlite3 shows the library's
+        // message alone, not the SQL and the offset rusqlite adds.
+        rusqlite::Error::SqliteFailure(_, Some(message))
+        | rusqlite::Error::SqlInputError { msg: message, .. } => message.clone(),
         rusqlite::Error::SqliteFailure(code, None) => code.to_string(),
         other => other.to_string(),
     };
@@ -1006,29 +1009,23 @@ fn manifest_difference(rows: &[RulingRow], documents: &[Json], run_date: &str) -
         }
         listed.push((docid, count, document));
     }
-    for index in 0..held.len().max(listed.len()) {
-        match (listed.get(index), held.get(index)) {
-            (Some((docid, count, document)), Some(group)) => {
-                let difference = document_difference(docid, count, document, group, run_date);
-                if difference.is_some() {
-                    return difference;
-                }
-            }
-            (Some((docid, _, _)), None) => {
-                return Some(format!(
-                    "manifest.json lists {docid}, which rulings.jsonl does not hold"
-                ));
-            }
-            (None, Some(group)) => {
-                return Some(format!(
-                    "rulings.jsonl holds {} after the last document manifest.json lists",
-                    group[0].docid
-                ));
-            }
-            (None, None) => {}
+    for (index, (docid, count, document)) in listed.iter().enumerate() {
+        let Some(group) = held.get(index) else {
+            return Some(format!(
+                "manifest.json lists {docid}, which rulings.jsonl does not hold"
+            ));
+        };
+        let difference = document_difference(docid, count, document, group, run_date);
+        if difference.is_some() {
+            return difference;
         }
     }
-    None
+    held.get(listed.len()).map(|group| {
+        format!(
+            "rulings.jsonl holds {} after the last document manifest.json lists",
+            group[0].docid
+        )
+    })
 }
 
 /// The first document whose rows come in 2 groups, if any. The stage refuses a repeated
@@ -1531,7 +1528,8 @@ fn insert_row(
         )
         .map_err(|e| sqlite_error(&e))?;
     let id = connection.last_insert_rowid();
-    let heading = normalise_value(&or_empty(get(row, "heading")))?;
+    let heading_raw = or_empty(get(row, "heading"));
+    let heading = normalise_value(&heading_raw)?;
     let normal_text = normalise(&text);
     for sql in [
         "INSERT INTO rows_fts (rowid, heading, text) VALUES (?,?,?)",
@@ -1542,10 +1540,7 @@ fn insert_row(
     }
     counts.rows += 1;
     let row_id = get(row, "row_id").as_str().unwrap_or_default();
-    let heading_text = match or_empty(get(row, "heading")) {
-        Json::Str(s) => pyvalue::points_lossy(&s.code_points()),
-        _ => String::new(),
-    };
+    let heading_text = pyvalue::py_str(&heading_raw);
     if pyre::re(DEFINITIONS_HEADING, 0)
         .search(&heading_text)
         .is_some()
@@ -1721,11 +1716,8 @@ const COMMONWEALTH: &str = "commonwealth";
 
 /// The state register an index was built from; None for a Commonwealth index.
 pub fn index_source(connection: &Connection) -> Result<Option<&'static Source>, Exc> {
-    let found = rows_of(
-        connection,
-        "SELECT value FROM meta WHERE key = 'source'",
-        &[],
-    )?;
+    let sql = "SELECT value FROM meta WHERE key = 'source'";
+    let found = rows_of(connection, sql, &[])?;
     let Some(row) = found.first() else {
         return Ok(None);
     };
@@ -1997,10 +1989,7 @@ impl Dated {
         };
         let withheld: usize = refusals
             .iter()
-            .map(|refusal| match refusal.at("matching_rows") {
-                Json::Int(rows) => usize::try_from(rows).unwrap_or_default(),
-                _ => 0,
-            })
+            .map(|refusal| json_usize(refusal.at("matching_rows")))
             .sum();
         Json::obj([(
             "as_at_summary",
@@ -2019,6 +2008,13 @@ impl Dated {
 /// Text output prints none of them, so it drops them before `--max-chars`
 /// measures a row, and caps text as it did before they were added.
 const SOURCE_FIELDS: [&str; 3] = ["text", "register_page", "source_url"];
+
+fn json_usize(value: &Json) -> usize {
+    match value {
+        Json::Int(rows) => usize::try_from(rows).unwrap_or_default(),
+        _ => 0,
+    }
+}
 
 fn drop_source_fields(value: &mut Json) {
     if let Json::Object(pairs) = value {
@@ -2114,10 +2110,7 @@ fn dated_query(
     let params = [Sql::Text(match_expression(words)?), rid.clone(), rid];
     let mut matched = BTreeMap::new();
     for row in rows_of(connection, &mode.sql(sql), &params)? {
-        let rows = match field(&row, "matched") {
-            Json::Int(rows) => usize::try_from(rows).unwrap_or_default(),
-            _ => 0,
-        };
+        let rows = json_usize(field(&row, "matched"));
         let title = field(&row, "register_id").as_str().unwrap_or_default();
         matched.insert(title.to_string(), rows);
     }
@@ -2185,18 +2178,15 @@ pub fn define(connection: &Connection, term: &str, title: Option<&str>) -> Resul
         return Err(refused("the term is empty"));
     }
     let rid = optional_rid(connection, title)?;
-    let exact = rows_of(
-        connection,
-        DEFINE_SQL,
-        &[
-            Sql::Integer(0),
-            Sql::Text(key.clone()),
-            Sql::Integer(0),
-            Sql::Null,
-            rid.clone(),
-            rid.clone(),
-        ],
-    )?;
+    let exact_params = [
+        Sql::Integer(0),
+        Sql::Text(key.clone()),
+        Sql::Integer(0),
+        Sql::Null,
+        rid.clone(),
+        rid.clone(),
+    ];
+    let exact = rows_of(connection, DEFINE_SQL, &exact_params)?;
     if !exact.is_empty() {
         return Ok(exact.into_iter().map(hit).collect());
     }
@@ -2206,21 +2196,16 @@ pub fn define(connection: &Connection, term: &str, title: Option<&str>) -> Resul
             .replace('%', "\\%")
             .replace('_', "\\_")
     );
-    Ok(rows_of(
-        connection,
-        DEFINE_SQL,
-        &[
-            Sql::Integer(1),
-            Sql::Null,
-            Sql::Integer(1),
-            Sql::Text(prefix),
-            rid.clone(),
-            rid,
-        ],
-    )?
-    .into_iter()
-    .map(hit)
-    .collect())
+    let prefix_params = [
+        Sql::Integer(1),
+        Sql::Null,
+        Sql::Integer(1),
+        Sql::Text(prefix),
+        rid.clone(),
+        rid,
+    ];
+    let found = rows_of(connection, DEFINE_SQL, &prefix_params)?;
+    Ok(found.into_iter().map(hit).collect())
 }
 
 fn field<'a>(pairs: &'a [(String, Json)], name: &str) -> &'a Json {
@@ -2237,14 +2222,14 @@ fn cited_entry(connection: &Connection, reference: &[(String, Json)]) -> Result<
     let kind = field(reference, "kind").as_str().unwrap_or_default();
     let key = field(reference, "to_key").as_str().unwrap_or_default();
     let targets = match &to {
-        Json::Str(PyStr::Text(target)) => rows_of(
-            connection,
-            &target_sql(kind),
-            &[Sql::Text(target.clone()), Sql::Text(key.into())],
-        )?
-        .into_iter()
-        .map(object)
-        .collect(),
+        Json::Str(PyStr::Text(target)) => {
+            let sql = target_sql(kind);
+            let params = [Sql::Text(target.clone()), Sql::Text(key.into())];
+            rows_of(connection, &sql, &params)?
+                .into_iter()
+                .map(object)
+                .collect()
+        }
         _ => Vec::new(),
     };
     Ok(object(vec![
@@ -2330,12 +2315,9 @@ fn term_tables(connection: &Connection, scopes: &[&str]) -> Result<Vec<(bool, Te
     let (mut wholes, mut qualified) = (Vec::new(), Vec::new());
     for scope in scopes {
         let (mut whole, mut heads) = (TermTable::new(), TermTable::new());
-        for found in rows_of(
-            connection,
-            "SELECT d.term, d.term_key, d.row_id, r.register_id, r.heading FROM definitions d \
-JOIN rows r ON r.row_id = d.row_id WHERE r.register_id = ? ORDER BY r.id, d.position",
-            &[Sql::Text(scope.to_string())],
-        )? {
+        let defs_sql = "SELECT d.term, d.term_key, d.row_id, r.register_id, r.heading FROM definitions d \
+JOIN rows r ON r.row_id = d.row_id WHERE r.register_id = ? ORDER BY r.id, d.position";
+        for found in rows_of(connection, defs_sql, &[Sql::Text(scope.to_string())])? {
             let key = field(&found, "term_key")
                 .as_str()
                 .unwrap_or_default()
@@ -2443,48 +2425,43 @@ pub fn defined_terms(connection: &Connection, row_id: &str) -> Result<(Vec<Json>
     ))
 }
 
+fn sql_value(value: &Json) -> Sql {
+    match value {
+        Json::Str(PyStr::Text(s)) => Sql::Text(s.clone()),
+        Json::Int(i) => Sql::Integer(i64::try_from(i).unwrap_or_default()),
+        _ => Sql::Null,
+    }
+}
+
 /// What `row_id` cites, and rows that cite its section, Division or Subdivision.
 pub fn refs(connection: &Connection, row_id: &str) -> Result<Json, Exc> {
-    let found = rows_of(
-        connection,
-        "SELECT r.*, t.register_page, t.source_url FROM rows r \
-JOIN titles t ON t.register_id = r.register_id WHERE r.row_id = ?",
-        &[Sql::Text(row_id.into())],
-    )?;
+    let row_sql = "SELECT r.*, t.register_page, t.source_url FROM rows r \
+JOIN titles t ON t.register_id = r.register_id WHERE r.row_id = ?";
+    let found = rows_of(connection, row_sql, &[Sql::Text(row_id.into())])?;
     let Some(row) = found.into_iter().next() else {
         return Err(refused(format!("{row_id} is not in the index")));
     };
     let mut outbound = Vec::new();
-    for reference in rows_of(
-        connection,
-        "SELECT * FROM refs WHERE from_row_id = ? ORDER BY rowid",
-        &[Sql::Text(row_id.into())],
-    )? {
+    let out_sql = "SELECT * FROM refs WHERE from_row_id = ? ORDER BY rowid";
+    for reference in rows_of(connection, out_sql, &[Sql::Text(row_id.into())])? {
         outbound.push(cited_entry(connection, &reference)?);
     }
-    let sql_value = |value: &Json| match value {
-        Json::Str(PyStr::Text(s)) => Sql::Text(s.clone()),
-        Json::Int(i) => Sql::Integer(i64::try_from(i).unwrap_or_default()),
-        _ => Sql::Null,
-    };
-    let inbound: Vec<Json> = rows_of(
-        connection,
-        "SELECT DISTINCT r.row_id, r.heading, r.text, f.kind, f.citation, t.register_page, \
+    let in_sql = "SELECT DISTINCT r.row_id, r.heading, r.text, f.kind, f.citation, t.register_page, \
 t.source_url FROM refs f JOIN rows r ON r.row_id = f.from_row_id \
 JOIN titles t ON t.register_id = r.register_id WHERE f.to_register_id = ? AND r.row_id != ? \
 AND ((f.kind = 'section' AND f.to_key = ?) OR (f.kind = 'division' AND f.to_key = ?) \
-OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
-        &[
-            sql_value(field(&row, "register_id")),
-            Sql::Text(row_id.into()),
-            sql_value(field(&row, "section_key")),
-            sql_value(field(&row, "division_key")),
-            sql_value(field(&row, "subdivision_key")),
-        ],
-    )?
-    .into_iter()
-    .map(object)
-    .collect();
+OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id";
+    let in_params = [
+        sql_value(field(&row, "register_id")),
+        Sql::Text(row_id.into()),
+        sql_value(field(&row, "section_key")),
+        sql_value(field(&row, "division_key")),
+        sql_value(field(&row, "subdivision_key")),
+    ];
+    let inbound: Vec<Json> = rows_of(connection, in_sql, &in_params)?
+        .into_iter()
+        .map(object)
+        .collect();
     let mut report = vec![
         ("row_id".into(), Json::str(row_id)),
         ("register_id".into(), field(&row, "register_id").clone()),
@@ -2499,19 +2476,17 @@ OR (f.kind = 'subdivision' AND f.to_key = ?)) ORDER BY r.id",
         ("cited_by".into(), Json::Array(inbound)),
     ];
     if holds_rulings(connection)? {
-        let rulings = rows_of(
-            connection,
-            "SELECT DISTINCT docid, title, paragraph, withdrawal_status, fetched_on, \
+        let rul_sql = "SELECT DISTINCT docid, title, paragraph, withdrawal_status, fetched_on, \
 source_url, kind, citation FROM ruling_refs WHERE to_register_id = ? \
 AND ((kind = 'section' AND to_key = ?) OR (kind = 'division' AND to_key = ?) \
-OR (kind = 'subdivision' AND to_key = ?)) ORDER BY rowid",
-            &[
-                sql_value(field(&row, "register_id")),
-                sql_value(field(&row, "section_key")),
-                sql_value(field(&row, "division_key")),
-                sql_value(field(&row, "subdivision_key")),
-            ],
-        )?;
+OR (kind = 'subdivision' AND to_key = ?)) ORDER BY rowid";
+        let rul_params = [
+            sql_value(field(&row, "register_id")),
+            sql_value(field(&row, "section_key")),
+            sql_value(field(&row, "division_key")),
+            sql_value(field(&row, "subdivision_key")),
+        ];
+        let rulings = rows_of(connection, rul_sql, &rul_params)?;
         let rulings = rulings.into_iter().map(object).collect();
         report.push(("cited_by_rulings".into(), Json::Array(rulings)));
     }
@@ -2711,11 +2686,9 @@ fn cited_rows(
     key: &str,
 ) -> Result<(Vec<Row>, Option<Row>), Exc> {
     let title = Sql::Text(rid.to_string());
-    let rows = rows_of(
-        connection,
-        &target_sql(kind),
-        &[title.clone(), Sql::Text(key.to_string())],
-    )?;
+    let sql = target_sql(kind);
+    let params = [title.clone(), Sql::Text(key.to_string())];
+    let rows = rows_of(connection, &sql, &params)?;
     let sql = "SELECT * FROM titles WHERE register_id = ?";
     let held = rows_of(connection, sql, &[title])?.into_iter().next();
     Ok((rows, held))
@@ -2919,12 +2892,8 @@ fn quotation_report(
         let sql = "SELECT text FROM rows WHERE row_id = ?";
         let held = rows_of(connection, sql, &[Sql::Text(row_id.to_string())])?;
         let text = held.first().and_then(|r| field(r, "text").as_str());
-        let (found, others_found) = grade_row(
-            connection,
-            &quotation.text,
-            row_id,
-            text.unwrap_or_default(),
-        )?;
+        let body = text.unwrap_or_default();
+        let (found, others_found) = grade_row(connection, &quotation.text, row_id, body)?;
         grade = Json::str(found.grade);
         (matched, words) = (found.matched_words, Some(found.quote_words));
         others = others_found;
@@ -3473,23 +3442,27 @@ fn execute_quote(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32
     if args.flag("json") {
         run.print_points(&dumps_line(&report, false))?;
     } else {
-        let s = |key: &str| pyvalue::py_str(report.at(key));
-        let state = if report.at("version_is_current").truthy() {
-            "current"
-        } else {
-            "not current"
-        };
-        run.print(&format!(
-            "{row_id}: compilation {} ({}), {state}, retrieved {}",
-            s("compilation_number"),
-            s("compilation_date"),
-            s("retrieved")
-        ));
-        print_quotation(&report, run);
-        run.print(QUOTE_NOTICE);
+        print_quote_summary(&row_id, &report, run);
         run.print(&source_line(&connection)?);
     }
     Ok(i32::from(!held))
+}
+
+fn print_quote_summary(row_id: &str, report: &Json, run: &mut Run) {
+    let s = |key: &str| pyvalue::py_str(report.at(key));
+    let state = if report.at("version_is_current").truthy() {
+        "current"
+    } else {
+        "not current"
+    };
+    run.print(&format!(
+        "{row_id}: compilation {} ({}), {state}, retrieved {}",
+        s("compilation_number"),
+        s("compilation_date"),
+        s("retrieved")
+    ));
+    print_quotation(report, run);
+    run.print(QUOTE_NOTICE);
 }
 
 fn print_refusals(refusals: &[Json], json: bool, run: &mut Run) -> Result<(), Exc> {
@@ -3562,13 +3535,16 @@ struct Caps {
     spent: bool,
 }
 
+fn opt_int(args: &crate::argparse::Namespace, key: &str, default: i64) -> i64 {
+    match args.get(key) {
+        Some(crate::argparse::Value::Int(n)) => *n,
+        _ => default,
+    }
+}
+
 impl Caps {
     fn of(args: &crate::argparse::Namespace) -> Result<Self, Exc> {
-        let int = |key: &str| match args.get(key) {
-            Some(crate::argparse::Value::Int(n)) => *n,
-            _ => MAX_CHARS,
-        };
-        let max_chars = int("max_chars");
+        let max_chars = opt_int(args, "max_chars", MAX_CHARS);
         if !MAX_CHARS_RANGE.contains(&max_chars) {
             return Err(refused(format!(
                 "--max-chars must be from {} to {}",
@@ -3577,7 +3553,7 @@ impl Caps {
             )));
         }
         Ok(Self {
-            limit: int("limit"),
+            limit: opt_int(args, "limit", MAX_CHARS),
             max_chars,
             left: usize::try_from(max_chars).unwrap_or_default(),
             spent: false,
@@ -3679,10 +3655,7 @@ fn query_results(
     connection: &Connection,
 ) -> Result<(Vec<Json>, Option<DatedReport>), Exc> {
     let title = args.str("title");
-    let limit = match args.get("limit") {
-        Some(crate::argparse::Value::Int(n)) => *n,
-        _ => 10,
-    };
+    let limit = opt_int(args, "limit", 10);
     let words = list(args, "words");
     if args.flag("stem") && args.flag("exact") {
         return Err(refused("--stem and --exact cannot be combined"));
@@ -3935,28 +3908,7 @@ fn execute_refs(
         run.print_points(&dumps_line(&report, false))?;
         return Ok(0);
     }
-    let s = |v: &Json| pyvalue::py_str(v);
-    run.print(&format!(
-        "{}: {}",
-        s(report.at("row_id")),
-        s(report.at("heading"))
-    ));
-    if let Json::Array(cites) = report.at("cites") {
-        for reference in cites {
-            run.print(&describe_reference(reference));
-        }
-    }
-    print_terms(&report, run);
-    if let Json::Array(sources) = report.at("cited_by") {
-        for source in sources {
-            run.print(&format!(
-                "  cited by {} ({}): {}",
-                s(source.at("row_id")),
-                s(source.at("heading")),
-                s(source.at("citation"))
-            ));
-        }
-    }
+    print_refs_lines(&report, run);
     let rulings_withheld = withheld.iter().any(|(name, _)| name == "cited_by_rulings");
     // Text output tells an index holding no rulings from one where none cites the row.
     match report.at("cited_by_rulings") {
@@ -3965,6 +3917,7 @@ fn execute_refs(
             run.print(RULINGS_NOTICE);
         }
         Json::Array(rulings) => {
+            let s = |v: &Json| pyvalue::py_str(v);
             for ruling in rulings {
                 let withdrawn = if ruling.at("withdrawal_status").as_str() == Some("NOTICE_PRESENT")
                 {
@@ -3998,6 +3951,31 @@ fn execute_refs(
     }
     run.print(&source_line(connection)?);
     Ok(0)
+}
+
+fn print_refs_lines(report: &Json, run: &mut Run) {
+    let s = |v: &Json| pyvalue::py_str(v);
+    run.print(&format!(
+        "{}: {}",
+        s(report.at("row_id")),
+        s(report.at("heading"))
+    ));
+    if let Json::Array(cites) = report.at("cites") {
+        for reference in cites {
+            run.print(&describe_reference(reference));
+        }
+    }
+    print_terms(report, run);
+    if let Json::Array(sources) = report.at("cited_by") {
+        for source in sources {
+            run.print(&format!(
+                "  cited by {} ({}): {}",
+                s(source.at("row_id")),
+                s(source.at("heading")),
+                s(source.at("citation"))
+            ));
+        }
+    }
 }
 
 const RULINGS_NOTICE: &str = "Ruling paragraphs come from the ATO Legal Database under the ATO \
@@ -4047,3 +4025,6 @@ fn execute(args: &crate::argparse::Namespace, run: &mut Run) -> Result<i32, Exc>
         _ => execute_refs(args, &connection, run),
     }
 }
+
+#[cfg(test)]
+mod unit_tests;

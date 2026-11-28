@@ -549,5 +549,72 @@ mod tests {
         assert!(word_sections(&body("<w:p><w:r><w:t>1</w:t></w:p>")).is_err());
         assert!(word_sections(&body("</w:p>")).is_err());
         assert!(word_sections(&body("<w:p><w:r>")).is_err());
+        // Case-mismatched end tags pass HTML-level balance, so Body rejects them.
+        assert!(word_sections(&body("<w:p><w:r></w:R></w:p>")).is_err());
+        assert!(word_sections(&body("<w:p></w:P>")).is_err());
+    }
+
+    #[test]
+    fn spelling_edge_cases_report_mismatches_and_out_of_range_lines() {
+        let mut sp = Spelling::new("<a b=1 c>");
+        let pos = Positioned {
+            line: 1,
+            offset: 0,
+            event: Event::Data(String::new()),
+        };
+        assert!(sp.name(&pos, "wrong").is_err());
+        let mut sp = Spelling::new("<a b=1 c>");
+        assert!(sp.attribute(&pos, &[("wrong".into(), None)], "b").is_err());
+        let mut sp = Spelling::new("<a b=1 c>");
+        let attrs = vec![("b".into(), Some("1".into())), ("c".into(), None)];
+        assert_eq!(
+            sp.attribute(&pos, &attrs, "b").unwrap().as_deref(),
+            Some("1")
+        );
+        let mut sp = Spelling::new("one-line");
+        let past = Positioned {
+            line: 5,
+            offset: 0,
+            event: Event::Data(String::new()),
+        };
+        assert_eq!(sp.at(&past), "one-line");
+    }
+
+    #[test]
+    fn word_volume_without_custom_properties_leaves_compilation_none() {
+        let xml = body("").into_bytes();
+        let name = DOCUMENT.as_bytes();
+        let crc = crate::pyzlib::crc32(&xml, 0);
+        let mut zip = Vec::new();
+        zip.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+        zip.extend_from_slice(&[20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        zip.extend_from_slice(&crc.to_le_bytes());
+        zip.extend_from_slice(&(xml.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(xml.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        zip.extend_from_slice(&0u16.to_le_bytes());
+        zip.extend_from_slice(name);
+        zip.extend_from_slice(&xml);
+        let cd_off = zip.len() as u32;
+        zip.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+        zip.extend_from_slice(&[20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        zip.extend_from_slice(&crc.to_le_bytes());
+        zip.extend_from_slice(&(xml.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(xml.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        zip.extend_from_slice(&[0; 12]);
+        zip.extend_from_slice(&0u32.to_le_bytes());
+        zip.extend_from_slice(name);
+        let cd_len = zip.len() as u32 - cd_off;
+        zip.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        zip.extend_from_slice(&[0, 0, 0, 0, 1, 0, 1, 0]);
+        zip.extend_from_slice(&cd_len.to_le_bytes());
+        zip.extend_from_slice(&cd_off.to_le_bytes());
+        zip.extend_from_slice(&0u16.to_le_bytes());
+        let dir = tempfile::tempdir().unwrap();
+        let docx = dir.path().join("vol.docx");
+        std::fs::write(&docx, &zip).unwrap();
+        let vol = word_volume(&docx.to_string_lossy()).unwrap();
+        assert!(vol.compilation.is_none() && vol.sections.is_empty());
     }
 }

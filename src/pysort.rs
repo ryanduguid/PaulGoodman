@@ -413,10 +413,8 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, E>> Sorter<'_, F> {
         dest -= 1;
         pa -= 1;
         na -= 1;
-        if na == 0 {
-            fill_b(self.a, dest, nb);
-            return Ok(());
-        }
+        // merge_at only calls merge_hi when na > nb >= 1, so na >= 2 on entry.
+        debug_assert!(na > 0);
         if nb == 1 {
             copy_a(self.a, dest, pa, na, tmp[at(pb)]);
             return Ok(());
@@ -571,6 +569,22 @@ impl<E, F: FnMut(usize, usize) -> Result<bool, E>> Sorter<'_, F> {
     }
 }
 
+fn verify_sorted(items: &[(u8, usize)], expected: &[(u8, usize)]) -> Result<(), String> {
+    if items != expected {
+        return Err(format!("{items:?} is not the stable sort {expected:?}"));
+    }
+    Ok(())
+}
+
+fn verify_permutation(floats: &[(f64, usize)], len: usize) -> Result<(), String> {
+    let mut seen: Vec<usize> = floats.iter().map(|item| item.1).collect();
+    seen.sort_unstable();
+    if !seen.iter().copied().eq(0..len) {
+        return Err("the sort lost or repeated an item".into());
+    }
+    Ok(())
+}
+
 /// The `python_sort` fuzz target's invariants for one input: under a total
 /// order the sort is the stable sort, and under one that is not (NaN) it
 /// still returns every item once. The unit tests replay seeds through this.
@@ -580,21 +594,14 @@ pub fn check_one_input(data: &[u8]) -> Result<(), String> {
     let mut expected = items.clone();
     expected.sort_by_key(|item| item.0);
     sort(&mut items, |a, b| Ok::<_, ()>(a.0 < b.0)).map_err(|()| "no comparison fails")?;
-    if items != expected {
-        return Err(format!("{items:?} is not the stable sort {expected:?}"));
-    }
+    verify_sorted(&items, &expected)?;
     let mut floats: Vec<(f64, usize)> = data
         .iter()
         .enumerate()
         .map(|(i, &b)| (if b > 240 { f64::NAN } else { f64::from(b % 32) }, i))
         .collect();
     sort(&mut floats, |a, b| Ok::<_, ()>(a.0 < b.0)).map_err(|()| "no comparison fails")?;
-    let mut seen: Vec<usize> = floats.iter().map(|item| item.1).collect();
-    seen.sort_unstable();
-    if !seen.iter().copied().eq(0..data.len()) {
-        return Err("the sort lost or repeated an item".into());
-    }
-    Ok(())
+    verify_permutation(&floats, data.len())
 }
 
 /// The power of the run at `s1` of length `n1`, followed by one of length `n2`.
@@ -688,11 +695,53 @@ mod tests {
         let error = sort(&mut v, |a, b| match (a, b) {
             (V::Int(x), V::Int(y)) => Ok(x < y),
             (V::Str, V::Int(y)) => Err(format!("str < {y}")),
-            (V::Int(x), V::Str) => Err(format!("{x} < str")),
-            (V::Str, V::Str) => Ok(false),
+            _ => Ok(false),
         })
         .unwrap_err();
         assert_eq!(error, "str < 1");
+    }
+
+    #[test]
+    fn merge_edge_cases_and_invariants() {
+        let check = |mut v: Vec<i32>| {
+            let mut expected = v.clone();
+            expected.sort();
+            sort(&mut v, |a, b| Ok::<_, ()>(a < b)).unwrap();
+            assert_eq!(v, expected);
+        };
+        // merge_lo: na == 1, nb == 1
+        let mut v: Vec<i32> = (0..31).chain([100, 50]).chain(101..132).collect();
+        check(v.clone());
+        // merge_lo: na == 1, nb == 2
+        v = (0..31).chain([100, 50, 60]).chain(101..131).collect();
+        check(v);
+        // merge_hi: na == 2, nb == 1
+        check((0..30).chain([90, 100, 50]).chain(101..132).collect());
+        // merge_hi galloping exit on na == 0
+        let a = std::iter::once(5).chain(100..148).chain([200]);
+        let b = (1..=4).chain(6..=11).chain(150..172);
+        check(a.chain(b).collect());
+        // merge_at: na == 0 after reversing a descending run
+        check((0..32).rev().chain(31..63).collect());
+        // merge_force_collapse: pending = [120, 32, 32, 34] hits n -= 1
+        let four = (1000..1120)
+            .chain(500..532)
+            .chain(200..232)
+            .chain(0..34)
+            .collect();
+        check(four);
+        // merge_at: gallop_right error
+        let mut err_in: Vec<i32> = (10..42).chain(0..32).collect();
+        let err = sort(&mut err_in, |a, b| {
+            if (*a, *b) == (0, 10) {
+                Err("boom")
+            } else {
+                Ok(a < b)
+            }
+        });
+        assert_eq!(err, Err("boom"));
+        assert!(super::verify_sorted(&[(1, 0)], &[(0, 0)]).is_err());
+        assert!(super::verify_permutation(&[(0.0, 0), (0.0, 0)], 2).is_err());
     }
 
     #[test]

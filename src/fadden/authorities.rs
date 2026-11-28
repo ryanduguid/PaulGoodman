@@ -237,10 +237,17 @@ pub(super) fn read(path: &str) -> Result<Vec<u8>, Exc> {
 }
 
 pub(super) fn write_new(path: &str, text: &str) -> Result<(), Exc> {
+    write_new_with(path, |file| file.write_all(text.as_bytes()))
+}
+
+fn write_new_with(
+    path: &str,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), Exc> {
     let target = PyPath::new(path).fs();
     let fail = |e: std::io::Error| Exc::value(format!("cannot write {path}: {e}"));
     let mut file = std::fs::File::create_new(&target).map_err(fail)?;
-    file.write_all(text.as_bytes()).map_err(|e| {
+    write(&mut file).map_err(|e| {
         let _ = std::fs::remove_file(&target);
         fail(e)
     })
@@ -316,10 +323,33 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
     let args = parser().parse(argv)?;
     Ok(match execute(&args, run) {
         Ok(()) => 0,
-        Err(error @ (Exc::Value { .. } | Exc::Os(_) | Exc::Sqlite(_))) => {
+        // execute returns only Value, Os, or Sqlite errors.
+        Err(error) => {
             run.eprint(&format!("error: {error}"));
             1
         }
-        Err(error) => run.uncaught(&error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blank_ruling_lines_are_skipped_and_write_failure_cleans_up() {
+        let mut docs = BTreeMap::new();
+        let id = pattern(&format!("({SERIES})\\s+({RULING_ID})"));
+        let line = r#"{"docid":"d1","title":"TR 2022/1","withdrawal_status":"UNKNOWN"}"#;
+        read_ruling_file("r.jsonl", &format!("\n  \n{line}\n"), &id, &mut docs).unwrap();
+        assert!(docs.contains_key("d1"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.json");
+        let err = write_new_with(&out.to_string_lossy(), |_| {
+            Err(std::io::Error::other("disk full"))
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("cannot write"));
+        assert!(!out.exists());
+    }
 }

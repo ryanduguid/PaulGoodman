@@ -641,3 +641,73 @@ pub fn run_cli(
         Err(error) => run.uncaught(&error),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UncaughtHttp;
+    impl Http for UncaughtHttp {
+        fn get(
+            &mut self,
+            _: &str,
+            _: Option<usize>,
+            _: &mut http::Request,
+        ) -> Result<http::Response, http::Failure> {
+            Err(http::Failure::Uncaught {
+                class: "RuntimeError",
+                message: "boom".into(),
+            })
+        }
+        fn sleep(&mut self, _: f64) {}
+        fn today(&mut self) -> String {
+            "2026-01-01".into()
+        }
+    }
+
+    #[test]
+    fn versions_batch_validation_and_cli_edge_cases() {
+        assert_eq!(as_invalid_batch(Exc::Runtime("x".into())).to_string(), "x");
+        let ids = vec!["C2004A05138".to_string()];
+        let mk = |row: Json| Json::obj([("value", Json::Array(vec![row]))]);
+        assert!(batch_rows(&mk(Json::obj([("titleId", Json::Int(1.into()))])), &ids).is_err());
+        assert!(
+            batch_rows(
+                &mk(Json::obj([(
+                    "titleId",
+                    Json::Str(PyStr::Lone(vec![0xd800]))
+                )])),
+                &ids
+            )
+            .is_err()
+        );
+        let good = Json::obj([
+            ("titleId", Json::str("C2004A05138")),
+            ("start", Json::str("2025-01-01T00:00:00Z")),
+            ("compilationNumber", Json::str("C1")),
+            ("registerId", Json::str("C2025C00001")),
+        ]);
+        let dup = Json::obj([("value", Json::Array(vec![good.clone(), good]))]);
+        assert_eq!(batch_rows(&dup, &ids).unwrap(), None);
+        let mut h = UncaughtHttp;
+        let mut r = Run::default();
+        assert!(resolve_in_force_on(&mut h, ".", "bad", false, &mut r).is_err());
+        assert!(run_cli(&mut h, ".", &["--report-omissions".into()], &mut r).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let build = dir.path().join("build");
+        std::fs::create_dir(&build).unwrap();
+        let b = build.to_string_lossy().into_owned();
+        std::fs::write(
+            build.join("titles_all.json"),
+            r#"[{"id":"C2004A05138","name":"Act","isPrincipal":true,"collection":[]}]"#,
+        )
+        .unwrap();
+        assert!(run(&mut h, &b, &mut r).is_err());
+        std::fs::write(
+            build.join("titles_all.json"),
+            r#"[{"id":"C2004A05138","name":"Act","isPrincipal":true,"collection":"Act"}]"#,
+        )
+        .unwrap();
+        assert!(resolve_in_force_on(&mut h, &b, "2025-01-01", false, &mut r).is_err());
+    }
+}

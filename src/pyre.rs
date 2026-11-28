@@ -234,18 +234,6 @@ impl Re {
             .collect()
     }
 
-    /// `pattern.findall(text)` for a pattern with several groups: each group's text, or
-    /// an empty string for a group that did not take part, as Python returns them.
-    pub fn findall_groups(&self, text: &str) -> Vec<Vec<String>> {
-        self.captures_iter(text)
-            .map(|c| {
-                (1..c.len())
-                    .map(|g| c.get(g).map_or(String::new(), |m| m.as_str().to_owned()))
-                    .collect()
-            })
-            .collect()
-    }
-
     /// `pattern.split(text)` for a pattern without groups.
     pub fn split<'t>(&self, text: &'t str) -> Vec<&'t str> {
         let mut pieces = Vec::new();
@@ -855,5 +843,83 @@ mod tests {
     fn escape_matches_re_escape() {
         assert_eq!(escape("a.b-c_d/é"), "a\\.b\\-c_d\\/é");
         assert!(re(&format!("^{}$", escape("a.b(c)")), 0).is_match("a.b(c)"));
+    }
+
+    /// CPython 3.15's `re.search(pattern, text, flags)`: the match, its start
+    /// in characters, and its groups, for escapes, scoped and global inline
+    /// flags, named backreferences and an omitted lower bound.
+    #[test]
+    fn search_agrees_with_cpython_on_escapes_flags_and_backreferences() {
+        /// Pattern, flags, text; the match, its start and its groups.
+        type Case = (
+            &'static str,
+            u8,
+            &'static str,
+            (&'static str, usize, &'static [&'static str]),
+        );
+        let cases: [Case; 18] = [
+            ("é", I, "xÉ", ("É", 1, &[])),
+            ("[é]", I, "xÉ", ("É", 1, &[])),
+            (r"\x41\u0042\U00000043", 0, "zABC", ("ABC", 1, &[])),
+            (r"\D+", 0, "12ab3", ("ab", 2, &[])),
+            (r"\v\a\0", 0, "x\x0b\x07\0", ("\x0b\x07\0", 1, &[])),
+            (r"[\b]", 0, "a\x08", ("\x08", 1, &[])),
+            (r"a\B", 0, "a ab", ("a", 2, &[])),
+            (r"(?=a)a\B", 0, "a ab", ("a", 2, &[])),
+            ("(?m:^b)", 0, "a\nb", ("b", 2, &[])),
+            ("(?s:a.b)", 0, "a\nb", ("a\nb", 0, &[])),
+            ("(?-i:a)", I, "A a", ("a", 2, &[])),
+            ("(?s-i:A.)", I, "a\nA\n", ("A\n", 2, &[])),
+            ("(?P<q>a)(?P=q)", 0, "xaAaa", ("aa", 3, &["a"])),
+            ("(?P<q>a)(?P=q)", I, "xaA", ("aA", 1, &["a"])),
+            ("a{,2}b", 0, "aaab", ("aab", 1, &[])),
+            ("[0-B]+", I, "x9ab_", ("9ab", 1, &[])),
+            ("(?s)a.b", 0, "a\nb", ("a\nb", 0, &[])),
+            ("(?ms)^a.b", 0, "x\na\nb", ("a\nb", 2, &[])),
+        ];
+        for (pattern, flags, text, (whole, start, groups)) in cases {
+            let m = re(pattern, flags).search(text).expect(pattern);
+            let span = m.get(0).expect("group 0");
+            let found: Vec<&str> = (1..m.len())
+                .map(|i| m.get(i).expect("group").as_str())
+                .collect();
+            assert_eq!(
+                (span.as_str(), text[..span.start()].chars().count(), found),
+                (whole, start, groups.to_vec()),
+                "{pattern}"
+            );
+        }
+    }
+
+    #[test]
+    fn named_groups_are_found_in_plain_patterns() {
+        let m = re("(?P<w>b+)", 0).search("abb").expect("match");
+        assert!(!m.is_empty());
+        assert_eq!(m.name("w").expect("w").as_str(), "bb");
+        assert!(m.name("x").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported escape \\q")]
+    fn an_unknown_escape_is_refused() {
+        translate(r"a\q", 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "bad range")]
+    fn a_range_to_a_class_is_refused() {
+        translate(r"[a-\d]", 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported class escape")]
+    fn an_anchor_in_a_class_is_refused() {
+        translate(r"[\A]", 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported group (?#")]
+    fn a_comment_group_is_refused() {
+        translate("a(?#note)", 0);
     }
 }

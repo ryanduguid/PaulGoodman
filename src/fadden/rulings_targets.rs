@@ -276,10 +276,8 @@ pub fn run(http: &mut dyn Http, feed: &str, out: &str, run: &mut Run) -> Result<
         })
         .collect();
     let written = targets.len();
-    authorities::write_new(
-        out,
-        &(pyjson::dumps(&Json::Array(targets), Layout::Indented) + "\n"),
-    )?;
+    let rendered = pyjson::dumps(&Json::Array(targets), Layout::Indented) + "\n";
+    authorities::write_new(out, &rendered)?;
     run.print(&format!(
         "feed {feed} sha256 {digest}: {} item(s)",
         entries.len()
@@ -316,11 +314,15 @@ fn parser() -> Parser {
 }
 
 pub fn main(argv: &[String], run_state: &mut Run) -> Result<i32, Exit> {
+    let mut http = http::connect();
+    run_main(http.as_mut(), argv, run_state)
+}
+
+fn run_main(http: &mut dyn Http, argv: &[String], run_state: &mut Run) -> Result<i32, Exit> {
     let args = parser().parse(argv)?;
     let feed = args.str("feed").unwrap_or_default();
     let out = args.str("out").unwrap_or_default();
-    let mut http = http::connect();
-    Ok(match run(http.as_mut(), &feed, &out, run_state) {
+    Ok(match run(http, &feed, &out, run_state) {
         Ok(code) => code,
         Err(error @ (Exc::Value { .. } | Exc::Os(_))) => {
             run_state.eprint(&format!("rulings_targets: {error}"));
@@ -328,4 +330,62 @@ pub fn main(argv: &[String], run_state: &mut Run) -> Result<i32, Exit> {
         }
         Err(error) => run_state.uncaught(&error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UncaughtHttp;
+    impl Http for UncaughtHttp {
+        fn get(
+            &mut self,
+            _: &str,
+            _: Option<usize>,
+            _: &mut http::Request,
+        ) -> Result<http::Response, http::Failure> {
+            Err(http::Failure::Uncaught {
+                class: "RuntimeError",
+                message: "boom".into(),
+            })
+        }
+        fn sleep(&mut self, _: f64) {}
+        fn today(&mut self) -> String {
+            "2026-01-01".into()
+        }
+    }
+
+    #[test]
+    fn main_and_verify_cover_cli_oversize_and_uncaught_errors() {
+        let oversize = http::Response {
+            url: format!("https://www.ato.gov.au{FEED_PATH}"),
+            content_type: "application/xml".into(),
+            body: vec![b'x'; MAX_BYTES + 1],
+        };
+        assert!(verify(oversize).unwrap_err().contains("larger than"));
+        let dir = tempfile::tempdir().unwrap();
+        let feed = dir.path().join("feed.xml");
+        std::fs::write(
+            &feed,
+            "<rss><channel><item><link>https://www.ato.gov.au/law/view/document?docid=TXR/TR20241/NAT/ATO/00001</link></item></channel></rss>",
+        )
+        .unwrap();
+        let out = dir.path().join("targets.json");
+        let argv = vec![
+            feed.to_string_lossy().into(),
+            "--out".into(),
+            out.to_string_lossy().into(),
+        ];
+        let mut r = Run::default();
+        assert_eq!(main(&argv, &mut r).unwrap(), 0);
+        assert_eq!(main(&argv, &mut r).unwrap(), 1);
+        let mut http = UncaughtHttp;
+        let out2 = dir.path().join("targets2.json");
+        let argv2 = vec![
+            format!("https://www.ato.gov.au{FEED_PATH}"),
+            "--out".into(),
+            out2.to_string_lossy().into(),
+        ];
+        assert_eq!(run_main(&mut http, &argv2, &mut r).unwrap(), 1);
+    }
 }

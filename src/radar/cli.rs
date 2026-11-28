@@ -48,12 +48,15 @@ fn build_parser() -> Parser {
 }
 
 /// Text-mode output: newlines become the platform's line separator.
+#[cfg(windows)]
 fn text(s: &str) -> Vec<u8> {
-    if cfg!(windows) {
-        s.replace('\n', "\r\n").into_bytes()
-    } else {
-        s.as_bytes().to_vec()
-    }
+    s.replace('\n', "\r\n").into_bytes()
+}
+
+/// Text-mode output: newlines become the platform's line separator.
+#[cfg(not(windows))]
+fn text(s: &str) -> Vec<u8> {
+    s.as_bytes().to_vec()
 }
 
 fn eprint(s: &str) {
@@ -140,8 +143,15 @@ pub fn main(argv: &[String]) -> i32 {
     };
     match run(&args) {
         Ok(code) => code,
-        Err(Error::Monitor { message, .. }) => blocked(&message),
-        Err(Error::Os(error)) => blocked(&error.text),
+        Err(error) => blocked(&error.to_string()),
+    }
+}
+
+fn json_slice(value: &Json) -> &[Json] {
+    if let Json::Array(items) = value {
+        items
+    } else {
+        &[]
     }
 }
 
@@ -169,10 +179,7 @@ fn run(args: &crate::argparse::Namespace) -> super::Result<i32> {
                 Err(Error::Os(error)) => return write_failed("output directory", error),
                 Err(other) => return Err(other),
             };
-            let count = match queue.at("items") {
-                Json::Array(items) => items.len(),
-                _ => 0,
-            };
+            let count = json_slice(queue.at("items")).len();
             let mut lines = vec![format!(
                 "{PROG}: {}; {count} item(s)",
                 monitor::py_format(queue.at("run_status"))
@@ -192,18 +199,12 @@ fn run(args: &crate::argparse::Namespace) -> super::Result<i32> {
                 Err(Error::Os(error)) => return write_failed("output directory", error),
                 Err(other) => return Err(other),
             };
-            let items = match result.at("items") {
-                Json::Array(items) => items.as_slice(),
-                _ => &[],
-            };
+            let items = json_slice(result.at("items"));
             let matched = items
                 .iter()
                 .filter(|item| item.at("matches").truthy())
                 .count();
-            let unmatched = match result.at("profiles_without_candidate_match") {
-                Json::Array(ids) => ids.len(),
-                _ => 0,
-            };
+            let unmatched = json_slice(result.at("profiles_without_candidate_match")).len();
             let run_status = result.at("queue").at("run_status");
             let mut lines = vec![format!(
                 "{PROG}: exposure for a {} queue; {matched} item(s) with a profile match, \

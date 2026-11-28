@@ -194,18 +194,17 @@ pub fn urljoin(base: &str, url: &str) -> Result<String, String> {
     if scheme != b.scheme || named.is_some_and(|s| !USES_RELATIVE.contains(&s)) {
         return Ok(url.to_owned());
     }
-    if named.is_none_or(|s| USES_NETLOC.contains(&s)) {
-        if netloc.as_deref().is_some_and(|n| !n.is_empty()) {
-            return Ok(unsplit(
-                scheme.as_deref(),
-                netloc.as_deref(),
-                &path,
-                query.as_deref(),
-                fragment.as_deref(),
-            ));
-        }
-        netloc = b.netloc.clone();
+    // Every scheme in USES_RELATIVE is also in USES_NETLOC.
+    if netloc.as_deref().is_some_and(|n| !n.is_empty()) {
+        return Ok(unsplit(
+            scheme.as_deref(),
+            netloc.as_deref(),
+            &path,
+            query.as_deref(),
+            fragment.as_deref(),
+        ));
     }
+    netloc = b.netloc.clone();
     if path.is_empty() {
         path = b.path.clone();
         if query.is_none() {
@@ -466,5 +465,61 @@ mod tests {
         assert!(urlsplit("https://[fe80::1%25eth0]/").is_ok());
         assert_eq!(urlsplit("1http:x").unwrap().scheme, "");
         assert!(urlsplit("https://ex\u{2100}ample/").is_err());
+        assert_eq!(
+            urlsplit("https://caf\u{e9}.example/").unwrap().netloc,
+            "caf\u{e9}.example"
+        );
+        assert_eq!(
+            urlsplit("https://\u{fb01}le.example/").unwrap().netloc,
+            "\u{fb01}le.example"
+        );
+        assert_eq!(
+            urljoin("https://a.test/b?q=1#frag", "https:").unwrap(),
+            "https://a.test/b?q=1#frag"
+        );
+        assert_eq!(
+            urlunsplit(&Split {
+                scheme: "mailto".into(),
+                netloc: String::new(),
+                path: "//foo".into(),
+                query: String::new(),
+                fragment: String::new(),
+            }),
+            "mailto:////foo"
+        );
+        assert_eq!(
+            urlunsplit(&Split {
+                scheme: "http".into(),
+                netloc: String::new(),
+                path: "/a".into(),
+                query: String::new(),
+                fragment: String::new(),
+            }),
+            "http:///a"
+        );
+    }
+
+    #[test]
+    fn bracketed_hosts_and_ports_match_urllib() {
+        assert_eq!(urlsplit("https://a[::1]/").unwrap_err(), "Invalid IPv6 URL");
+        assert_eq!(urlsplit("https://[::1]x/").unwrap_err(), "Invalid IPv6 URL");
+        assert_eq!(
+            urlsplit("https://[user]@host:80/").unwrap_err(),
+            "'host' does not appear to be an IPv4 or IPv6 address"
+        );
+        assert_eq!(urlsplit("https://[v1.abc]/").unwrap().netloc, "[v1.abc]");
+        assert_eq!(
+            urlsplit("https://[v.abc]/").unwrap_err(),
+            "IPvFuture address is invalid"
+        );
+        assert_eq!(
+            urlsplit("https://[not-ip]/").unwrap_err(),
+            "'not-ip' does not appear to be an IPv4 or IPv6 address"
+        );
+        assert_eq!(hostname(""), None);
+        assert_eq!(hostname(":80"), None);
+        assert_eq!(hostname("[::1]:80").as_deref(), Some("::1"));
+        assert_eq!(hostname("[FE80::1%eth0]").as_deref(), Some("fe80::1%eth0"));
+        assert_eq!(port("[::1]:8080"), Ok(Some(8080)));
     }
 }

@@ -88,6 +88,19 @@ pub struct Lines {
     read: Option<(u64, Sha256)>,
 }
 
+fn read_chunk(reader: &mut dyn Read, chunk: &mut [u8]) -> Result<usize, ReadError> {
+    let mut read = 0;
+    while read < chunk.len() {
+        match reader.read(&mut chunk[read..]) {
+            Ok(0) => break,
+            Ok(n) => read += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(read_error(&e)),
+        }
+    }
+    Ok(read)
+}
+
 impl Lines {
     pub fn open(path: &str) -> Result<Lines, OsError> {
         Ok(Lines {
@@ -120,15 +133,7 @@ impl Lines {
     /// Decode the next chunk into the text buffer.
     fn fill(&mut self) -> Result<(), ReadError> {
         let mut chunk = vec![0; CHUNK];
-        let mut read = 0;
-        while read < CHUNK {
-            match self.file.read(&mut chunk[read..]) {
-                Ok(0) => break,
-                Ok(n) => read += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(read_error(&e)),
-            }
-        }
+        let read = read_chunk(&mut self.file, &mut chunk)?;
         chunk.truncate(read);
         if let Some((bytes, hasher)) = &mut self.read {
             *bytes += read as u64;
@@ -186,6 +191,13 @@ impl Lines {
 mod tests {
     use super::*;
 
+    fn err_text(error: ReadError) -> String {
+        match error {
+            ReadError::Decode(m) => m,
+            ReadError::Os(e) => e.text,
+        }
+    }
+
     fn lines(bytes: &[u8]) -> Vec<Result<String, String>> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("f.txt");
@@ -193,12 +205,39 @@ mod tests {
         let mut reader = Lines::open(&path.to_string_lossy()).unwrap();
         let mut out = Vec::new();
         while let Some(line) = reader.next_line() {
-            out.push(line.map_err(|e| match e {
-                ReadError::Decode(m) => m,
-                ReadError::Os(e) => e.text,
-            }));
+            out.push(line.map_err(err_text));
         }
         out
+    }
+
+    #[test]
+    fn read_chunk_retries_interrupted_and_wraps_os_errors() {
+        struct Scripted(Vec<io::Result<&'static [u8]>>);
+        impl Read for Scripted {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                match self.0.remove(0) {
+                    Ok(src) => {
+                        buf[..src.len()].copy_from_slice(src);
+                        Ok(src.len())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        }
+        let mut ok_reader = Scripted(vec![
+            Err(io::Error::new(io::ErrorKind::Interrupted, "retry")),
+            Ok(b"hi"),
+            Ok(b""),
+        ]);
+        let mut buf = [0u8; 8];
+        assert_eq!(read_chunk(&mut ok_reader, &mut buf).unwrap(), 2);
+        assert_eq!(&buf[..2], b"hi");
+
+        let mut err_reader = Scripted(vec![Err(io::Error::other("disk"))]);
+        assert_eq!(
+            read_chunk(&mut err_reader, &mut buf).map_err(err_text),
+            Err("disk".into())
+        );
     }
 
     #[test]

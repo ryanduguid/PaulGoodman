@@ -112,8 +112,16 @@ fn sibling_partial(
     destination: &PyPath,
     private: bool,
 ) -> std::result::Result<(PyPath, std::fs::File), OsError> {
+    sibling_partial_with(destination, private, &mut pyos::random_hex12)
+}
+
+fn sibling_partial_with(
+    destination: &PyPath,
+    private: bool,
+    next_hex: &mut dyn FnMut() -> String,
+) -> std::result::Result<(PyPath, std::fs::File), OsError> {
     loop {
-        let name = format!("{}.{}.partial", destination.name(), pyos::random_hex12());
+        let name = format!("{}.{}.partial", destination.name(), next_hex());
         let candidate = destination.parent().join(&name);
         match pyos::create_new(&candidate.display(), private) {
             Ok(file) => return Ok((candidate, file)),
@@ -125,12 +133,15 @@ fn sibling_partial(
 }
 
 /// Text-mode UTF-8 bytes: newlines become the platform's line separator.
+#[cfg(windows)]
 fn text_bytes(text: &str) -> Vec<u8> {
-    if cfg!(windows) {
-        text.replace('\n', "\r\n").into_bytes()
-    } else {
-        text.as_bytes().to_vec()
-    }
+    text.replace('\n', "\r\n").into_bytes()
+}
+
+/// Text-mode UTF-8 bytes: newlines become the platform's line separator.
+#[cfg(not(windows))]
+fn text_bytes(text: &str) -> Vec<u8> {
+    text.as_bytes().to_vec()
 }
 
 /// Write, flush and fsync the whole text, as the Python stream did.
@@ -216,11 +227,16 @@ pub fn write_receipt(text: &str, path: &PyPath, inputs: &[PyPath]) -> Result<PyP
     pyos::makedirs(&path.parent())?;
     let (staged, file) = sibling_partial(&path, false)?;
     let published = write_all(file, &staged, text).and_then(|()| {
-        if cfg!(windows) {
+        #[cfg(windows)]
+        {
             // Windows rename fails if a destination appears after validation.
             let (from, to) = (staged.display(), path.display());
-            guarded(Step::Rename, &from, &to, || rename_new(&staged, &path))
-        } else {
+            guarded(Step::Rename, &from, &to, || {
+                pyos::rename_new(&staged.display(), &path.display())
+            })
+        }
+        #[cfg(not(windows))]
+        {
             // A hard link publishes the fully written inode with no clobber.
             link(&staged, &path)
         }
@@ -240,16 +256,6 @@ pub fn write_receipt(text: &str, path: &PyPath, inputs: &[PyPath]) -> Result<PyP
         }
     }
     Ok(path)
-}
-
-#[cfg(windows)]
-fn rename_new(src: &PyPath, dst: &PyPath) -> std::result::Result<(), OsError> {
-    pyos::rename_new(&src.display(), &dst.display())
-}
-
-#[cfg(not(windows))]
-fn rename_new(_src: &PyPath, _dst: &PyPath) -> std::result::Result<(), OsError> {
-    unreachable!("POSIX publishes receipts with a hard link")
 }
 
 /// Reject output paths that name an input, including symbolic and hard links.
@@ -356,4 +362,32 @@ pub fn write_queue_files(
         remove_quietly(path);
     }
     outcome.map(|()| (json_path, markdown_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_collision_backup_error_and_distinct_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = PyPath::new(&dir.path().to_string_lossy());
+        let dest = root.join("q.json");
+        std::fs::write(root.join("q.json.dup.partial").fs(), "taken").unwrap();
+        let mut names = ["dup", "fresh"].into_iter();
+        let (staged, _file) =
+            sibling_partial_with(&dest, false, &mut || names.next().unwrap().into()).unwrap();
+        assert_eq!(staged.name(), "q.json.fresh.partial");
+
+        let missing = root.join("no-such-dir").join("q.json");
+        assert!(sibling_partial_with(&missing, false, &mut || "x".into()).is_err());
+
+        let file = root.join("not-a-dir");
+        std::fs::write(file.fs(), "x").unwrap();
+        assert!(backup_existing(&file.join("child")).is_err());
+
+        let other = root.join("other.json");
+        std::fs::write(other.fs(), "y").unwrap();
+        assert!(refuse_input_overwrite(&[other], &[file]).is_ok());
+    }
 }

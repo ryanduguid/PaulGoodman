@@ -248,3 +248,17 @@ pub fn parse(xml: &str, id: &str, expected_name: &str) -> Result<Parsed, Exc> {
         items,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tas_no_element_and_empty_document_edge_cases() {
+        let empty = parse("", "tas-1", "Example Act").unwrap_err();
+        assert!(empty.to_string().contains("no XML document element"));
+        let xml = r#"<act id="tas-1" title="Example Act" first.valid.date="2026-01-01"><section secno="1"><headnote>One</headnote><para noformat="br" parano=" "><text>a</text></para><para noformat="plain" parano="2"><text>b</text></para></section></act>"#;
+        let parsed = parse(xml, "tas-1", "Example Act").unwrap();
+        assert!(parsed.rows[0].text.contains("2"));
+    }
+}

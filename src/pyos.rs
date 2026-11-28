@@ -170,22 +170,30 @@ pub fn exists(path: &str) -> bool {
 
 /// `Path(path).mkdir(parents=True, exist_ok=True)`.
 pub fn makedirs(path: &crate::pypath::PyPath) -> Result<(), OsError> {
+    makedirs_with(path, &mut |p| std::fs::create_dir(p), &isdir)
+}
+
+fn makedirs_with(
+    path: &crate::pypath::PyPath,
+    create: &mut dyn FnMut(&str) -> io::Result<()>,
+    is_dir: &dyn Fn(&str) -> bool,
+) -> Result<(), OsError> {
     let text = path.display();
-    match std::fs::create_dir(&text) {
+    match create(&text) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let parent = path.parent();
             if parent.display() == text {
                 return Err(OsError::new(&error, Some(&text), Style::Native));
             }
-            makedirs(&parent)?;
-            match std::fs::create_dir(&text) {
+            makedirs_with(&parent, create, is_dir)?;
+            match create(&text) {
                 Ok(()) => Ok(()),
-                Err(_) if isdir(&text) => Ok(()),
+                Err(_) if is_dir(&text) => Ok(()),
                 Err(error) => Err(OsError::new(&error, Some(&text), Style::Native)),
             }
         }
-        Err(_) if isdir(&text) => Ok(()),
+        Err(_) if is_dir(&text) => Ok(()),
         Err(error) => Err(OsError::new(&error, Some(&text), Style::Native)),
     }
 }
@@ -514,6 +522,16 @@ pub fn set_fixed_hex(value: Option<&str>) {
     FIXED_HEX.with(|f| *f.borrow_mut() = value.map(str::to_string));
 }
 
+fn getrandom_os_error(e: getrandom::Error) -> OsError {
+    // The operating system's own error, as os.urandom reports it, where
+    // there is one.
+    let error = e.raw_os_error().map_or_else(
+        || io::Error::other(e.to_string()),
+        io::Error::from_raw_os_error,
+    );
+    OsError::new(&error, None, Style::Errno)
+}
+
 /// `count` random lower-case hex digits, or the operating system's refusal
 /// to supply randomness, which `uuid.uuid4()` raises as an `OSError`.
 pub fn try_random_hex(count: usize) -> Result<String, OsError> {
@@ -528,15 +546,7 @@ pub fn try_random_hex(count: usize) -> Result<String, OsError> {
         return Ok(fixed);
     }
     let mut bytes = vec![0u8; count.div_ceil(2)];
-    getrandom::fill(&mut bytes).map_err(|e| {
-        // The operating system's own error, as os.urandom reports it, where
-        // there is one.
-        let error = e.raw_os_error().map_or_else(
-            || io::Error::other(e.to_string()),
-            io::Error::from_raw_os_error,
-        );
-        OsError::new(&error, None, Style::Errno)
-    })?;
+    getrandom::fill(&mut bytes).map_err(getrandom_os_error)?;
     let text: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     Ok(text[..count].to_string())
 }
@@ -850,4 +860,69 @@ pub fn rename_no_replace(_staging: &str, _output: &str) -> Result<(), OsError> {
     Err(unsupported(
         "no-replace directory publication is unavailable",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pypath::PyPath;
+
+    #[test]
+    fn oserror_class_maps_errno_and_winerror() {
+        let make = |text: &str| OsError {
+            kind: io::ErrorKind::Other,
+            text: text.into(),
+            strerror: String::new(),
+        };
+        for (text, class) in [
+            ("[Errno 20] Not a directory", "NotADirectoryError"),
+            ("[Errno 32] Broken pipe", "BrokenPipeError"),
+            ("[WinError 2] missing", "FileNotFoundError"),
+            ("[WinError 5] denied", "PermissionError"),
+            ("[WinError 80] exists", "FileExistsError"),
+            ("[WinError 267] not dir", "NotADirectoryError"),
+            ("[WinError 999] other", "OSError"),
+        ] {
+            assert_eq!(make(text).class(), class, "{text}");
+        }
+    }
+
+    #[test]
+    fn makedirs_random_and_scandir_edge_paths() {
+        let err = makedirs_with(
+            &PyPath::new(""),
+            &mut |_| Err(io::Error::from(io::ErrorKind::NotFound)),
+            &|_| false,
+        )
+        .unwrap_err();
+        assert_eq!(err.kind, io::ErrorKind::NotFound);
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().into_owned();
+        assert!(makedirs(&PyPath::new(&format!("{root}/sub/.."))).is_ok());
+        assert!(makedirs(&PyPath::new(&format!("{root}/sub2/{}", "x".repeat(300)))).is_err());
+
+        #[cfg(unix)]
+        {
+            let broken = format!("{root}/broken");
+            std::os::unix::fs::symlink(format!("{root}/absent"), &broken).unwrap();
+            assert!(makedirs_new(&format!("{broken}/child")).is_err());
+        }
+
+        let gr_err = getrandom_os_error(getrandom::Error::UNSUPPORTED);
+        assert!(!gr_err.text.is_empty());
+        set_fixed_hex(Some("deadbeef"));
+        assert_eq!(random_hex(8), "deadbeef");
+        set_fixed_hex(None);
+
+        let mut it = scandir(&root).unwrap();
+        while it.next().is_some() {}
+        assert!(it.next().is_none());
+
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            rename_no_replace("a\0b", "c").unwrap_err().kind,
+            io::ErrorKind::InvalidInput
+        );
+    }
 }

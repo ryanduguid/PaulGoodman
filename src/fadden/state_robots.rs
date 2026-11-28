@@ -138,3 +138,19 @@ fn matches(pattern: &str, path: &str) -> bool {
     }
     !anchored || rest.is_empty()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn robots_parser_and_wildcard_edge_cases() {
+        let rules = Robots::parse(
+            "Disallow: /orphan\nUser-agent: *\nSitemap: https://x/\nDisallow: /*.pdf$\nDisallow: /a*b*c\n",
+        );
+        assert!(!rules.allows("/x/doc.pdf"));
+        assert!(rules.allows("/x/doc.pdfx"));
+        assert!(!rules.allows("/a1b2c"));
+        assert!(rules.allows("/a1d"));
+    }
+}

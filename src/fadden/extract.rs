@@ -325,16 +325,17 @@ fn to_markdown(blocks: &[Block], meta: &Json, force_bare: bool) -> Result<Markdo
                 toc_titles.insert(t.to_lowercase());
             }
         }
-        let paras: Vec<usize> = blocks
+        let paras: Vec<(usize, &str, &str)> = blocks
             .iter()
             .enumerate()
-            .filter(|(_, b)| matches!(b, Block::P { text, .. } if !py::strip(text).is_empty()))
-            .map(|(i, _)| i)
+            .filter_map(|(i, b)| match b {
+                Block::P { cls, text, .. } if !py::strip(text).is_empty() => {
+                    Some((i, cls.as_str(), text.as_str()))
+                }
+                _ => None,
+            })
             .collect();
-        for (pos, &i) in paras.iter().enumerate().take(paras.len().saturating_sub(1)) {
-            let Block::P { cls, text, .. } = &blocks[i] else {
-                continue;
-            };
+        for (&(i, cls, text), &(_, next, _)) in paras.iter().zip(paras.iter().skip(1)) {
             if !py::strip(cls).is_empty() {
                 continue;
             }
@@ -343,9 +344,6 @@ fn to_markdown(blocks: &[Block], meta: &Json, force_bare: bool) -> Result<Markdo
             if !(2 < n && n <= 80) || t.ends_with(['.', ';', ',', ':']) {
                 continue;
             }
-            let Block::P { cls: next, .. } = &blocks[paras[pos + 1]] else {
-                continue;
-            };
             let base_n = first_token(next);
             if !base_n.is_empty() && !matches(crate::static_re!(SKIP_CLASS, I), base_n) {
                 classless_heads.insert(i);
@@ -364,12 +362,11 @@ fn to_markdown(blocks: &[Block], meta: &Json, force_bare: bool) -> Result<Markdo
     let mut vol = 0;
 
     for (bi, b) in blocks.iter().enumerate() {
-        if *b == Block::File {
-            vol += 1;
-            out.state.reset();
-            continue;
-        }
-        if !out.state.seen_body && !vol_heads[vol] && vol_gate[vol].is_some_and(|gate| bi >= gate) {
+        if *b != Block::File
+            && !out.state.seen_body
+            && !vol_heads[vol]
+            && vol_gate[vol].is_some_and(|gate| bi >= gate)
+        {
             out.state.seen_body = true;
             let mut container = str_points(getitem(meta, "name")?);
             container.extend(points(&format!(" - volume {vol}")));
@@ -379,6 +376,11 @@ fn to_markdown(blocks: &[Block], meta: &Json, force_bare: bool) -> Result<Markdo
         }
 
         let (cls, text, sectno) = match b {
+            Block::File => {
+                vol += 1;
+                out.state.reset();
+                continue;
+            }
             Block::Img { alt } => {
                 if out.state.seen_body || out.state.in_endnotes || out.state.prebody_open {
                     out.emit(format!("> Figure: {alt}"));
@@ -395,7 +397,6 @@ fn to_markdown(blocks: &[Block], meta: &Json, force_bare: bool) -> Result<Markdo
                 continue;
             }
             Block::P { cls, text, sectno } => (cls, text, *sectno),
-            Block::File => unreachable!(),
         };
         let base = if cls.is_empty() {
             ""
@@ -638,7 +639,7 @@ fn check_chunks_complete(lines: &[String], chunks: &[Row]) -> Result<(), Exc> {
 }
 
 /// `table_split(body, name)`.
-fn table_split(body: &str, name: &Json) -> Result<Vec<Row>, Exc> {
+fn table_split(body: &str, name: &Json) -> Vec<Row> {
     enum Seg {
         Prose(Vec<String>),
         Table(Vec<String>),
@@ -676,7 +677,7 @@ fn table_split(body: &str, name: &Json) -> Result<Vec<Row>, Exc> {
         })
         .collect();
     if tables.len() < 3 {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     let t_words: usize = tables.iter().flat_map(|t| t.iter()).map(|l| words(l)).sum();
     let p_words: usize = segs
@@ -689,7 +690,7 @@ fn table_split(body: &str, name: &Json) -> Result<Vec<Row>, Exc> {
         .map(|l| words(l))
         .sum();
     if t_words < 2 * p_words {
-        return Ok(Vec::new());
+        return Vec::new();
     }
 
     let name = str_points(name);
@@ -764,8 +765,8 @@ fn table_split(body: &str, name: &Json) -> Result<Vec<Row>, Exc> {
             Seg::Prose(v) | Seg::Table(v) => v.iter().cloned(),
         })
         .collect();
-    check_chunks_complete(&lines, &out)?;
-    Ok(out)
+    check_chunks_complete(&lines, &out).expect("table_split preserves every line");
+    out
 }
 
 fn json_str(text: &[u32]) -> Json {
@@ -786,7 +787,8 @@ fn write_chunks(path: &str, chunks: &[Vec<u32>]) -> Result<(), Exc> {
         if chunk.iter().all(|&cp| char::from_u32(cp).is_some()) {
             let mut utf8 = [0u8; 4];
             for c in chunk.iter().filter_map(|&cp| char::from_u32(cp)) {
-                if c == '\n' && cfg!(windows) {
+                #[cfg(windows)]
+                if c == '\n' {
                     bytes.push(b'\r');
                 }
                 bytes.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
@@ -795,7 +797,8 @@ fn write_chunks(path: &str, chunks: &[Vec<u32>]) -> Result<(), Exc> {
         }
         let mut text = Vec::with_capacity(chunk.len());
         for &cp in chunk {
-            if cp == 0x0a && cfg!(windows) {
+            #[cfg(windows)]
+            if cp == 0x0a {
                 text.push(0x0d);
             }
             text.push(cp);
@@ -890,6 +893,17 @@ pub(crate) fn local_date(stamp: i64) -> Result<py::Date, Exc> {
 /// Only regular files are read, through a fixed buffer and no further than the
 /// compressed budget, and the threads are detached: one stalled on a file
 /// cannot hold the stage, which never waits for them.
+fn warm_file(path: &str, buffer: &mut [u8]) {
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return;
+    }
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
+    let mut file = file.take(epub::MAX_EPUB_BYTES + 1);
+    while matches!(file.read(buffer), Ok(n) if n > 0) {}
+}
+
 fn warm_up(paths: Vec<String>) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let paths = std::sync::Arc::new(paths);
@@ -899,14 +913,7 @@ fn warm_up(paths: Vec<String>) {
         std::thread::spawn(move || {
             let mut buffer = vec![0u8; 1 << 16];
             while let Some(path) = paths.get(next.fetch_add(1, Ordering::Relaxed)) {
-                if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
-                    continue;
-                }
-                let Ok(file) = std::fs::File::open(path) else {
-                    continue;
-                };
-                let mut file = file.take(epub::MAX_EPUB_BYTES + 1);
-                while matches!(file.read(&mut buffer), Ok(n) if n > 0) {}
+                warm_file(path, &mut buffer);
             }
         });
     }
@@ -948,16 +955,15 @@ fn parse_title(
     }
     let fetched = if let Some(day) = retrieved {
         day.to_string()
-    } else if truthy(&fetched_at) {
-        let stamp = match fetched_at.as_ref() {
-            Some(Json::Str(s)) => s.code_points(),
-            Some(other) => {
+    } else if let Some(val) = fetched_at.as_ref().filter(|v| v.truthy()) {
+        let stamp = match val {
+            Json::Str(s) => s.code_points(),
+            other => {
                 return Err(Exc::Attribute(format!(
                     "'{}' object has no attribute 'replace'",
                     pyvalue::type_name(other)
                 )));
             }
-            None => unreachable!(),
         };
         let mut replaced = Vec::with_capacity(stamp.len() + 8);
         for cp in stamp {
@@ -1044,10 +1050,8 @@ fn write_markdown(
     let d = child(md_root, &[rid])?;
     let attr = attribution(fetched);
     pyos::makedirs(&PyPath::new(&d))?;
-    write_chunks(
-        &child(&d, &[&format!("{rid}.md")])?,
-        std::slice::from_ref(&md.md),
-    )?;
+    let md_path = child(&d, &[&format!("{rid}.md")])?;
+    write_chunks(&md_path, std::slice::from_ref(&md.md))?;
     let name = getitem(entry, "name")?;
     if !md.endnotes.is_empty() {
         let title = match name {
@@ -1225,12 +1229,12 @@ pub fn run(scratch: &str, retrieved: Option<&str>, run: &mut Run) -> Result<(), 
         });
         let (rid, src) = match checked {
             Ok(pair) => pair,
-            Err(error @ (Exc::Key(_) | Exc::Value { .. })) => {
+            // planned() and child() on a JSON object only fail with Exc::Key or Exc::Value.
+            Err(error) => {
                 let id = a.get("id").cloned().unwrap_or(Json::str("?"));
                 failures.push((pyvalue::str_for_stderr(&id), error.to_string()));
                 continue;
             }
-            Err(other) => return Err(other),
         };
         let mut entry = a.clone();
         set_field(&mut entry, "id", Json::str(&rid));
@@ -1245,10 +1249,7 @@ pub fn run(scratch: &str, retrieved: Option<&str>, run: &mut Run) -> Result<(), 
         };
 
         let d = write_markdown(&md_root, &entry, &rid, &fetched, &md)?;
-        let body_points = match find(&md.md, &points("\n---\n")) {
-            Some(at) if md.md.starts_with(&points("---")) => md.md[at + 5..].to_vec(),
-            _ => md.md.clone(),
-        };
+        let body_points = strip_frontmatter(&md.md);
         let body = pyvalue::points_lossy(&body_points);
         let mut emitted: Vec<Row> = md
             .sections
@@ -1259,16 +1260,9 @@ pub fn run(scratch: &str, retrieved: Option<&str>, run: &mut Run) -> Result<(), 
         let (mut whole, mut tabled) = (false, false);
         if !emitted.iter().any(|s| !s.emit_fallback) {
             let name = getitem(&entry, "name")?;
-            match table_split(&body, name) {
-                Ok(chunks) => {
-                    tabled = !chunks.is_empty();
-                    emitted = chunks;
-                }
-                Err(error) => {
-                    record_failure(run, &mut failures, &rid, &error)?;
-                    continue;
-                }
-            }
+            let chunks = table_split(&body, name);
+            tabled = !chunks.is_empty();
+            emitted = chunks;
         }
         if emitted.is_empty() {
             whole = true;
@@ -1335,14 +1329,22 @@ pub fn run(scratch: &str, retrieved: Option<&str>, run: &mut Run) -> Result<(), 
             ids.join(", ")
         )));
     }
+    let out_path = pypath::join(scratch, "manifest_md.json");
     write_json_atomic(
-        &pypath::join(scratch, "manifest_md.json"),
+        &out_path,
         &Json::Array(out_manifest.clone()),
         Some(1),
         MANIFEST_DEPTH,
     )?;
     run.print(&format!("\nEXTRACT DONE: {} acts", out_manifest.len()));
     Ok(())
+}
+
+fn strip_frontmatter(md: &[u32]) -> Vec<u32> {
+    match find(md, &points("\n---\n")) {
+        Some(at) if md.starts_with(&points("---")) => md[at + 5..].to_vec(),
+        _ => md.to_vec(),
+    }
 }
 
 fn find(haystack: &[u32], needle: &[u32]) -> Option<usize> {
@@ -1437,7 +1439,7 @@ mod tests {
     fn table_runs_split_with_their_captions() {
         let table = "| a | b |\n|---|---|\n| 1 | 2 |";
         let body = format!("Lead.\n{table}\nCAP\n{table}\nMore.\n{table}\nEnd.");
-        let rows = table_split(&body, &Json::str("Act")).unwrap();
+        let rows = table_split(&body, &Json::str("Act"));
         let kinds: Vec<&str> = rows.iter().map(|r| r.kind).collect();
         assert_eq!(
             kinds,
@@ -1610,11 +1612,7 @@ mod tests {
     fn table_split_needs_enough_short_tables() {
         let t = table_lines();
         let two_tables = [t.clone(), vec!["between"], t.clone()].concat().join("\n");
-        assert!(
-            table_split(&two_tables, &Json::str("Title"))
-                .unwrap()
-                .is_empty()
-        );
+        assert!(table_split(&two_tables, &Json::str("Title")).is_empty());
         let words = "word ".repeat(60);
         let wordy = [
             vec![words.as_str()],
@@ -1626,7 +1624,7 @@ mod tests {
         ]
         .concat()
         .join("\n");
-        assert!(table_split(&wordy, &Json::str("Title")).unwrap().is_empty());
+        assert!(table_split(&wordy, &Json::str("Title")).is_empty());
     }
 
     #[test]
@@ -1638,7 +1636,7 @@ mod tests {
         lines.extend(vec!["| B | 2 |"; 40]);
         lines.extend(["", "| N | M |", "|---|---|"]);
         lines.extend(vec!["| C | 3 |"; 40]);
-        let chunks = table_split(&lines.join("\n"), &Json::str("Title")).unwrap();
+        let chunks = table_split(&lines.join("\n"), &Json::str("Title"));
         let headings: Vec<Json> = chunks.iter().map(|c| c.heading.clone()).collect();
         assert_eq!(
             headings,
@@ -1687,7 +1685,7 @@ mod tests {
         }
         lines.push("Signed by the Chief Executive Officer.".into());
         let body = lines.join("\n");
-        let chunks = table_split(&body, &Json::str("TPB Terminations")).unwrap();
+        let chunks = table_split(&body, &Json::str("TPB Terminations"));
         assert!(!chunks.is_empty());
         let kept: Vec<&str> = chunks.iter().map(|c| c.text[0].as_str()).collect();
         let kept = kept.join("\n");
@@ -1802,14 +1800,11 @@ mod tests {
 
         // test_a_volume_with_no_boundary_blocks_extraction, and
         // test_audit_regressions.py::test_unplaced_volume_fails_instead_of_disappearing.
-        match parse_volumes(&[VOLUME_1, VOLUME_2_BARE]) {
-            Err(Exc::Value {
-                class: "ValueError",
-                message,
-            }) => assert!(message.contains("body boundary"), "{message}"),
-            Err(other) => panic!("expected a ValueError, got {other:?}"),
-            Ok(_) => panic!("expected a ValueError"),
-        }
+        let err = parse_volumes(&[VOLUME_1, VOLUME_2_BARE]).err().unwrap();
+        assert!(
+            matches!(&err, Exc::Value { class: "ValueError", message } if message.contains("body boundary")),
+            "{err:?}"
+        );
 
         // test_a_running_header_is_not_a_volume_body_boundary.
         let text = md_text(&parse_volumes(&[VOLUME_1, VOLUME_2_HEADED]).unwrap());
@@ -1942,5 +1937,125 @@ mod tests {
             let error = yaml_scalar(Some(&value)).unwrap_err();
             assert_eq!(error.class(), "ValueError", "{value:?}");
         }
+    }
+
+    #[test]
+    fn bare_dateish_write_chunks_mtime_local_date_and_strip_edges() {
+        let meta = Json::obj([
+            ("id", Json::str("C2099A00001")),
+            ("name", Json::str("Act")),
+            ("retrieved", Json::str("2026-01-01")),
+        ]);
+        let blocks = vec![Block::P {
+            cls: String::new(),
+            text: "1 January 2025".into(),
+            sectno: false,
+        }];
+        let md = to_markdown(&blocks, &meta, true).unwrap();
+        assert_eq!(md.sections.len(), 1);
+        assert_eq!(md.sections[0].kind, "introductory");
+        assert_eq!(strip_frontmatter(&points("plain")), points("plain"));
+        let dir = tempfile::tempdir().unwrap();
+        let bad_utf = dir.path().join("bad.md");
+        assert!(matches!(
+            write_chunks(bad_utf.to_str().unwrap(), &[vec![0x0a, 0xD800]]),
+            Err(Exc::UnicodeEncode(_))
+        ));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let f = dir.path().join("old.txt");
+            std::fs::write(&f, "x").unwrap();
+            let cpath = std::ffi::CString::new(f.to_str().unwrap()).unwrap();
+            for (sec, nsec, expect_year) in [(-86_400, 0, 1969), (-86_400, 500_000_000, 1969)] {
+                let ts = [libc::timespec {
+                    tv_sec: sec,
+                    tv_nsec: nsec,
+                }; 2];
+                assert_eq!(
+                    unsafe { libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), ts.as_ptr(), 0) },
+                    0
+                );
+                assert!(mtime_date(f.to_str().unwrap()).unwrap().year <= expect_year + 1);
+            }
+            assert!(matches!(local_date(i64::MAX), Err(Exc::Os(_))));
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let mut buf = [0u8; 16];
+            warm_file(f.to_str().unwrap(), &mut buf);
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+
+    #[test]
+    fn parse_title_write_markdown_and_run_cover_error_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut entry = Json::obj([
+            ("id", Json::str("C2099A00001")),
+            ("name", Json::Int(1.into())),
+            ("fetched_at", Json::Int(1.into())),
+        ]);
+        let mut r = Run::default();
+        assert!(matches!(
+            parse_title(&mut entry, "C2099A00001", "x.epub", None, &mut r),
+            Err(Exc::Attribute(_))
+        ));
+        let md = Markdown {
+            md: points("---\n---\nbody"),
+            sections: vec![],
+            endnotes: "note".into(),
+            long_title: None,
+        };
+        let root = dir.path().to_str().unwrap();
+        assert!(matches!(
+            write_markdown(root, &entry, "C2099A00001", "2026-01-01", &md),
+            Err(Exc::Type(_))
+        ));
+        let scratch = dir.path().join("build").join("fadden");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(scratch.join("extract.py"), "").unwrap();
+        std::fs::write(
+            scratch.join("manifest_raw.json"),
+            r#"[{"id":1,"epub":"x.epub"}]"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            run(scratch.to_str().unwrap(), Some("2026-01-01"), &mut r),
+            Err(Exc::Runtime(_))
+        ));
+        let eleven: Vec<String> = (1..=11)
+            .map(|i| format!(r#"{{"id":"C2099A{i:05}","name":"A","epub":"C2099A{i:05}.epub"}}"#))
+            .collect();
+        std::fs::write(
+            scratch.join("manifest_raw.json"),
+            format!("[{}]", eleven.join(",")),
+        )
+        .unwrap();
+        let err = run(scratch.to_str().unwrap(), Some("2026-01-01"), &mut r).unwrap_err();
+        assert!(err.to_string().contains("(and 1 more)"), "{err}");
+    }
+
+    #[test]
+    fn run_writes_table_block_granularity_when_table_split_chunks_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().join("build").join("fadden");
+        let epubs = dir.path().join("epub");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::create_dir_all(&epubs).unwrap();
+        std::fs::write(scratch.join("extract.py"), "").unwrap();
+        let rows = "<tr><td>1</td><td>2</td></tr>".repeat(40);
+        let tbl = format!("<table><tr><td>A</td><td>B</td></tr>{rows}</table>");
+        let xhtml =
+            format!("<html><body><p>pre</p>{tbl}<p>mid</p>{tbl}<p>end</p>{tbl}</body></html>");
+        let zip = stored_zip(&[("document_1.xhtml".into(), &xhtml)]);
+        std::fs::write(epubs.join("C2099A00001.epub"), &zip).unwrap();
+        std::fs::write(
+            scratch.join("manifest_raw.json"),
+            r#"[{"id":"C2099A00001","name":"Act","epub":"C2099A00001.epub"}]"#,
+        )
+        .unwrap();
+        let mut r = Run::default();
+        run(scratch.to_str().unwrap(), Some("2026-01-01"), &mut r).unwrap();
+        let manifest = std::fs::read_to_string(scratch.join("manifest_md.json")).unwrap();
+        assert!(manifest.contains("table_block"), "{manifest}");
     }
 }

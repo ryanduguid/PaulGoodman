@@ -88,11 +88,9 @@ fn cp437(bytes: &[u8]) -> String {
 /// `_sanitize_filename`: cut at the first NUL; Windows maps `\` to `/`.
 fn sanitize(name: &str) -> String {
     let name = name.split('\0').next().unwrap_or_default();
-    if cfg!(windows) {
-        name.replace('\\', "/")
-    } else {
-        name.to_string()
-    }
+    #[cfg(windows)]
+    let name = name.replace('\\', "/");
+    name.to_string()
 }
 
 /// `bytes[start:end]` with Python's clamping.
@@ -303,9 +301,6 @@ fn admit(members: &[Member], start_dir: u64) -> Result<HashMap<u64, u64>, Exc> {
     if names.len() != members.len() {
         return Err(download("EPUB contains duplicate ZIP member names"));
     }
-    if members.len() > MAX_EPUB_MEMBERS {
-        return Err(download("EPUB exceeds the member count budget"));
-    }
     if members.iter().any(|m| m.file_size > MAX_EPUB_MEMBER_BYTES) {
         return Err(download("EPUB exceeds the uncompressed member budget"));
     }
@@ -503,33 +498,4 @@ pub fn valid_zip_bytes(data: Vec<u8>) -> bool {
         .members
         .iter()
         .all(|member| archive.read_inner(member, false).is_ok())
-}
-
-/// Fuzz invariant: an archive from arbitrary bytes is admitted or refused
-/// without a panic, and every member read back has its declared length and
-/// CRC-32. The unit tests replay seeds through this.
-#[doc(hidden)]
-pub fn check_read(data: &[u8]) -> Result<(), String> {
-    let Ok(epub) = from_bytes(data.to_vec()) else {
-        return Ok(());
-    };
-    for name in epub.namelist() {
-        let Ok(content) = epub.read(name) else {
-            continue;
-        };
-        // `read` returns the first member with the name, as zipfile does.
-        let Some(info) = epub.members.iter().find(|m| m.filename == name) else {
-            return Err(format!("{name:?} is listed but has no member"));
-        };
-        if content.len() as u64 != info.file_size || crc32(&content, 0) != info.crc {
-            return Err(format!(
-                "{name:?} read {} bytes with CRC {:08x}; declared {} with {:08x}",
-                content.len(),
-                crc32(&content, 0),
-                info.file_size,
-                info.crc
-            ));
-        }
-    }
-    Ok(())
 }

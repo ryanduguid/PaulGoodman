@@ -294,3 +294,13 @@ pub fn grade(quote: &str, text: &str) -> Grade {
     }
     result("partial", Some(longest))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_quote_never_holds() {
+        assert!(!holds("abc", ""));
+    }
+}

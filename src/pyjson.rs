@@ -319,10 +319,8 @@ fn decode(text: &str, reject_duplicates: bool) -> Result<Json, DecodeError> {
                     idx = skip(idx);
                     if idx < len && s[idx] == b']' {
                         idx += 1;
-                        let Some(Frame::Array(items)) = stack.pop() else {
-                            unreachable!()
-                        };
-                        value = Json::Array(items);
+                        value = Json::Array(std::mem::take(items));
+                        stack.pop();
                         continue;
                     }
                     if idx >= len || s[idx] != b',' {
@@ -344,9 +342,8 @@ fn decode(text: &str, reject_duplicates: bool) -> Result<Json, DecodeError> {
                     idx = skip(idx);
                     if idx < len && s[idx] == b'}' {
                         idx += 1;
-                        let Some(Frame::Object(pairs, _)) = stack.pop() else {
-                            unreachable!()
-                        };
+                        let pairs = std::mem::take(pairs);
+                        stack.pop();
                         let mut keys = std::collections::HashMap::with_capacity(pairs.len());
                         let mut unique: Vec<(PyStr, Json)> = Vec::with_capacity(pairs.len());
                         for (k, v) in pairs {
@@ -585,15 +582,22 @@ pub fn check_round_trip(data: &[u8]) -> Result<(), String> {
             .collect::<Result<_, _>>()?;
         let again =
             loads_standard(&once).map_err(|e| format!("{once:?} does not decode: {e:?}"))?;
-        let twice: Vec<u32> = crate::pyvalue::dumps_with(&again, None, true, false);
-        if twice
-            .into_iter()
-            .filter_map(char::from_u32)
-            .collect::<String>()
-            != once
-        {
-            return Err(format!("{once:?} changed in a round trip"));
-        }
+        let twice = crate::pyvalue::dumps_with(&again, None, true, false);
+        same_text(&once, &twice)?;
+    }
+    Ok(())
+}
+
+/// `twice`, as text, is `once`.
+fn same_text(once: &str, twice: &[u32]) -> Result<(), String> {
+    if twice
+        .iter()
+        .copied()
+        .filter_map(char::from_u32)
+        .collect::<String>()
+        != once
+    {
+        return Err(format!("{once:?} changed in a round trip"));
     }
     Ok(())
 }
@@ -1092,5 +1096,120 @@ mod tests {
             loads(r#""\ud83d\ud83d""#).unwrap(),
             Json::Str(PyStr::Lone(vec![0xd83d, 0xd83d]))
         );
+    }
+
+    /// CPython 3.15's `json.loads(text)` refusals.
+    #[test]
+    fn syntax_errors_match_cpython() {
+        for (text, message) in [
+            (
+                "\u{feff}1",
+                "Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)",
+            ),
+            (
+                "{\"a\" 1}",
+                "Expecting ':' delimiter: line 1 column 6 (char 5)",
+            ),
+            ("[1 2]", "Expecting ',' delimiter: line 1 column 4 (char 3)"),
+            (
+                "[1,]",
+                "Illegal trailing comma before end of array: line 1 column 3 (char 2)",
+            ),
+            (
+                "{\"a\":1 \"b\":2}",
+                "Expecting ',' delimiter: line 1 column 8 (char 7)",
+            ),
+            ("-", "Expecting value: line 1 column 1 (char 0)"),
+            ("1e", "Extra data: line 1 column 2 (char 1)"),
+            ("1.5e+", "Extra data: line 1 column 4 (char 3)"),
+            (
+                "\"\u{1}\"",
+                "Invalid control character at: line 1 column 2 (char 1)",
+            ),
+        ] {
+            assert_eq!(err(text), DecodeError::Invalid(message.into()), "{text:?}");
+        }
+        // CPython raises RecursionError; MAX_DEPTH stands in for its stack limit.
+        assert_eq!(
+            err(&"{\"a\":".repeat(MAX_DEPTH + 1)),
+            DecodeError::Recursion("object")
+        );
+        assert_eq!(loads(r#""\b\f\r""#).unwrap(), Json::str("\u{8}\u{c}\r"));
+    }
+
+    /// `json.loads(bytes)` in each encoding `json.detect_encoding` picks, as
+    /// CPython 3.15 decodes it (`json.dumps(..., sort_keys=True,
+    /// separators=(",", ":"))` of the value, or None for UnicodeDecodeError).
+    #[test]
+    fn bytes_are_decoded_in_the_detected_encoding() {
+        let decoded = |hex: &str| {
+            let data: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect();
+            match loads_bytes(&data) {
+                Ok(value) => Ok(dumps(&value, Layout::Canonical)),
+                Err(error) => Err(error),
+            }
+        };
+        for (hex, expected) in [
+            ("efbbbf31", "1"),
+            ("0000feff000000220000006100000022", r#""a""#),
+            ("fffe0000220000006100000022000000", r#""a""#),
+            ("feff005b0031005d", "[1]"),
+            ("fffe5b0031005d00", "[1]"),
+            ("005b0031005d", "[1]"),
+            ("00000031", "1"),
+            ("5b0031005d00", "[1]"),
+            ("31000000", "1"),
+            ("0031", "1"),
+            ("3100", "1"),
+            ("feff0022d83dde000022", r#""\ud83d\ude00""#),
+            ("feff0022d8000022", r#""\ud800""#),
+        ] {
+            assert_eq!(decoded(hex), Ok(expected.to_string()), "{hex}");
+        }
+        for hex in ["feff00", "0000003100", "fffe000000001100", "22ff22"] {
+            assert_eq!(decoded(hex), Err(None), "{hex}");
+        }
+        assert_eq!(
+            decoded("feff00220022d800"),
+            Err(Some(DecodeError::Invalid(
+                "Extra data: line 1 column 3 (char 2)".into()
+            )))
+        );
+    }
+
+    /// CPython 3.15: `json.dumps(["\r\t\b\f", inf, -inf], sort_keys=True,
+    /// separators=(",", ":"))`, `bool("\ud800")` and `dict({"a": 1}, b=2)`.
+    #[test]
+    fn dumps_truthiness_and_set_field_match_cpython() {
+        let value = Json::Array(vec![
+            Json::str("\r\t\u{8}\u{c}"),
+            Json::Float(f64::INFINITY),
+            Json::Float(f64::NEG_INFINITY),
+        ]);
+        assert_eq!(
+            dumps(&value, Layout::Canonical),
+            r#"["\r\t\b\f",Infinity,-Infinity]"#
+        );
+        let lone = PyStr::Lone(vec![0xd800]);
+        assert_eq!(lone.as_str(), None);
+        assert!(Json::Str(lone).truthy());
+        let mut record = Json::Object(vec![(PyStr::Text("a".into()), Json::Int(1.into()))]);
+        set_field(&mut record, "b", Json::Int(2.into()));
+        let mut not_a_record = Json::Null;
+        set_field(&mut not_a_record, "b", Json::Null);
+        assert_eq!(not_a_record, Json::Null);
+        assert_eq!(dumps(&record, Layout::Canonical), r#"{"a":1,"b":2}"#);
+    }
+
+    #[test]
+    fn the_round_trip_check_skips_bytes_that_are_not_utf8() {
+        assert_eq!(
+            same_text("[1]", &[0x5b, 0x32, 0x5d]),
+            Err(r#""[1]" changed in a round trip"#.into())
+        );
+        assert_eq!(check_round_trip(b"\"\xff\""), Ok(()));
     }
 }

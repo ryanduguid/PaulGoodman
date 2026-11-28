@@ -394,10 +394,8 @@ pub fn build_publication_bundles(
             publisher_identifier(format!("bundle-frl-{identity}-r1"), "generated bundle_id")?;
         let development_id =
             publisher_identifier(format!("dev-frl-{identity}"), "generated development_id")?;
-        let source_id = publisher_identifier(
-            format!("frl-{}", document_text.to_ascii_lowercase()),
-            "generated source_id",
-        )?;
+        let source_name = format!("frl-{}", document_text.to_ascii_lowercase());
+        let source_id = publisher_identifier(source_name, "generated source_id")?;
         if bundles.iter().any(|(id, _)| *id == bundle_id) {
             return Err(bundle_error(
                 "observations produce duplicate bundle identities.",
@@ -950,7 +948,7 @@ pub fn export_publication_bundles(
     let staging_text = staging.display();
     let mut created_staging = false;
     let outcome = (|| -> Result<(), Exc> {
-        let written = (|| -> Result<(), Exc> {
+        let written = (|| -> Result<(), OsError> {
             mkdir_private(&staging_text)?;
             created_staging = true;
             for bundle in &bundles {
@@ -959,15 +957,16 @@ pub fn export_publication_bundles(
                     .and_then(Json::as_str)
                     .unwrap_or_default();
                 let destination = staging.join(&format!("{id}.json")).display();
-                write_bundle(&destination, &bundle_bytes(bundle)?)?;
+                let bytes =
+                    bundle_bytes(bundle).expect("projected bundles hold no lone surrogates");
+                write_bundle(&destination, &bytes)?;
             }
             Ok(())
         })();
-        written.map_err(|error| match error {
-            Exc::Os(error) => bundle_error(format!(
+        written.map_err(|error| {
+            bundle_error(format!(
                 "publication bundle output could not be written: {error}."
-            )),
-            other => other,
+            ))
         })?;
         require_absent(&output_text)?;
         promote_no_replace(&staging_text, &output_text).map_err(|error| {
@@ -1027,5 +1026,190 @@ pub fn main(argv: &[String], run: &mut Run) -> Result<i32, Exit> {
             message,
         }) => Err(parser.error(&message)),
         Err(error) => Ok(run.uncaught(&error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helpers_cover_surrogates_metadata_headers_and_errors() {
+        assert!(!safe_name(&[0xD800], 10, false, 0));
+        assert!(!safe_name(&[], 10, false, 0));
+        assert!(trim(" \t\n ").is_empty());
+        let bad = Json::obj([("k", Json::Str(PyStr::Lone(vec![0xD800])))]);
+        assert!(matches!(bundle_bytes(&bad), Err(Exc::UnicodeEncode(_))));
+        let os = OsError::new(
+            &std::io::Error::from(std::io::ErrorKind::NotFound),
+            None,
+            Style::Errno,
+        );
+        assert!(matches!(
+            monitor_error(crate::radar::Error::Os(os)),
+            Exc::Os(_)
+        ));
+        assert_eq!(
+            metadata_header("Version: 1.0\r\n .1\r\n\r\n", "version").as_deref(),
+            Some("1.0\r\n .1")
+        );
+        assert_eq!(metadata_header(" leading\nVersion: 1\n", "version"), None);
+        assert_eq!(metadata_header("NoColon\nVersion: 1\n", "version"), None);
+        assert_eq!(metadata_header("Bad\x01: 1\nVersion: 1\n", "version"), None);
+    }
+
+    #[test]
+    fn installed_version_producer_version_and_require_absent_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope");
+        assert_eq!(installed_version(missing.to_str().unwrap()).unwrap(), None);
+        let site = dir.path().join("site");
+        std::fs::create_dir_all(site.join("other.dist-info")).unwrap();
+        std::fs::write(site.join("foo.txt"), "x").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let _ = std::fs::write(site.join(std::ffi::OsString::from_vec(vec![0xff])), "x");
+        }
+        let egg = site.join("tax_radar_au-0.9.egg-info");
+        std::fs::create_dir_all(&egg).unwrap();
+        std::fs::write(egg.join("PKG-INFO"), "Version: 0.9.0\n").unwrap();
+        assert_eq!(
+            installed_version(site.to_str().unwrap()).unwrap(),
+            Some(Json::str("0.9.0"))
+        );
+        std::fs::write(site.join("VERSION"), [0xffu8]).unwrap();
+        VERSION_DIR.with(|d| *d.borrow_mut() = Some(site.to_str().unwrap().to_string()));
+        let ver_err = producer_version();
+        VERSION_DIR.with(|d| *d.borrow_mut() = None);
+        assert!(matches!(
+            ver_err,
+            Err(Exc::Value {
+                class: "UnicodeDecodeError",
+                ..
+            })
+        ));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = dir.path().join("locked");
+            std::fs::create_dir(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let err = require_absent(locked.join("child").to_str().unwrap());
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(matches!(
+                err,
+                Err(Exc::Value {
+                    class: CLASS,
+                    message
+                }) if message.contains("cannot be inspected")
+            ));
+        }
+    }
+
+    fn sample_obs_v3(expected: Vec<Json>, items: Vec<Json>) -> Json {
+        Json::obj([
+            (
+                "schema_version",
+                Json::str("au-tax-register-observation.v3"),
+            ),
+            ("mode", Json::str("synthetic")),
+            ("complete", Json::Bool(true)),
+            ("observed_at", Json::str("2026-01-01T00:00:00Z")),
+            ("expected_register_ids", Json::Array(expected)),
+            ("observations", Json::Array(items)),
+        ])
+    }
+
+    fn sample_superseded(doc: &str, sha: &str) -> Json {
+        Json::obj([
+            ("register_id", Json::str("C2099A00001")),
+            ("state", Json::str("SUPERSEDED")),
+            ("collection", Json::str("Acts")),
+            ("observed_register_document_id", Json::str(doc)),
+            ("observed_compilation_number", Json::str("C2")),
+            ("observed_compilation_date", Json::str("2026-02-01")),
+            ("content_sha256", Json::str(sha)),
+            ("content_kind", Json::str("text")),
+            ("content_media_type", Json::str("text/html")),
+        ])
+    }
+
+    #[test]
+    fn build_publication_bundles_validates_ids_and_collections() {
+        let sha = format!("sha256:{}", "a".repeat(64));
+        let ver = Json::str("0.9.0");
+        let base = |titles: Vec<Json>| Json::obj([("titles", Json::Array(titles))]);
+        let bad_id = base(vec![Json::obj([("register_id", Json::str("bad/id"))])]);
+        assert!(
+            build_publication_bundles(&bad_id, &sample_obs_v3(vec![], vec![]), &sha, &sha, &ver)
+                .is_err()
+        );
+        let ok_id = base(vec![Json::obj([("register_id", Json::str("C2099A00001"))])]);
+        let bad_exp = sample_obs_v3(vec![Json::Int(1.into())], vec![]);
+        assert!(build_publication_bundles(&ok_id, &bad_exp, &sha, &sha, &ver).is_err());
+        let t_nocol = Json::obj([
+            ("register_id", Json::str("C2099A00001")),
+            ("collection", Json::Null),
+        ]);
+        let obs = sample_obs_v3(
+            vec![Json::str("C2099A00001")],
+            vec![sample_superseded("C2099C00002", &sha)],
+        );
+        assert!(build_publication_bundles(&base(vec![t_nocol]), &obs, &sha, &sha, &ver).is_err());
+    }
+
+    #[test]
+    fn build_publication_bundles_validates_doc_ids_and_dates() {
+        let sha = format!("sha256:{}", "a".repeat(64));
+        let ver = Json::str("0.9.0");
+        let t_ok = Json::obj([
+            ("register_id", Json::str("C2099A00001")),
+            ("collection", Json::str("Acts")),
+            ("name", Json::str("Act")),
+            ("compilation_number", Json::str("C1")),
+            ("compilation_date", Json::str("not-a-date")),
+        ]);
+        let base = Json::obj([("titles", Json::Array(vec![t_ok]))]);
+        let bad_doc = sample_obs_v3(
+            vec![Json::str("C2099A00001")],
+            vec![sample_superseded("bad/doc", &sha)],
+        );
+        assert!(build_publication_bundles(&base, &bad_doc, &sha, &sha, &ver).is_err());
+        let bad_date = sample_obs_v3(
+            vec![Json::str("C2099A00001")],
+            vec![sample_superseded("C2099C00002", &sha)],
+        );
+        assert!(build_publication_bundles(&base, &bad_date, &sha, &sha, &ver).is_err());
+    }
+
+    #[test]
+    fn export_and_main_propagate_decode_error_from_version_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("sources.json");
+        let facts = dir.path().join("facts.json");
+        let out = dir.path().join("out");
+        let sha = format!("sha256:{}", "a".repeat(64));
+        std::fs::write(
+            &src,
+            r#"{"corpus":"au-tax","retrieved":"2026-01-01","source":"Federal Register of Legislation","source_api":"https://api.prod.legislation.gov.au/v1","titles":[{"register_id":"C2099A00001","name":"Act","collection":"Act","compilation_number":"C1","compilation_date":"2025-01-01","version_is_current":true,"current_version_start":null,"retrieved":"2026-01-01","source_url":"https://www.legislation.gov.au/C2099A00001/latest/text","register_page":"https://www.legislation.gov.au/C2099A00001/latest/text"}]}"#,
+        ).unwrap();
+        std::fs::write(
+            &facts,
+            format!(r#"{{"schema_version":"au-tax-register-observation-facts.v3","observed_at":"2026-02-01T00:00:00Z","scope_id":"s","complete":true,"observations":[{{"register_id":"C2099A00001","collection":"Act","state":"SUPERSEDED","evidence_id":"ev1","evidence_url":"https://www.legislation.gov.au/C2099A00001/latest/text","checked_at":"2026-02-01T00:00:00Z","observed_compilation_number":"C2","observed_compilation_date":"2026-02-01","observed_register_document_id":"C2099C00002","current_version_start":null,"error_category":null,"content_sha256":"{sha}","content_kind":"source-document","content_media_type":"text/html"}}]}}"#),
+        ).unwrap();
+        std::fs::write(dir.path().join("VERSION"), [0xffu8]).unwrap();
+        VERSION_DIR.with(|d| *d.borrow_mut() = Some(dir.path().to_str().unwrap().to_string()));
+        let mut run = Run::default();
+        let argv = vec![
+            src.to_str().unwrap().to_string(),
+            facts.to_str().unwrap().to_string(),
+            "--out".to_string(),
+            out.to_str().unwrap().to_string(),
+        ];
+        let code = main(&argv, &mut run).unwrap();
+        VERSION_DIR.with(|d| *d.borrow_mut() = None);
+        assert_eq!(code, 1);
+        assert!(String::from_utf8_lossy(&run.stderr).contains("UnicodeDecodeError"));
     }
 }

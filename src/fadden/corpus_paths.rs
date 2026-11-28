@@ -204,6 +204,23 @@ pub fn write_text_atomic(path: &str, chunks: &[Vec<u32>]) -> Result<(), Exc> {
     write_text_atomic_then(path, chunks, None)
 }
 
+fn create_atomic_temp(
+    destination: &PyPath,
+    next_hex: &mut dyn FnMut() -> String,
+) -> Result<(String, std::fs::File), Exc> {
+    loop {
+        let candidate = destination
+            .parent()
+            .join(&format!(".{}.{}.tmp", destination.name(), next_hex()))
+            .display();
+        match crate::pyos::create_new(&candidate, false) {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 /// `write_text_atomic`, where `failure`, if any, is the exception the writing
 /// block raises after its last chunk: the staged file is removed instead.
 pub fn write_text_atomic_then(
@@ -212,26 +229,14 @@ pub fn write_text_atomic_then(
     failure: Option<Exc>,
 ) -> Result<(), Exc> {
     let destination = PyPath::new(path);
-    let (temporary, mut file) = loop {
-        let candidate = destination
-            .parent()
-            .join(&format!(
-                ".{}.{}.tmp",
-                destination.name(),
-                crate::pyos::random_hex(32)
-            ))
-            .display();
-        match crate::pyos::create_new(&candidate, false) {
-            Ok(file) => break (candidate, file),
-            Err(error) if error.kind == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.into()),
-        }
-    };
+    let (temporary, mut file) =
+        create_atomic_temp(&destination, &mut || crate::pyos::random_hex(32))?;
     let written = (|| -> Result<(), Exc> {
         for chunk in chunks {
             let mut text = Vec::with_capacity(chunk.len());
             for &cp in chunk {
-                if cp == 0x0a && cfg!(windows) {
+                #[cfg(windows)]
+                if cp == 0x0a {
                     text.push(0x0d);
                 }
                 text.push(cp);
@@ -288,7 +293,8 @@ pub fn sections_files(markdown_root: &str) -> Result<Vec<String>, crate::pyos::N
 pub fn write_text(path: &str, text: &[u32]) -> Result<(), Exc> {
     let mut bytes = Vec::with_capacity(text.len());
     for &cp in text {
-        if cp == 0x0a && cfg!(windows) {
+        #[cfg(windows)]
+        if cp == 0x0a {
             bytes.push(b'\r');
         }
         let c = char::from_u32(cp).ok_or_else(|| {
@@ -476,4 +482,58 @@ pub fn ordinary(path: &str, details: &std::fs::Metadata, directory: bool) -> boo
 /// `_same_location(left, right)`: the same path once links are resolved.
 pub fn same_location(left: &str, right: &str) -> Result<bool, Exc> {
     Ok(pypath::normcase(&pypath::realpath(left)?) == pypath::normcase(&pypath::realpath(right)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corpus_paths_boundaries_and_atomic_write_edge_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().into_owned();
+        #[cfg(not(windows))]
+        assert_eq!(child("/", &["tmp"]).unwrap(), "/tmp");
+        assert!(child(&root, &[".."]).is_err());
+        assert!(refuse_unlisted_titles(&root, &BTreeSet::new()).is_ok());
+        assert_eq!(
+            corpus_root(&PyPath::new(&format!("{root}/other"))),
+            PyPath::new(&format!("{root}/other/corpus")).display()
+        );
+        assert!(require_builder_layout(&PyPath::new(&format!("{root}/fadden"))).is_err());
+        assert_eq!(splitlines(&[b'a' as u32, 0x0d, 0x0a, b'b' as u32]).len(), 2);
+        assert!(
+            sections_files(&format!("{root}/absent"))
+                .unwrap()
+                .is_empty()
+        );
+
+        let dest = PyPath::new(&format!("{root}/out.json"));
+        std::fs::write(format!("{root}/.out.json.dup.tmp"), "taken").unwrap();
+        let mut hexes = ["dup", "fresh"].into_iter();
+        let (tmp, _f) = create_atomic_temp(&dest, &mut || hexes.next().unwrap().into()).unwrap();
+        assert!(tmp.ends_with(".fresh.tmp"));
+        assert!(
+            create_atomic_temp(&PyPath::new(&format!("{root}/no/x")), &mut || "a".into()).is_err()
+        );
+
+        assert!(write_text_atomic_then(&dest.display(), &[vec![0xd800]], None).is_err());
+        assert!(
+            write_text_atomic_then(
+                &dest.display(),
+                &[vec![b'x' as u32]],
+                Some(Exc::value("stop"))
+            )
+            .is_err()
+        );
+        assert!(write_text(&dest.display(), &[0xd800]).is_err());
+        assert!(version_date(Some(&Json::str("2026-01-01T00:00:00+25:00"))).is_err());
+        assert!(version_date(Some(&Json::str("2026-01-01T25:00:00Z"))).is_err());
+        #[cfg(unix)]
+        {
+            let link = format!("{root}/lnk");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert!(reject_symlinks(&link).is_err());
+        }
+    }
 }

@@ -40,10 +40,28 @@ fn pattern_engines_seeds_agree() {
     }
 }
 
+/// The epub_read fuzz target's invariant: an archive is admitted or refused
+/// without a panic, and each member that reads back has its declared length
+/// and CRC-32.
+fn reads_back_as_declared(data: &[u8]) {
+    let Ok(book) = tax_radar_au::fadden::epub::from_bytes(data.to_vec()) else {
+        return;
+    };
+    for info in &book.members {
+        if let Ok(content) = book.read(&info.filename) {
+            let read = (
+                content.len() as u64,
+                tax_radar_au::pyzlib::crc32(&content, 0),
+            );
+            assert_eq!(read, (info.file_size, info.crc), "{:?}", info.filename);
+        }
+    }
+}
+
 #[test]
 fn epub_read_seeds_read() {
     for seed in seeds("epub_read") {
-        tax_radar_au::fadden::epub::check_read(&seed).unwrap();
+        reads_back_as_declared(&seed);
     }
 }
 
@@ -63,7 +81,7 @@ fn seed(target: &str, name: &str) -> Vec<u8> {
     std::fs::read(path).unwrap()
 }
 
-// check_read and check_positions pass when nothing opens or nothing parses,
+// reads_back_as_declared and check_positions pass when nothing opens or nothing parses,
 // so these pin one valid seed each to the result it must give.
 
 #[test]
@@ -77,10 +95,10 @@ fn epub_read_minimal_seed_reads_every_member() {
         ["mimetype", "META-INF/container.xml", "OEBPS/s6-5.xhtml"]
     );
     let sizes: Vec<usize> = names.iter().map(|n| book.read(n).unwrap().len()).collect();
-    // Sizes from Python's zipfile; check_read then matches each CRC-32.
+    // Sizes from Python's zipfile; reads_back_as_declared then matches each CRC-32.
     assert_eq!(sizes, [20, 221, 79]);
     assert_eq!(book.read("mimetype").unwrap(), b"application/epub+zip");
-    epub::check_read(&data).unwrap();
+    reads_back_as_declared(&data);
 }
 
 #[test]

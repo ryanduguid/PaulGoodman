@@ -158,9 +158,9 @@ fn check_time(h: i32, m: i32, s: i32, us: i32) -> Result<(), String> {
     if !(0..=59).contains(&s) {
         return Err(format!("second must be in 0..59, not {s}"));
     }
-    if !(0..=999_999).contains(&us) {
-        return Err(format!("microsecond must be in 0..999999, not {us}"));
-    }
+    // CPython also checks us here; parse_clock reads at most 6 digits, so it
+    // is always in 0..=999999.
+    debug_assert!((0..=999_999).contains(&us));
     Ok(())
 }
 
@@ -423,5 +423,38 @@ mod tests {
             date_fromisoformat("20261024").unwrap().isoformat(),
             "2026-10-24"
         );
+    }
+
+    /// CPython 3.15's `datetime.fromisoformat` and `date.fromisoformat` for
+    /// week dates, separators, fractions, offsets, hour 24, multi-byte and
+    /// surrogate separators: the fields (and the offset in microseconds) or
+    /// the `ValueError` text.
+    #[test]
+    fn fromisoformat_matches_cpython() {
+        use crate::pyjson::{self, Json};
+        let int = |v: i64| Json::Int(v.into());
+        let date = |d: Date| vec![int(d.year.into()), int(d.month.into()), int(d.day.into())];
+        let fixture = include_str!("../tests/data/pydatetime-cpython.jsonl");
+        for line in fixture.lines() {
+            let case = pyjson::loads(line).unwrap();
+            let expected = case.get("error").map_or_else(
+                || Ok(case.at("ok").clone()),
+                |message| Err(message.as_str().unwrap().to_string()),
+            );
+            let ours = if case.at("kind").as_str() == Some("date") {
+                date_fromisoformat(case.at("text").as_str().unwrap()).map(|d| Json::Array(date(d)))
+            } else {
+                datetime_fromisoformat(&crate::pyvalue::str_points(case.at("text"))).map(|dt| {
+                    let mut fields = date(dt.date);
+                    fields.extend(
+                        [dt.hour, dt.minute, dt.second, dt.microsecond].map(|v| int(v.into())),
+                    );
+                    fields.push(dt.offset_us.map_or(Json::Null, int));
+                    Json::Array(fields)
+                })
+            };
+            assert_eq!(ours, expected, "{line}");
+        }
+        assert_eq!(fixture.lines().count(), 96);
     }
 }
